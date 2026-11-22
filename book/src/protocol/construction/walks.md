@@ -35,7 +35,7 @@ drawn, so the [`Loading`](internal_circuits.md#loading) relation binds the
 walk's inputs to earlier commitments: each $C_k$ must equal a field of a bridge
 stage that the transcript absorbed.
 
-| $k$ | $C_k$ | Bridge-Stage Field |
+| Point $k$ | $C_k$ | Bridge-Stage Field |
 |---|---|---|
 | 0 | $[f]$ | `BridgeF.native_f` |
 | $1 + 52i + t$, $t < 48$ | $R^{(i)}[\cdot]$ in [rx order](setup.md#rx-order) | the child's field of that name in `BridgePreamble` |
@@ -80,10 +80,10 @@ stages is fixed before the challenges of this fuse at which its points are
 opened, with one exception: $[m_q(W, x_q, y_q)]$ is fixed after $w_q$ and is
 opened at $w_q$. A parent opens that commitment at its own $w_q$ instead.
 
-| $k$ | $C_{q,k}$ | Held In |
+| Point $k$ | $C_{q,k}$ | Held In |
 |---|---|---|
 | 0 | $[f_q]$ | `points::FStage` |
-| $1 + 49i + t$, $t < 35$ | $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..30)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` | `points::PreambleStage` |
+| $1 + 49i + t$, $t < 35$ | $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..=30)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` | `points::PreambleStage` |
 | $36 + 49i + t$, $t < 9$ | $R_q^{(i)}[\cdot]$ of the nine bridge stages | `points::BindingStage` |
 | $45 + 49i$ | $R_q^{(i)}[\texttt{ChallengeStage}]$ | `points::BindingStage` |
 | $46 + 49i$, $47 + 49i$ | $[A_q^{(i)}]$, $[B_q^{(i)}]$ | `points::BindingStage` |

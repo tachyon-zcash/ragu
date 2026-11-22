@@ -15,6 +15,11 @@ three components.
 | batched opening | $p \in \F_p[X]$ with $P \in \E_q$, opened at $u$ | $p_q \in \F_q[X]$ with $P_q \in \E_p$, opened at $u_q$ |
 | registry restriction | $m(W, x, y)$ and its commitment | $m_q(W, x_q, y_q)$ and its commitment |
 
+The third component is stored as a polynomial. The fuse that made the proof
+does not establish that it is the registry's restriction, so until a parent or
+the decider tests it, it is a [candidate](batch.md#registry-candidates) for
+that restriction.
+
 The values that the accumulator claims are derived from the polynomials and are
 not stored:
 
@@ -31,8 +36,8 @@ stage polynomials.
 
 | Side | Circuit Polynomials | Stage Polynomials |
 |---|---|---|
-| native, 48 | `Hashes1`, `Hashes2`, `Collapse`, `ComputeV`, `BindChallenges(0..3)`, `BindBeta`, `BindEndoscalar`, `EndoscalingStep(0..26)` | `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` |
-| nested, 45 | `EndoscalingStep(0..30)`, `Collapse`, `ComputeV` | `EndoscalarStage`, `PointsStage`, `BridgePreamble`, `BridgeHash`, `BridgeSPrime`, `BridgeInnerError`, `BridgeOuterError`, `BridgeAB`, `BridgeQuery`, `BridgeF`, `BridgeEval`, `ChallengeStage` |
+| native, 48 | `Hashes1`, `Hashes2`, `Collapse`, `ComputeV`, `BindChallenges(0..=3)`, `BindBeta`, `BindEndoscalar`, `EndoscalingStep(0..=26)` | `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` |
+| nested, 45 | `EndoscalingStep(0..=30)`, `Collapse`, `ComputeV` | `EndoscalarStage`, `PointsStage`, `BridgePreamble`, `BridgeHash`, `BridgeSPrime`, `BridgeInnerError`, `BridgeOuterError`, `BridgeAB`, `BridgeQuery`, `BridgeF`, `BridgeEval`, `ChallengeStage` |
 
 Each polynomial is stored with its commitment, $R[\cdot] \in \E_q$ for a native
 one and $R_q[\cdot] \in \E_p$ for a nested one. A fuse draws the

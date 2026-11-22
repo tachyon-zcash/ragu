@@ -34,6 +34,18 @@ $$
 v_f = \sum_{i=0}^{L-1} \alpha^{L-1-i} \, \frac{e_{\sigma(i)} - v_i}{u - \xi_i}.
 $$
 
+[Construction](../construction/batch.md#batch-structure) states the same test
+with other letters, which this rung and the next translate as follows.
+
+| This Rung | Construction |
+| --- | --- |
+| claim $i$, of $L$ claims | opening $h$, of $Q$ openings |
+| $h_{\sigma(i)}$, $\xi_i$, $v_i$ | $\phi_h$, $\rho_h$, $\vartheta_h$ |
+| $\sigma(i)$ | $j(h)$ |
+| $h_j$, of $J$ polynomials | $\psi_j$, of $J$ batched polynomials |
+| $e_j$ | $\epsilon_j$ |
+| $v_f$ | the first sum in the formula for $v$ |
+
 **Why it holds.** The two challenges have different jobs. Group the false claims
 by evaluation point. At one such point, the pole of the weighted sum has a
 residue that is a nonzero polynomial in $\alpha$ of degree below $L$. Unless

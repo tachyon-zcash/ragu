@@ -27,7 +27,9 @@ m = \left\lceil \text{values} / 2 \right\rceil.
 $$
 
 The chain of parents ends at a root stage that has no values and starts after
-the `SYSTEM` gate, with $(g, m) = (1, 0)$.
+the `SYSTEM` gate, with $(g, m) = (1, 0)$. The parent of a stage is a matter of
+gate layout. It is unrelated to the parent of a proof, and it does not say
+which of two stages is committed first.
 
 A gate holds two values of a stage. Value $k$ is in gate
 $g + \lfloor k / 2 \rfloor$, on the wire $\v{a}$ if $k$ is even and on the wire
@@ -46,11 +48,11 @@ $\color{#dc2626}{\v{a}_{n-1}}$ and $\color{#dc2626}{\v{d}_{n-1}}$ of the blind
 gate.
 
 $$
-\color{#dc2626}{\v{a}_0} \, X^{2n-1}
+\textcolor{#dc2626}{\v{a}_0} \, X^{2n-1}
 + \sum_{k \text{ even}} \nu_k \, X^{2n-1-g-k/2}
 + \sum_{k \text{ odd}} \nu_k \, X^{4n-1-g-(k-1)/2}
-+ \color{#dc2626}{\v{a}_{n-1}} \, X^{n}
-+ \color{#dc2626}{\v{d}_{n-1}} \, X^{3n}.
++ \textcolor{#dc2626}{\v{a}_{n-1}} \, X^{n}
++ \textcolor{#dc2626}{\v{d}_{n-1}} \, X^{3n}.
 $$
 
 All of its other coefficients are zero. In particular $\v{d}_0 = 0$: a stage has
@@ -160,6 +162,26 @@ only $\v{c}_0$, through the term $\color{#7e22ce}{\kappa} \cdot (XY)^{4n-1}$:
 this is the [registry constraint](wiring.md#system-gate)
 $\color{#7e22ce}{\kappa} \v{c}_0 = 0$, which every wiring polynomial carries.
 
+The mask therefore enforces less than the honest prover does. In the table
+below, each cell gives the constraint of the stage mask on a wire and then the
+value that the honest prover writes there in the stage's polynomial.
+
+| Gates | $\v{a}$ | $\v{b}$ | $\v{c}$ | $\v{d}$ |
+|:--|:--|:--|:--|:--|
+| `SYSTEM` gate $0$ | none; $\textcolor{#dc2626}{\v{a}_0}$, free | none; $0$ | $\textcolor{#7e22ce}{\kappa} \v{c}_0 = 0$; $\textcolor{#7e22ce}{0}$ | none; $\textcolor{blue}{0}$ |
+| $1, \dots, g - 1$ | zero; $0$ | zero; $0$ | zero; $0$ | zero; $0$ |
+| the stage, $g, \dots, g + m - 1$ | none; a value $\nu_k$ | none; $0$ | none; $0$ | none; a value $\nu_k$ |
+| $g + m, \dots, n - 2$ | zero; $0$ | zero; $0$ | zero; $0$ | zero; $0$ |
+| blind gate $n - 1$ | none; $\textcolor{#dc2626}{\v{a}_{n-1}}$, free | zero; $0$ | zero; $0$ | none; $\textcolor{#dc2626}{\v{d}_{n-1}}$, free |
+
+A stage polynomial that passes its mask can thus have nonzero wires $\v{b}$
+and $\v{c}$ in the stage's gates, and a nonzero $\v{b}_0$ or $\v{d}_0$. Those
+wires enter the trace of every circuit that loads the stage, where the gate
+equations and the constraints of that circuit apply to them as to any other
+wire of the trace. In particular the circuit's `ONE` constraint fixes the sum
+of the $\textcolor{blue}{\v{d}_0}$ wires of its own polynomial and of the stages
+that it loads.
+
 The own polynomial of a circuit is confined by a mask of the same family. A
 circuit whose last stage is $(g, m)$ reserves the gates $1, \ldots, g+m-1$, and
 its own polynomial must be zero on all of them. The mask that says so has the
@@ -182,6 +204,63 @@ registers the wiring polynomial of such a circuit with its `ONE` constraint
 stripped, so that $s(X, 0) = 0$. The result is a **stripped circuit**, and its
 claim is a bonding claim over the sum of the stage polynomials that the circuit
 loads.
+
+## Example with Four Gates {#staging-example}
+
+Take $n = 4$, so that a polynomial has $16$ coefficients, and a circuit that
+multiplies two staged values $\nu_0$ and $\nu_1$ and outputs the product. Gate
+$0$ is the `SYSTEM` gate, gate $1$ is a stage with $(g, m) = (1, 1)$, gate $2$
+is the circuit's one gate of its own, and gate $3$ is the blind gate. The
+honest prover assigns the wires as follows, with
+$\textcolor{#dc2626}{\gamma_{\text{stage}}}$ and
+$\textcolor{#dc2626}{\gamma_{\text{own}}}$ the values of $\v{a}_0$ in the stage
+polynomial and in the circuit's own polynomial.
+
+| Gate | $\v{a}$ | $\v{b}$ | $\v{c}$ | $\v{d}$ |
+|:--|:--:|:--:|:--:|:--:|
+| $0$, `SYSTEM` | $\textcolor{#dc2626}{\gamma_{\text{own}} + \gamma_{\text{stage}}}$ | $0$ | $\textcolor{#7e22ce}{0}$ | $\textcolor{blue}{1}$ |
+| $1$, the stage | $\nu_0$ | $0$ | $0$ | $\nu_1$ |
+| $2$, the circuit | $\nu_0$ | $\nu_1$ | $\nu_0 \nu_1$ | $0$ |
+| $3$, the blind gate | free | $0$ | $0$ | free |
+
+To keep the formulas short, we take the free wires of the blind gate, which
+are the coefficients of $X^4$ and $X^{12}$, to be zero in both polynomials. No
+weight below reads them. The stage polynomial and the own polynomial are then
+
+$$\begin{aligned} r_{\text{stage}}(X) &= \textcolor{#dc2626}{\gamma_{\text{stage}}} X^7 + \nu_0 X^6 + \nu_1 X^{14}, \\ r_{\text{own}}(X) &= \textcolor{blue}{X^{15}} + \nu_1 X^{10} + \textcolor{#dc2626}{\gamma_{\text{own}}} X^7 + \nu_0 X^5 + \nu_0 \nu_1 X^2, \end{aligned}$$
+
+and the trace of the circuit is $r = r_{\text{own}} + r_{\text{stage}}$.
+
+The circuit emits four constraints: $\v{a}_2 = \v{a}_1$ and
+$\v{b}_2 = \v{d}_1$, which copy the staged values into its gate, then the
+public output $\v{c}_2 = \v{k}_1$, then the `ONE` constraint. With the
+[weights](wiring.md#layout) of those wires and the
+[registry constraint](wiring.md#system-gate), its wiring and instance
+polynomials are
+
+$$s(X, Y) = 1 + X^{13} Y + (X^5 - X) Y^2 + (X^{10} - X^9) Y^3 + \textcolor{#7e22ce}{\kappa} (XY)^{15}, \qquad k(Y) = 1 + \v{k}_1 Y.$$
+
+The revdot product pairs the coefficient of $X^e$ in $s(X, y)$ with the
+coefficient of $X^{15 - e}$ in $r$, so that for any trace
+
+$$\revdot{r}{s(X, y)} = \v{d}_0 + \v{c}_2 \, y + (\v{b}_2 - \v{d}_1) \, y^2 + (\v{a}_2 - \v{a}_1) \, y^3 + \textcolor{#7e22ce}{\kappa} \v{c}_0 \, y^{15}.$$
+
+This equals $k(y)$ as a polynomial in $y$ exactly when the four constraints and
+the registry constraint hold. The gate equations of the
+[combined check](arithmetization.md#combinedcheck) then give
+$\v{c}_2 = \v{a}_2 \v{b}_2$, so the claim of this circuit establishes
+$\v{k}_1 = \nu_0 \nu_1$ for the values $\nu_0$, $\nu_1$ of the committed stage.
+
+Two masks keep the summands apart. With $T = XY$, the stage mask of $(1, 1)$
+and its final mask, of parameters $(2, 2)$, are
+
+$$s_{\text{mask}} = \textcolor{#7e22ce}{\kappa} T^{15} + T^2 + T^4 + T^5 + T^{10} + T^{12} + T^{13}, \qquad s_{\text{final}} = \textcolor{#7e22ce}{\kappa} T^{15} + T + T^6 + T^9 + T^{14}.$$
+
+The first is claimed against $r_{\text{stage}}$ and forces its wires of gate
+$2$, and $\v{b}_3$ and $\v{c}_3$, to zero. The second is claimed against
+$r_{\text{own}}$ and forces its four wires of gate $1$ to zero. Without the
+second, the prover could add to $\v{a}_1$ in its own polynomial, and the trace
+would no longer hold the committed $\nu_0$ there.
 
 ## Layout of the Stage-Mask Bonding Polynomial {#mask-layout}
 

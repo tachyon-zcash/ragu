@@ -3,11 +3,14 @@
 Compression proves the output header of a [Fuse proof](../iop.md) without
 sending its witness polynomials. This chapter gives the prover's messages
 and the verifier's checks, ending in one inner-product argument (IPA) per
-curve.
+curve. It is how the [obligations](../iop.md#iop-contract) that the root of a
+proof tree still owes are discharged in production: the root's accumulator on
+each curve and the claims of its frontier.
 
 ## Preliminaries {#compression-preliminaries}
 
-- At rank $k$, a polynomial has at most $D=2^k$ coefficients. On each curve
+- At rank $k$, a polynomial has at most $D=2^k$ coefficients, the $4n$ of
+  [Construction](../construction/cycle.md#notation). On each curve
   $[h]=\sum_{i=0}^{D-1}h_iG_i$ and
   $\operatorname{revdot}(a,b)=\sum_{i=0}^{D-1}a_i b_{D-1-i}$.
   The IPA uses $G_0,\ldots,G_{D-1},U$ with no known nontrivial discrete-log
@@ -18,11 +21,11 @@ curve.
   It absorbs host scalars and nested points directly,
   writing each point's affine $x$ then $y$. It collects host point
   coordinates and nested scalars in runs. Before the next direct write or
-  squeeze it absorbs one nested commitment to the run, with zero alpha and
-  the run stage's generators at aggregator rank. At wallet rank these
-  generators lie beyond $G_{D-1}$, and the Standard parameters supply them
-  for the first `pasta::STAGE_REACH` gates after the system gate. At
-  aggregator rank they lie within the table.
+  squeeze it absorbs one nested commitment to the run, with its free
+  coefficients zero and the run stage's generators at aggregator rank. At
+  wallet rank these generators lie beyond $G_{D-1}$, and the Standard
+  parameters supply them for the first `pasta::STAGE_REACH` gates after the
+  system gate. At aggregator rank they lie within the table.
 - In the interactive protocol the verifier supplies each **Challenge**.
   Ragu uses Fiat–Shamir with the tag `ragu-ipa-v1`. It requires each
   squeeze to be below $2^{254}$ and lifts its low 143 bits into
@@ -31,6 +34,19 @@ curve.
   [Fuse transcript](../construction/protocol.md#rounds) uses `ragu-pcd-v1`.
   Its first eight native challenges are the raw squeezes. Their nested
   counterparts and both curves' $\beta$ are lifts.
+- Two protocols meet in this chapter, and a subscript tells them apart. A
+  value of the Fuse that produced $\pi$ carries a subscript $F$: its
+  challenges $w_F,y_F,z_F,x_F,u_F$, its accumulator polynomials
+  $A_F,B_F,p_F$ with the values $c_F,v_F$ and the commitment $P_F$, its
+  registry [candidate](../construction/batch.md#registry-candidates)
+  $\widehat m_F(W)$ for $m(W,x_F,y_F)$, and its base-case sign $\sigma_F$. The
+  challenges $x^{(i)},y^{(i)}$ are those of the Fuse's child $i$. A symbol
+  without the subscript belongs to the compression. The subscript $q$ marks
+  the nested curve in either protocol, as in $A_{F,q}$.
+- A Fuse draws each challenge once, and its nested challenge is the lift of
+  the same squeeze as the native one. The compression draws the challenges of
+  each curve from squeezes of their own, so its nested $y$ is unrelated to
+  its native $y$.
 
 ## Protocol in Detail {#compression-protocol}
 
@@ -69,8 +85,7 @@ sequenceDiagram
 
 $\mathcal P$ sends the instance. $\mathcal V$ checks the shape and circuit
 index, replays Fuse and checks `ChallengeStage` and `BridgeAB`. It then
-absorbs the instance fields and the encoded output header in this order. Here
-$w_F,x_F,y_F,u_F$ denote replayed Fuse challenges, lifted on the nested side.
+absorbs the instance fields and the encoded output header in this order.
 
 1. For an aggregator proof, the native mesh coordinates in input-wire
    order, one shared value per edge in edge order, then the helper's
@@ -79,19 +94,19 @@ $w_F,x_F,y_F,u_F$ denote replayed Fuse challenges, lifted on the nested side.
    append the first output slot's opening point and value, then the left
    input's first-slot opening point. The verifier derives the decompression
    flag from the circuit index.
-3. In one run, $[A],[B]$, the native proof commitments in
-   [rx order](../construction/setup.md#rx-order), $[m(W,x_F,y_F)]$, $P$ and
+3. In one run, $[A_F],[B_F]$, the native proof commitments in
+   [rx order](../construction/setup.md#rx-order), $[\widehat m_F]$, $P_F$ and
    the step's two commitments $O_0,O_1$.
-4. The native scalars $c,v$, the left child's $x,y$, the right child's
-   $x,y$, then $A(u_F),B(u_F)$.
+4. The native scalars $c_F,v_F$, the left child's $x^{(0)},y^{(0)}$, the right
+   child's $x^{(1)},y^{(1)}$, then $A_F(u_F),B_F(u_F)$.
 5. For an aggregator proof, the coordinates of the profile's nested online
    commitments.
-6. The nested commitments $[A_q],[B_q]$, the nested proof commitments in
-   rx order, the nested registry restriction, $P_q$,
+6. The nested commitments $[A_{F,q}],[B_{F,q}]$, the nested proof commitments
+   in rx order, the nested registry candidate's commitment, $P_{F,q}$,
    `nested_challenges_partial` and the step's exported $\F_q$ commitments.
-7. In one run, `bridge_alpha`, $c_q,v_q$, the two children's nested $x,y$
-   pairs in left-to-right order, $A_q(u_F), B_q(u_F)$, then the exported
-   $\F_q$ openings, point then value.
+7. In one run, `bridge_alpha`, $c_{F,q},v_{F,q}$, the two children's nested
+   $x,y$ pairs in left-to-right order, $A_{F,q}(u_{F,q}), B_{F,q}(u_{F,q})$,
+   then the exported $\F_q$ openings, point then value.
 8. For an aggregator proof, the coordinates of the profile's native online
    commitments, then the nested mesh values and helper sums in the order
    of item 1. Each coordinate or scalar enters as little-endian 128-bit limbs.
@@ -99,8 +114,9 @@ $w_F,x_F,y_F,u_F$ denote replayed Fuse challenges, lifted on the nested side.
 
 **Challenge.** Squeeze $w,y,z,\sigma$ for the host curve, then a separate
 $w,y,z,\sigma$ for the nested curve. On each side $w$ opens the registry
-restriction, $y,z$ determine the revdot claims and $\sigma$ weights the
-selected stage wires.
+candidate, $y,z$ determine the revdot claims and $\sigma$ weights the
+selected stage wires. These are fresh challenges of the compression, and none
+of them is $w_F$, $y_F$, $z_F$ or $\sigma_F$.
 
 #### Selected stage wires
 
@@ -108,42 +124,60 @@ For each stage polynomial $Q$, $\mathcal V$ adds one claim
 $\operatorname{revdot}(Q-E,M)=0$. If wire $j$ has degree $d_j$ and expected
 value $e_j$, then $E=\sum_j e_j X^{d_j}$ and
 $M=\sum_j \sigma^j X^{D-1-d_j}$. The weights restart at $j=0$ for each
-stage. The lists give the selected wires in order. Here $w,x,y,u$ denote
-**Fuse** challenges and $x^{(i)},y^{(i)}$ belong to child $i$.
+stage. The lists give the selected wires in order. Every value in them is a
+value of the Fuse, at the Fuse's challenges.
 
 - `Preamble` holds $x^{(0)},y^{(0)},x^{(1)},y^{(1)}$.
-- `Query` holds $m(\omega_j,x,y)$ in registry index order (internal
-  circuits, then bonding polynomials), $m(w,x,y)$, then
-  $m(\omega_{\rm id},x,y)$ at the proof's own circuit. The last four wires
-  are $m(w,x^{(0)},y^{(0)}),m(w,x^{(0)},y)$ followed by
-  $m(w,x^{(1)},y^{(1)}),m(w,x^{(1)},y)$.
-- `Eval` holds $m(w,x^{(0)},u),m(w,x^{(1)},u),m(w,u,y),A(u),B(u),m(u,x,y)$.
-- `PointsAb` holds the coordinates of $[A_q]$, then $[B_q]$, each $x$ then
-  $y$. `PointsF` holds the coordinates of $[m_q(W,x_q,y_q)]$.
+- `Query` holds $m(\omega_j,x_F,y_F)$ in registry index order (internal
+  circuits, then bonding polynomials), $m(w_F,x_F,y_F)$, then
+  $m(\omega_{\rm id},x_F,y_F)$ at the proof's own circuit. The last four
+  wires are $m(w_F,x^{(0)},y^{(0)}),m(w_F,x^{(0)},y_F)$ followed by
+  $m(w_F,x^{(1)},y^{(1)}),m(w_F,x^{(1)},y_F)$.
+- `Eval` holds $m(w_F,x^{(0)},u_F)$, $m(w_F,x^{(1)},u_F)$, $m(w_F,u_F,y_F)$,
+  $A_F(u_F)$, $B_F(u_F)$ and $m(u_F,x_F,y_F)$.
+- `PointsAb` holds the coordinates of $[A_{F,q}]$, then $[B_{F,q}]$, each $x$
+  then $y$. `PointsF` holds the coordinates of the nested registry
+  candidate's commitment.
 - `BridgePreamble` holds the children's nested $x,y$ in the same order.
   `BridgeQuery` follows `Query` over the nested registry, going directly
-  from $m_q(w,x,y)$ to the four child values. `BridgeEval` follows `Eval`
-  over the nested field with $A_q(u),B_q(u)$.
+  from the value at $w_{F,q}$ to the four child values. `BridgeEval` follows
+  `Eval` over the nested field with $A_{F,q}(u_{F,q}),B_{F,q}(u_{F,q})$.
 
-In the Standard layout, `Query` has $35+18=53$ fixed registry entries and
-`BridgeQuery` has $31+15=46$. The next wire, the value at $w$, takes weight
-$\sigma^{53}$ or $\sigma^{46}$, respectively.
+In the Standard layout, `Query` has $37+18=55$ fixed registry entries and
+`BridgeQuery` has $33+15=48$. The next wire, the value at $w_F$, takes weight
+$\sigma^{55}$ or $\sigma^{48}$, respectively.
 
 On each curve, list the raw accumulator, circuit, bonding and selected-wire
-claims in that order. The raw target is $c$ or $c_q$ from the instance.
+claims in that order. The raw target is $c_F$ or $c_{F,q}$ from the instance.
 The verifier computes each circuit target at that curve's fresh $y$ from
 the instance and encoded output header, as in the
 [decider](../construction/decider.md#single-proof).
 `hashes_1` binds that header and the circuit index. Bonding and
 selected-wire targets are zero.
 
-The step has already folded its application claim and two bonding claims.
-The Standard layout gives $1+35+16+5=57$ native claims and
-$1+31+15+3=50$ nested claims.
+The step has already folded its application claim and two bonding claims, and
+its randomizer claims with them. The Standard layout gives $1+37+16+5=59$
+native claims and $1+33+15+3=52$ nested claims.
 Complete the fold, opening batch and IPA on the **host curve** before
 repeating them on the **nested curve**, on the same transcript.
 
 ### Phase 2. Fold and split the revdot claims {#2-revdot-claims--polynomial-opening-claims}
+
+This fold is not the [fold of a Fuse](../construction/claims.md#fold),
+although both reduce a list of revdot claims in two layers.
+
+| | Fuse Fold | Compression Fold |
+|---|---|---|
+| weights | Lagrange weights at one challenge, the same on both sides of a claim | powers of $\mu$ on the $a$ sides and powers of $\nu$ on the $b$ sides |
+| challenges | $\mu_F$, then $\mu'_F$ | the pair $\mu,\nu$, then the pair $\mu',\nu'$ |
+| correction data | quotient coefficients, held in stages | the off-diagonal revdot products, committed as $E_1$ and $E_2$ |
+| group size | $8$ native and $9$ nested, with one slot of each group for the Fuse's randomizer | $7$ on both curves, the last group possibly shorter |
+| claims of its own | the randomizer claim and the half-claim | none |
+| result | the raw claim of the next accumulator | openings for the batch and the IPA |
+
+The folded $A$ and $B$ below are the compression's own. The Fuse's $A_F$ and
+$B_F$ are the two sides of the raw claim, which is one of the claims that
+this phase folds.
 
 ```mermaid
 sequenceDiagram
@@ -213,17 +247,23 @@ sequenceDiagram
     Note over V: Reject u = xⱼ<br/>Derive batched commitment and value
 ```
 
-Let $h_{i_j}(x_j)=y_j$ denote opening claim $j$ against commitment entry
-$i_j$. Write $p_F,A_F,B_F$ for Fuse's polynomials committed by
-$P,[A],[B]$. The first eleven **entries** are $A_c,T,B_c,E_1,E_2,p,q$,
-the registry restriction, and $p_F,A_F,B_F$. Each has one **claim**
+The batch is that of a [Fuse](../construction/batch.md#batch-structure) with
+other letters. Let $h_{i_j}(x_j)=y_j$ denote opening claim $j$ against
+commitment entry $i_j$: the claim $j$, its entry $i_j$, its point $x_j$ and
+its value $y_j$ are the $h$, $j(h)$, $\rho_h$ and $\vartheta_h$ of that page.
+The points $x_j$ and values $y_j$ are unrelated to the challenges $x_F$ and
+$y$. The first eleven **entries** are $A_c,T,B_c,E_1,E_2,p,q$, the Fuse's
+registry candidate $\widehat m_F$, and $p_F,A_F,B_F$. Each has one **claim**
 except $p$, which has two.
 
 1. The seven evaluations above, then $p(0)$ against the same entry as
    $p(r^{-1})$. The verifier derives $p(0)$ in the split check below.
-2. The restriction at the fresh $w$, with value $m(w,x_F,y_F)$ computed
-   from the registry, then $p_F,A_F,B_F$ at $u_F$ with values
-   $v_F,A_F(u_F),B_F(u_F)$ from the instance.
+2. The candidate $\widehat m_F$ at the fresh $w$, with the value
+   $m(w,x_F,y_F)$ that the verifier computes from the registry. This tests
+   the identity $\widehat m_F(W)=m(W,x_F,y_F)$ that the root's Fuse
+   [left owed](../construction/batch.md#registry-candidates). Then
+   $p_F,A_F,B_F$ at $u_F$ with values $v_F,A_F(u_F),B_F(u_F)$ from the
+   instance.
 
 For an aggregator proof, append the mesh's
 online polynomials for polynomial oracle access in slot order. Append both
@@ -235,9 +275,9 @@ from the source registry. On the nested curve the Fuse points are lifts.
 
 1. Both parties reject conflicting values for the same entry at the same
    point. **Challenge.** Squeeze $\alpha$ after the seven evaluations.
-2. For $m>0$ claims over $n>0$ entries, $\mathcal P$ sends $[f]$ for
+2. For $N>0$ claims over $n>0$ entries, $\mathcal P$ sends $[f]$ for
    $$
-   f(X)=\sum_{j=0}^{m-1}\alpha^{m-1-j}
+   f(X)=\sum_{j=0}^{N-1}\alpha^{N-1-j}
      \frac{h_{i_j}(X)-h_{i_j}(x_j)}{X-x_j}.
    $$
    The numerator uses the polynomial's actual value. **Challenge.** Squeeze
@@ -286,10 +326,11 @@ nested counterparts contribute three.
 1. **Instance and transcripts.** Check the instance and message lengths
    against the profile and rank, and the circuit index against the native
    registry domain. Replay and range-check the nine Fuse squeezes. Rebuild
-   `ChallengeStage` with zero alpha, the nested lifts and the sign $+1$
-   for `Bootstrap` or $-1$ otherwise. Fuse derives this sign from its
+   `ChallengeStage` with its free coefficients zero, the nested lifts and
+   the sign $\sigma_F$, which is $+1$ for `Bootstrap` and $-1$ otherwise.
+   Fuse derives this sign from its
    [input headers](../construction/base_case.md). Rebuild `BridgeAB`
-   from the host $[A],[B]$,
+   from the host $[A_F],[B_F]$,
    the `PointsAb` commitment, any native online commitments at that stage,
    and $\texttt{bridge\_alpha}^2$. Match both commitments to the instance.
    Reject an identity point on either transcript, including the commitment
@@ -317,7 +358,7 @@ nested counterparts contribute three.
    $$
    \begin{aligned}
    [H]&=\beta^n[f]+\sum_{i=0}^{n-1}\beta^{n-1-i}[h_i],\\
-   v&=\beta^n\sum_{j=0}^{m-1}\alpha^{m-1-j}\frac{z_{i_j}-y_j}{u-x_j}
+   v&=\beta^n\sum_{j=0}^{N-1}\alpha^{N-1-j}\frac{z_{i_j}-y_j}{u-x_j}
       +\sum_{i=0}^{n-1}\beta^{n-1-i}z_i.
    \end{aligned}
    $$
@@ -339,3 +380,9 @@ An honest identity has zero residual.
 `Application::compress` returns the instance and each curve's reduction,
 batch and IPA messages alongside the original output header data.
 `Application::verify_compressed` accepts when both curves pass.
+
+In the code, the compression is the `compress` module of `ragu_pcd`, which is
+private to the crate. Its `instance` module has the instance, the order of
+absorption and the selected-wire claims, `revdot::claims` and `revdot::fold`
+have phase 2, `batch` has phase 3 and `runs` has the run commitments. The IPA
+is the crate's public `ipa` module.

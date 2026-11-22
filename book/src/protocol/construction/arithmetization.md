@@ -66,8 +66,8 @@ $$
 \revdot{\v{r}}{\v{r} \circ \v{z^{4n}} + \v{t}} = 0
 $$
 
-is equivalent to the gate equations, where the correction vector $\v{t}$
-is uniquely determined by $z$ such that
+is equivalent, as an identity in $z$, to the gate equations, where the
+correction vector $\v{t}$ is uniquely determined by $z$ such that
 $\revdot{\v{r}}{\v{t}} = -\sum_i \v{c}_i(z^{2n-1-i} + z^{2n+i})$
 for all $\v{r}$.[^t-def] Expanding gives
 

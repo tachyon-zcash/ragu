@@ -30,7 +30,8 @@ following hold.
 6. Each stored registry restriction agrees with its registry at a random point:
    the stored native restriction, evaluated at $\tau_w$, equals
    $m(\tau_w, x, y)$, and the stored nested restriction, evaluated at
-   $\tau_{q,w}$, equals $m_q(\tau_{q,w}, x_q, y_q)$.
+   $\tau_{q,w}$, equals $m_q(\tau_{q,w}, x_q, y_q)$. This is the
+   [identity](batch.md#registry-candidates) that every fuse leaves owed.
 
 7. $r_q[\texttt{ChallengeStage}]$ equals, coefficient by coefficient, the stage
    polynomial with $\v{a}_0 = 0$ over
@@ -93,15 +94,15 @@ The native list has $53$ claims: the $37$ internal circuits and $16$ of the
 $18$ bondings. It has no claim for the step circuit and none for the two
 bonding polynomials of the application stage. The proof's own fuse folded those
 three claims, and the proof does not hold their polynomials. The same is true
-of the fuse's [randomizer claims](claims.md#randomizer) on both sides. The native raw
-claim is omitted as well, because its target $c$ is derived from the
-polynomials that it would test. The targets are computed from $\pi$, with $U$
-assembled from the stored commitments, the stored challenges,
+of the fuse's [randomizer claims](claims.md#randomizer) on both sides. The
+native raw claim is omitted as well, because its target $c$ is derived from
+the polynomials that it would test. The targets are computed from $\pi$, with
+$U$ assembled from the stored commitments, the stored challenges,
 `nested_challenges_partial` and the derived $c$ and $v$.
 
-The target of `hashes_1` is [$k_{\text{bridge}}(\tau_y)$](proof.md#native-unified)
-over $U$, the output header that the decider was given, and the domain point
-of `circuit_id`:
+The target of `hashes_1` is
+[$k_{\text{bridge}}(\tau_y)$](proof.md#native-unified) over $U$, the output
+header that the decider was given, and the domain point of `circuit_id`:
 
 $$\text{Horner}_{\tau_y}[U_1, \dots, U_{39}, \text{hdr}(\delta), \omega_{\text{id}}, 0, 1].$$
 

@@ -91,7 +91,15 @@ $$
 $$
 
 so that $k(Y) = \text{Horner}_Y[\v{k}_\ell, \dots, \v{k}_1, 1]$ and the first
-entry of a list has the highest power.
+entry of a list has the highest power. A circuit that writes the outputs $2$
+and then $3$, for example, has
+
+$$
+k(Y) = \text{Horner}_Y[2, 3, 1] = 2 Y^2 + 3 Y + 1.
+$$
+
+The outputs take descending powers in the order written, and the `ONE`
+constraint supplies the constant term.
 
 [^instance-literature]: In the literature, the public instance is often
 presented as the pair $(1, \v{x})$, combining the constant $1$ with the public
