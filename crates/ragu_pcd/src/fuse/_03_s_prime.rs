@@ -20,7 +20,6 @@ use ragu_circuits::{
 };
 use ragu_core::{Cycle, Result};
 use rand::CryptoRng;
-use udon::curve::Affine;
 
 use super::{_01_application::NativeApplication, randomizer::Randomizers};
 use crate::{
@@ -114,16 +113,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let x0 = left.x();
         let x1 = right.x();
 
-        let registry_wx0_poly = B::registry_at_x(native_registry, x0);
-        let registry_wx1_poly = B::registry_at_x(native_registry, x1);
-        let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
-        <C::HostCurve as Affine>::batch_to_affine(
-            &self
-                .host()
-                .commit_batch([&registry_wx0_poly, &registry_wx1_poly]),
-            &mut commitments,
-        );
-        let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
+        let polys = [
+            B::registry_at_x(native_registry, x0),
+            B::registry_at_x(native_registry, x1),
+        ];
+        let [registry_wx0_commitment, registry_wx1_commitment] = self
+            .host()
+            .commit_many(&polys)
+            .try_into()
+            .expect("one commitment per polynomial");
+        let [registry_wx0_poly, registry_wx1_poly] = polys;
 
         Ok(NativeSPrime {
             registry_wx0_poly,
@@ -142,16 +141,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let x0 = nested::challenge::<C>(left.x())?;
         let x1 = nested::challenge::<C>(right.x())?;
 
-        let registry_wx0_poly = B::registry_at_x(nested_registry, x0);
-        let registry_wx1_poly = B::registry_at_x(nested_registry, x1);
-        let mut commitments = [<C::NestedCurve as Affine>::identity(); 2];
-        <C::NestedCurve as Affine>::batch_to_affine(
-            &self
-                .nested()
-                .commit_batch([&registry_wx0_poly, &registry_wx1_poly]),
-            &mut commitments,
-        );
-        let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
+        let polys = [
+            B::registry_at_x(nested_registry, x0),
+            B::registry_at_x(nested_registry, x1),
+        ];
+        let [registry_wx0_commitment, registry_wx1_commitment] = self
+            .nested()
+            .commit_many(&polys)
+            .try_into()
+            .expect("one commitment per polynomial");
+        let [registry_wx0_poly, registry_wx1_poly] = polys;
 
         Ok(NestedSPrime {
             registry_wx0_poly,

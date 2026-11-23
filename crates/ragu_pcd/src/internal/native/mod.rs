@@ -408,11 +408,13 @@ impl InternalCircuitIndex {
             Hashes2Circuit => 1,
             CollapseCircuit => 2,
             ComputeVCircuit => 3,
-            BindChallengesCircuit(i) => 4 + checked_index(i, NUM_BINDERS),
+            BindChallengesCircuit(i) => 4 + super::checked_index(i, NUM_BINDERS),
             BindBetaCircuit => 4 + NUM_BINDERS,
             BindEndoscalarCircuit => 5 + NUM_BINDERS,
-            EndoscalingStep(i) => endoscaling + checked_index(i, steps),
-            ExtensionCircuit(i) => endoscaling + steps + checked_index(i, extension.circuits),
+            EndoscalingStep(i) => endoscaling + super::checked_index(i, steps),
+            ExtensionCircuit(i) => {
+                endoscaling + steps + super::checked_index(i, extension.circuits)
+            }
             PreambleStage => bonding,
             InnerErrorStage => bonding + 1,
             OuterErrorStage => bonding + 2,
@@ -431,7 +433,7 @@ impl InternalCircuitIndex {
             PreambleFinalStaged => bonding + 15,
             ApplicationStage => bonding + 16,
             ApplicationFinalStaged => bonding + 17,
-            ExtensionBonding(i) => bonding + 18 + checked_index(i, extension.bondings),
+            ExtensionBonding(i) => bonding + 18 + super::checked_index(i, extension.bondings),
         };
         CircuitIndex::new(pos)
     }
@@ -472,13 +474,6 @@ impl InternalCircuitIndex {
             | ExtensionBonding(_) => true,
         }
     }
-}
-
-// Reject out-of-profile variants just as the canonical-list lookup did.
-fn checked_index(index: u32, count: usize) -> usize {
-    let index = index as usize;
-    assert!(index < count, "index is outside the profile");
-    index
 }
 
 /// Per-internal-circuit storage indexed by [`InternalCircuitIndex`].
@@ -778,10 +773,10 @@ impl RxIndex {
             Hashes2 => 1,
             Collapse => 2,
             ComputeV => 3,
-            BindChallenges(i) => 4 + checked_index(i, NUM_BINDERS),
+            BindChallenges(i) => 4 + super::checked_index(i, NUM_BINDERS),
             BindBeta => 4 + NUM_BINDERS,
             BindEndoscalar => 5 + NUM_BINDERS,
-            EndoscalingStep(i) => endoscaling + checked_index(i, steps),
+            EndoscalingStep(i) => endoscaling + super::checked_index(i, steps),
             Preamble => stages,
             InnerError => stages + 1,
             OuterError => stages + 2,
@@ -796,13 +791,16 @@ impl RxIndex {
             ExtensionCircuit(i) => {
                 stages
                     + 11
-                    + checked_index(i, crate::profile::extension_lengths::<P>(false).circuits)
+                    + super::checked_index(
+                        i,
+                        crate::profile::extension_lengths::<P>(false).circuits,
+                    )
             }
             ExtensionStage(i) => {
                 stages
                     + 11
                     + crate::profile::extension_lengths::<P>(false).circuits
-                    + checked_index(i, crate::profile::extension_lengths::<P>(false).stages)
+                    + super::checked_index(i, crate::profile::extension_lengths::<P>(false).stages)
             }
         }
     }

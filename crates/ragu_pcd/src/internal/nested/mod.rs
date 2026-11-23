@@ -455,10 +455,10 @@ impl InternalCircuitIndex {
         let extension = crate::profile::extension_lengths::<P>(true);
         let bonding = steps + 2 + extension.circuits;
         let pos = match self {
-            EndoscalingStep(i) => checked_index(i, steps),
+            EndoscalingStep(i) => super::checked_index(i, steps),
             Collapse => steps,
             ComputeV => steps + 1,
-            ExtensionCircuit(i) => steps + 2 + checked_index(i, extension.circuits),
+            ExtensionCircuit(i) => steps + 2 + super::checked_index(i, extension.circuits),
             EndoscalarStage => bonding,
             PointsStage => bonding + 1,
             PointsFinalStaged => bonding + 2,
@@ -474,7 +474,7 @@ impl InternalCircuitIndex {
             ChallengeStage => bonding + 12,
             ChallengeFinalStaged => bonding + 13,
             Loading => bonding + 14,
-            ExtensionBonding(i) => bonding + 15 + checked_index(i, extension.bondings),
+            ExtensionBonding(i) => bonding + 15 + super::checked_index(i, extension.bondings),
         };
         CircuitIndex::new(pos)
     }
@@ -492,13 +492,6 @@ impl InternalCircuitIndex {
             | ExtensionBonding(_) => true,
         }
     }
-}
-
-// Reject variants that do not exist in this profile.
-fn checked_index(index: u32, count: usize) -> usize {
-    let index = index as usize;
-    assert!(index < count, "index is outside the profile");
-    index
 }
 
 /// Enum identifying which nested field rx polynomial to retrieve from a proof.
@@ -641,7 +634,7 @@ impl RxIndex {
         use RxIndex::*;
         let steps = NumSteps::<P>::len();
         match self {
-            EndoscalingStep(i) => checked_index(i, steps),
+            EndoscalingStep(i) => super::checked_index(i, steps),
             Collapse => steps,
             ComputeV => steps + 1,
             EndoscalarStage => steps + 2,
@@ -657,13 +650,15 @@ impl RxIndex {
             BridgeEval => steps + 12,
             ChallengeStage => steps + 13,
             ExtensionCircuit(i) => {
-                steps + 14 + checked_index(i, crate::profile::extension_lengths::<P>(true).circuits)
+                steps
+                    + 14
+                    + super::checked_index(i, crate::profile::extension_lengths::<P>(true).circuits)
             }
             ExtensionStage(i) => {
                 steps
                     + 14
                     + crate::profile::extension_lengths::<P>(true).circuits
-                    + checked_index(i, crate::profile::extension_lengths::<P>(true).stages)
+                    + super::checked_index(i, crate::profile::extension_lengths::<P>(true).stages)
             }
         }
     }

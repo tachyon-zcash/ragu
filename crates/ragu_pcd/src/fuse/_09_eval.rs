@@ -102,6 +102,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Evaluate left/right child witnesses concurrently with the
         // current-step polynomial evaluations at u.
         let (left_witness, right_witness, current) = par_join!(
+            B;
             || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(left, u),
             || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(right, u),
             || native::stages::eval::CurrentStepWitness {
@@ -129,6 +130,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
 
         let (left_nested, right_nested, current_nested) = par_join!(
+            B;
             || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(left, u_nested),
             || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(
                 right, u_nested

@@ -16,6 +16,7 @@ use super::{
 };
 use crate::{
     Application, CompressedPcd, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
+    committer::Committer,
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
@@ -24,19 +25,19 @@ use crate::{
 };
 
 /// Batches `openings` over `polys` and opens the batched claim through the
-/// IPA, on one curve. Returns the batch's messages and the IPA proof.
+/// IPA, on one curve, committing with `committer` and opening under
+/// `params`. Returns the batch's messages and the IPA proof.
 fn open<P: Affine, R: Rank, B: SelectableBackend>(
     polys: &[Cow<'_, sparse::Polynomial<P::Scalar, R>>],
     openings: &Openings<P>,
-    generators: &impl FixedGenerators<P>,
-    u: P,
+    committer: &Committer<'_, P, impl FixedGenerators<P>, B>,
+    params: &Params<P>,
     transcript: &mut impl IpaTranscript<P>,
     rng: &mut impl CryptoRng,
 ) -> Result<(Batch<P>, IpaProof<P>)> {
     let (batch, witness) =
-        batch::prover::batch::<_, R, B>(polys, &openings.claims, generators, transcript)?;
-    let params = Params::with_k(generators, u, R::RANK);
-    let opening = ipa::create_proof::<B, _>(&params, rng, transcript, &witness.p, witness.u)?;
+        batch::prover::batch::<_, R, B>(polys, &openings.claims, committer, transcript)?;
+    let opening = ipa::create_proof::<B, _>(params, rng, transcript, &witness.p, witness.u)?;
     Ok((batch, opening))
 }
 
@@ -159,7 +160,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             let (reduction, witness) = revdot::prover::reduce_native::<C, R, B>(
                 proof,
                 registry,
-                generators,
+                self.host(),
                 y,
                 z,
                 &bindings.masked,
@@ -218,12 +219,19 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                     .map(Cow::Owned),
                 );
             }
-            let u = *C::host_u(self.params);
+            // The IPA opens over the generators the verifier prepared, when
+            // its backend prepared them.
+            let params = Params::for_verifier(
+                generators,
+                *C::host_u(self.params),
+                R::RANK,
+                self.native_ipa_generators.as_ref(),
+            );
             let (batch, opening) = open::<_, R, B>(
                 &polys,
                 &openings,
-                generators,
-                u,
+                self.host(),
+                &params,
                 &mut Lifted(transcript.host()),
                 rng,
             )?;
@@ -242,7 +250,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             let (reduction, witness) = revdot::prover::reduce_nested::<C, R, B>(
                 proof,
                 registry,
-                generators,
+                self.nested(),
                 y,
                 z,
                 &bindings.masked,
@@ -301,12 +309,17 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                     .map(Cow::Owned),
                 );
             }
-            let u = *C::nested_u(self.params);
+            let params = Params::for_verifier(
+                generators,
+                *C::nested_u(self.params),
+                R::RANK,
+                self.nested_ipa_generators.as_ref(),
+            );
             let (batch, opening) = open::<_, R, B>(
                 &polys,
                 &openings,
-                generators,
-                u,
+                self.nested(),
+                &params,
                 &mut Lifted(transcript.nested()),
                 rng,
             )?;

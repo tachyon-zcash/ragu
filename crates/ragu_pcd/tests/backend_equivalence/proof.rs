@@ -1768,10 +1768,12 @@ mod independent_polynomials {
                 AcceleratedProver::sparse_commit_many_to_affine(&many, generators),
                 expected
             );
+            let refs: Vec<_> = many.iter().collect();
             assert_eq!(
-                AcceleratedBackend::sparse_commit_many_prepared_to_affine(
-                    &many, generators, &prepared,
-                ),
+                AcceleratedBackend::sparse_commit_prepared(&refs, generators, &prepared)
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<C>>(),
                 expected
             );
         }
@@ -1790,19 +1792,19 @@ mod independent_polynomials {
         assert!(AcceleratedProver::prepare_commitments(prefix).is_some());
         let tabled: Vec<_> = polys.iter().collect();
         assert_eq!(
-            ReferenceBackend::sparse_commit_tabled(&tabled, generators, &table),
+            ReferenceBackend::sparse_commit_prepared(&tabled, generators, &table),
             expected
         );
         assert_eq!(
-            AcceleratedBackend::sparse_commit_tabled(&tabled, generators, &table),
+            AcceleratedBackend::sparse_commit_prepared(&tabled, generators, &table),
             expected
         );
         assert_eq!(
-            AcceleratedProver::sparse_commit_tabled(&tabled, generators, &table),
+            AcceleratedProver::sparse_commit_prepared(&tabled, generators, &table),
             expected
         );
         assert!(
-            AcceleratedBackend::sparse_commit_tabled::<C, TestRank, _>(&[], generators, &table)
+            AcceleratedBackend::sparse_commit_prepared::<C, TestRank, _>(&[], generators, &table)
                 .is_empty()
         );
 

@@ -18,6 +18,7 @@ use super::{
 };
 use crate::{
     Proof,
+    committer::Committer,
     compress::revdot::claims::{self, Kind, Masked, Shape},
     internal::{
         native, nested,
@@ -173,15 +174,7 @@ fn fold_powers<'a, F: Field, R: Rank>(
     polys: impl DoubleEndedIterator<Item = &'a sparse::Polynomial<F, R>>,
     x: F,
 ) -> sparse::Polynomial<F, R> {
-    let mut power = F::ONE;
-    let terms: Vec<_> = polys
-        .map(|poly| {
-            let term = (poly, power);
-            power *= x;
-            term
-        })
-        .collect();
-    sparse::Polynomial::linear_combination(&terms)
+    sparse::Polynomial::fold(polys.rev(), x)
 }
 
 /// The products `pairs` index into `a` and `b`, as the low coefficients of
@@ -225,7 +218,7 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
     shapes: &[Shape<Id, C::Scalar>],
     masked: &[Masked<Id, C::Scalar>],
     commitment: impl Fn(Id) -> C,
-    generators: &impl FixedGenerators<C>,
+    committer: &Committer<'_, C, impl FixedGenerators<C>, B>,
     transcript: &mut impl IpaTranscript<C>,
 ) -> Result<Folded<C, R>> {
     let layout = Layout::new(claims.len());
@@ -239,7 +232,7 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
             .inner()
             .map(|(g, i, j)| (g * fold::GROUP + i, g * fold::GROUP + j)),
     );
-    let inner_commitment = B::sparse_commit_to_affine(&inner, generators);
+    let inner_commitment = committer.commit(&inner);
     transcript.write_point(inner_commitment)?;
     let (mu, nu) = squeeze_pair(transcript)?;
     let groups: Vec<(sparse::Polynomial<_, R>, sparse::Polynomial<_, R>)> =
@@ -254,7 +247,7 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
 
     // The second layer, over the groups.
     let outer = errors::<_, R, B>(|g| &groups[g].0, |h| &groups[h].1, layout.outer());
-    let outer_commitment = B::sparse_commit_to_affine(&outer, generators);
+    let outer_commitment = committer.commit(&outer);
     transcript.write_point(outer_commitment)?;
     let (mu_prime, nu_prime) = squeeze_pair(transcript)?;
     let a = fold_powers(groups.iter().map(|(a, _)| a), mu_prime);
@@ -324,13 +317,13 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy>(
     shapes: &[Shape<Id, C::Scalar>],
     masked: &[Masked<Id, C::Scalar>],
     commitment: impl Fn(Id) -> C,
-    generators: &impl FixedGenerators<C>,
+    committer: &Committer<'_, C, impl FixedGenerators<C>, B>,
     z: C::Scalar,
     transcript: &mut impl IpaTranscript<C>,
 ) -> Result<(Reduction<C>, Witness<C, R>)> {
     let n = R::num_coeffs();
     let (messages, folded, derived, commitments) =
-        fold_claims::<C, R, B, Id>(claims, shapes, masked, commitment, generators, transcript)?;
+        fold_claims::<C, R, B, Id>(claims, shapes, masked, commitment, committer, transcript)?;
     let rho = transcript.squeeze_challenge()?;
 
     // t = \sum_i \rho^i a_i b_i over the folded claims.
@@ -352,8 +345,7 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy>(
     // P and Q are independent. Commit to both together before writing either
     // point to the transcript.
     let polys = [&p, &q].map(|coeffs| sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec()));
-    let [p_commitment, q_commitment] =
-        B::sparse_commit_batch(polys.each_ref(), generators).map(Into::into);
+    let [p_commitment, q_commitment] = committer.commit_batch(polys.each_ref()).map(Into::into);
     transcript.write_point(p_commitment)?;
     transcript.write_point(q_commitment)?;
 
@@ -406,7 +398,7 @@ fn masked_claims<'a, F: Field, R: Rank, Id: Copy>(
 pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
     proof: &Proof<C, R>,
     registry: &Registry<'_, C::CircuitField, R>,
-    generators: &C::HostGenerators,
+    committer: &Committer<'_, C::HostCurve, C::HostGenerators, B>,
     y: C::CircuitField,
     z: C::CircuitField,
     masked: &[Masked<native::RxComponent, C::CircuitField>],
@@ -427,7 +419,7 @@ pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
         &shapes,
         masked,
         |component| proof.native_commitment(component),
-        generators,
+        committer,
         z,
         transcript,
     )
@@ -438,7 +430,7 @@ pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
 pub(crate) fn reduce_nested<C: ProfiledCycle, R: Rank, B: Backend>(
     proof: &Proof<C, R>,
     registry: &Registry<'_, C::ScalarField, R>,
-    generators: &C::NestedGenerators,
+    committer: &Committer<'_, C::NestedCurve, C::NestedGenerators, B>,
     y: C::ScalarField,
     z: C::ScalarField,
     masked: &[Masked<nested::RxComponent, C::ScalarField>],
@@ -463,7 +455,7 @@ pub(crate) fn reduce_nested<C: ProfiledCycle, R: Rank, B: Backend>(
             nested::RxComponent::AbB => proof.nested_b_commitment(),
             nested::RxComponent::Rx(index) => proof.nested_rx_commitment(index),
         },
-        generators,
+        committer,
         z,
         transcript,
     )

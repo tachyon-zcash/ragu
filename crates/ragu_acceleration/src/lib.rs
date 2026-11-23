@@ -34,7 +34,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
-use ragu_core::{BaseTable, MsmWorkspace, PreparedMsm};
+use ragu_core::{MsmWorkspace, PreparedMsm};
 use udon::{curve::Affine, field::Field};
 
 pub mod verifier;
@@ -135,52 +135,19 @@ impl_accelerated_backends! {
         sparse::Polynomial::linear_combination_parallel(terms)
     }
 
-    // One plan for the whole slice, where the default plans groups of eight:
-    // the planner then schedules across every commitment at once.
-    fn sparse_commit_many_to_affine<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
-        polys: &[sparse::Polynomial<C::Scalar, R>],
-        generators: &G,
-    ) -> alloc::vec::Vec<C> {
-        let bases = generators.g();
-        assert!(bases.len() >= R::num_coeffs());
-        let projective = ragu_core::msm_many(
-            polys
-                .iter()
-                .map(|poly| {
-                    poly.iter_stored_coeffs()
-                        .map(|(index, coefficient)| (*coefficient, bases[index]))
-                        .unzip()
-                })
-                .collect(),
-        );
-        let mut affine = alloc::vec![C::identity(); projective.len()];
-        C::batch_to_affine(&projective, &mut affine);
-        affine
+    fn prepare_commitments<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {
+        PreparedMsm::with_table(bases)
     }
 
-    fn prepare_commitments<C: Affine>(bases: &[C]) -> Option<BaseTable<C>> {
-        BaseTable::new(bases)
-    }
-
-    fn sparse_commit_many_prepared_to_affine<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
-        polys: &[sparse::Polynomial<C::Scalar, R>],
-        _generators: &G,
-        prepared: &PreparedMsm<C>,
-    ) -> alloc::vec::Vec<C> {
-        assert!(prepared.bases().len() >= R::num_coeffs());
-        let projective = prepared.evaluate_many_indexed(polys.iter().map(commitment_row).collect());
-        let mut affine = alloc::vec![C::identity(); projective.len()];
-        C::batch_to_affine(&projective, &mut affine);
-        affine
-    }
-
-    fn sparse_commit_tabled<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
+    // The polynomials share one plan over the prepared bank, which they index
+    // by coefficient position rather than gathering their bases.
+    fn sparse_commit_prepared<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
         polys: &[&sparse::Polynomial<C::Scalar, R>],
         _generators: &G,
-        table: &BaseTable<C>,
+        prepared: &PreparedMsm<C>,
     ) -> alloc::vec::Vec<C::Projective> {
-        assert!(table.len() >= R::num_coeffs());
-        table.msm_many(polys.iter().copied().map(commitment_row).collect())
+        assert!(prepared.bases().len() >= R::num_coeffs());
+        prepared.evaluate_many_indexed(polys.iter().copied().map(commitment_row).collect())
     }
 
     fn prepare_msm<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {

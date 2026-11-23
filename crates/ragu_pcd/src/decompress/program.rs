@@ -94,6 +94,7 @@ use crate::{
         revdot::Source,
     },
     ipa::{IPA_TAG, IpaCycle},
+    memo::memo,
     profile::{ProfiledCycle, Standard},
 };
 
@@ -2691,62 +2692,6 @@ fn nested_schedule_with<
     Ok(b.finish(claims, bindings, ab_terms, Values::NESTED, &front))
 }
 
-/// The values a schedule is the pure function of its types for, built once
-/// and kept: under `std`, one process-wide map from the [`TypeId`] of a key
-/// type, which names the function and its type parameters, to the value
-/// built for it; without `std`, rebuilt on each request, which costs time
-/// alone. Only a successful build is kept. The build runs outside the lock,
-/// since building a schedule asks for the other side's sizes, so callers
-/// racing on a first request may each build; every one returns the value
-/// kept first.
-///
-/// [`TypeId`]: core::any::TypeId
-#[cfg(feature = "std")]
-fn memo<Key: 'static, T: Clone + Send + Sync + 'static>(
-    build: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    use core::any::{Any, TypeId};
-    use std::{
-        boxed::Box,
-        collections::BTreeMap,
-        sync::{Mutex, OnceLock, PoisonError},
-    };
-    static MEMO: OnceLock<Mutex<BTreeMap<TypeId, Box<dyn Any + Send + Sync>>>> = OnceLock::new();
-    let memo = MEMO.get_or_init(|| Mutex::new(BTreeMap::new()));
-    let key = TypeId::of::<Key>();
-    let kept = memo
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&key)
-        .map(|value| {
-            value
-                .downcast_ref::<T>()
-                .expect("a key names one type")
-                .clone()
-        });
-    if let Some(value) = kept {
-        return Ok(value);
-    }
-    let value = build()?;
-    Ok(memo
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .entry(key)
-        .or_insert_with(|| Box::new(value))
-        .downcast_ref::<T>()
-        .expect("a key names one type")
-        .clone())
-}
-
-#[cfg(not(feature = "std"))]
-#[allow(
-    clippy::extra_unused_type_parameters,
-    reason = "the key names the kept value, which only the std build keeps"
-)]
-fn memo<Key: 'static, T>(build: impl FnOnce() -> Result<T>) -> Result<T> {
-    build()
-}
-
 /// The key of side `S`'s schedule for proofs at rank `K` in chunk circuits
 /// at rank `R`, the full one or its sizes alone by `Which`.
 struct Memo<Which, C, S, K, R, const HEADER_SIZE: usize>(PhantomData<fn() -> (Which, C, S, K, R)>);
@@ -2771,7 +2716,7 @@ where
     K: Rank,
     R: Rank,
 {
-    memo::<Memo<Full, C, S, K, R, HEADER_SIZE>, _>(|| {
+    memo::<Memo<Full, C, S, K, R, HEADER_SIZE>, _, ragu_core::Error>(|| {
         S::schedule::<K, R, HEADER_SIZE>().map(Arc::new)
     })
 }
@@ -2790,7 +2735,7 @@ where
     K: Rank,
     R: Rank,
 {
-    memo::<Memo<SizesOnly, C, S, K, R, HEADER_SIZE>, _>(|| {
+    memo::<Memo<SizesOnly, C, S, K, R, HEADER_SIZE>, _, ragu_core::Error>(|| {
         let schedule = S::sizes::<K, R, HEADER_SIZE>()?;
         Ok(Sizes {
             work_points: schedule.points,

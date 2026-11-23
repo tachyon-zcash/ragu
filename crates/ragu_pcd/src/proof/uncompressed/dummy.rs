@@ -120,10 +120,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 C::Profile::NATIVE_ONLINE.polynomials.len()
             ]
         };
-        let native_online_commitments: Vec<_> = native_online_polynomials
-            .iter()
-            .map(|p| self.host().commit(p))
-            .collect();
+        let native_online_commitments = self.host().commit_many(&native_online_polynomials);
         let nested_online_polynomials = if let Some(mesh) = C::Profile::NESTED_MESH {
             mesh.dummy_polynomials(
                 C::Profile::NESTED_ONLINE,
@@ -137,10 +134,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 C::Profile::NESTED_ONLINE.polynomials.len()
             ]
         };
-        let nested_online_commitments: Vec<_> = nested_online_polynomials
-            .iter()
-            .map(|p| self.nested().commit(p))
-            .collect();
+        let nested_online_commitments = self.nested().commit_many(&nested_online_polynomials);
         let mut builder = ProofBuilder::<C, R, B>::new(
             self.params,
             self.host(),

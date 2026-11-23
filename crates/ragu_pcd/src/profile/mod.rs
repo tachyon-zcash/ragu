@@ -1087,45 +1087,31 @@ pub(crate) struct ExtensionLengths {
 }
 
 pub(crate) fn extension_lengths<P: Profile>(nested: bool) -> ExtensionLengths {
-    let build = || {
-        let extension = if nested {
-            nested_extension::<P>()
-        } else {
-            native_extension::<P>()
-        };
-        ExtensionLengths {
-            circuits: extension.circuits.len(),
-            stages: extension.stages,
-            bondings: extension.bondings(),
-        }
-    };
-    #[cfg(feature = "std")]
-    {
-        use std::sync::{Mutex, OnceLock, PoisonError};
-        static LENGTHS: OnceLock<
-            Mutex<std::collections::HashMap<(TypeId, bool), ExtensionLengths>>,
-        > = OnceLock::new();
-        let lengths = LENGTHS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-        let key = (TypeId::of::<P>(), nested);
-        if let Some(value) = lengths
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&key)
-            .copied()
-        {
-            return value;
-        }
-        // Build outside the lock: descriptor construction can ask for other
-        // profile dimensions through a stage's length type.
-        let value = build();
-        *lengths
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(key)
-            .or_insert(value)
+    /// The key a side's lengths are kept under.
+    struct Kept<P, const NESTED: bool>(PhantomData<P>);
+
+    fn kept<P: Profile, const NESTED: bool>() -> ExtensionLengths {
+        let Ok(lengths) =
+            crate::memo::memo::<Kept<P, NESTED>, _, core::convert::Infallible>(|| {
+                let extension = if NESTED {
+                    nested_extension::<P>()
+                } else {
+                    native_extension::<P>()
+                };
+                Ok(ExtensionLengths {
+                    circuits: extension.circuits.len(),
+                    stages: extension.stages,
+                    bondings: extension.bondings(),
+                })
+            });
+        lengths
     }
-    #[cfg(not(feature = "std"))]
-    build()
+
+    if nested {
+        kept::<P, true>()
+    } else {
+        kept::<P, false>()
+    }
 }
 
 /// An extension's polynomials for one proof: its circuits' rx polynomials

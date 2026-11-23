@@ -955,20 +955,22 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
             .collect::<Result<_>>()?,
     };
 
-    let mut restrictions: Vec<(CircuitIndex, P::Scalar)> = Vec::new();
+    // Each distinct circuit in claim order, evaluated together.
+    let mut circuits: Vec<CircuitIndex> = Vec::new();
     for kind in &kinds {
         if let Kind::Circuit(circuit) | Kind::Bonding(circuit) = *kind
-            && !restrictions.iter().any(|(listed, _)| *listed == circuit)
+            && !circuits.contains(&circuit)
         {
-            let value = B::registry_wxy(
-                registry,
-                circuit.omega_j(),
-                lifted_squeezed.r,
-                lifted_squeezed.sampled.y,
-            );
-            restrictions.push((circuit, value));
+            circuits.push(circuit);
         }
     }
+    let values = B::registry_circuits_xy(
+        registry,
+        &circuits,
+        lifted_squeezed.r,
+        lifted_squeezed.sampled.y,
+    );
+    let restrictions: Vec<(CircuitIndex, P::Scalar)> = circuits.into_iter().zip(values).collect();
 
     let mut b = P::Scalar::ONE;
     let mut cur = claim.point;

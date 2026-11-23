@@ -5,8 +5,8 @@ use core::any::Any;
 
 use udon::{
     curve::{
-        Affine, AffineAdapter, AffinePoint, Pallas, PastaCurve, Point, PreparedAffinePoint,
-        ProjectiveAdapter, ProjectivePoint, Vesta,
+        Affine, AffineAdapter, AffinePoint, Pallas, PastaCurve, Point, ProjectiveAdapter,
+        ProjectivePoint, Vesta,
     },
     exec::{ExecutionOptions, Executor},
     field::{FieldAdapter, PastaField},
@@ -195,17 +195,7 @@ fn pasta_many<C: Affine, P: PastaCurve>(inputs: &dyn Any) -> Option<Vec<C::Proje
     execute_plan(&inputs, &mut output, executor::options(), &PoolExecutor);
     #[cfg(test)]
     tests::record_dispatch();
-    Some(
-        output
-            .into_iter()
-            .map(|point| {
-                let result = ProjectiveAdapter::new(point);
-                *(&result as &dyn Any)
-                    .downcast_ref::<C::Projective>()
-                    .expect("the selected Pasta curve's projective type")
-            })
-            .collect(),
-    )
+    Some(output.into_iter().map(projective::<C, P>).collect())
 }
 
 /// Executes indexed rows against one shared Pasta base bank.
@@ -230,15 +220,7 @@ pub(super) fn execute_indexed<C: Affine, P: PastaCurve>(
         .collect();
     let mut output = vec![ProjectivePoint::IDENTITY; inputs.len()];
     execute_plan(&inputs, &mut output, executor::options(), &PoolExecutor);
-    output
-        .into_iter()
-        .map(|point| {
-            let result = ProjectiveAdapter::new(point);
-            *(&result as &dyn Any)
-                .downcast_ref::<C::Projective>()
-                .expect("the selected Pasta curve's projective type")
-        })
-        .collect()
+    output.into_iter().map(projective::<C, P>).collect()
 }
 
 fn pasta_batch<C: Affine, P: PastaCurve, const N: usize>(
@@ -255,12 +237,7 @@ fn pasta_batch<C: Affine, P: PastaCurve, const N: usize>(
     let output = execute_batch(&inputs, executor::options(), &PoolExecutor);
     #[cfg(test)]
     tests::record_dispatch();
-    Some(output.map(|point| {
-        let result = ProjectiveAdapter::new(point);
-        *(&result as &dyn Any)
-            .downcast_ref::<C::Projective>()
-            .expect("the selected Pasta curve's projective type")
-    }))
+    Some(output.map(projective::<C, P>))
 }
 
 fn execute_batch<C: PastaCurve, X: Executor, const N: usize>(
@@ -297,19 +274,15 @@ fn pasta<C: Affine, P: PastaCurve>(scalars: &dyn Any, bases: &dyn Any) -> Option
     let scalars = scalars
         .downcast_ref::<Vec<FieldAdapter<P::Scalar>>>()
         .expect("the selected Pasta curve's scalar type");
-    let result = ProjectiveAdapter::new(execute(
+    let result = execute(
         FieldAdapter::as_slice(scalars),
         AffineAdapter::as_slice(bases),
         executor::options(),
         &PoolExecutor,
-    ));
+    );
     #[cfg(test)]
     tests::record_dispatch();
-    Some(
-        *(&result as &dyn Any)
-            .downcast_ref::<C::Projective>()
-            .expect("the selected Pasta curve's projective type"),
-    )
+    Some(projective::<C, P>(result))
 }
 
 fn execute<C: PastaCurve, X: Executor>(
@@ -326,19 +299,24 @@ fn execute<C: PastaCurve, X: Executor>(
     )
 }
 
+/// Executes one MSM over a prepared bank with one scalar per base.
 pub(super) fn execute_prepared<C: PastaCurve, X: Executor>(
     scalars: &[PastaField<C::Scalar>],
-    bases: &[PreparedAffinePoint<C>],
+    bases: Bases<'_, C>,
     options: ExecutionOptions,
     executor: &X,
     buffers: &mut MsmBuffers<C>,
 ) -> ProjectivePoint<C> {
-    execute_input(
-        Input::new(Bases::Prepared(bases), scalars),
-        options,
-        executor,
-        buffers,
-    )
+    execute_input(Input::new(bases, scalars), options, executor, buffers)
+}
+
+/// Converts a Pasta result to the caller's projective type, which a checked
+/// downcast of the inputs has already identified as `P`'s.
+pub(super) fn projective<C: Affine, P: PastaCurve>(point: ProjectivePoint<P>) -> C::Projective {
+    let result = ProjectiveAdapter::new(point);
+    *(&result as &dyn Any)
+        .downcast_ref::<C::Projective>()
+        .expect("the selected Pasta curve's projective type")
 }
 
 fn execute_input<C: PastaCurve, X: Executor>(

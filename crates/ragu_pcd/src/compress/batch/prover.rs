@@ -5,11 +5,11 @@ use alloc::{borrow::Cow, vec::Vec};
 use ragu_backend::Backend;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{FixedGenerators, Result};
-use udon::{curve::Affine, field::Field};
+use udon::curve::Affine;
 
 use super::{Batch, check_claims};
 use crate::{
-    compress::revdot::OpeningClaim, ipa::IpaTranscript,
+    committer::Committer, compress::revdot::OpeningClaim, ipa::IpaTranscript,
     profile::online::prover::alpha_batched_quotients,
 };
 
@@ -31,7 +31,7 @@ pub(crate) struct Witness<F> {
 pub(crate) fn batch<C: Affine, R: Rank, B: Backend>(
     polys: &[Cow<'_, sparse::Polynomial<C::Scalar, R>>],
     claims: &[OpeningClaim<C::Scalar>],
-    generators: &impl FixedGenerators<C>,
+    committer: &Committer<'_, C, impl FixedGenerators<C>, B>,
     transcript: &mut impl IpaTranscript<C>,
 ) -> Result<(Batch<C>, Witness<C::Scalar>)> {
     check_claims(claims)?;
@@ -46,7 +46,7 @@ pub(crate) fn batch<C: Affine, R: Rank, B: Backend>(
             .collect(),
         alpha,
     );
-    let f_commitment = B::sparse_commit_to_affine(&f, generators);
+    let f_commitment = committer.commit(&f);
     transcript.write_point(f_commitment)?;
 
     let u = transcript.squeeze_challenge()?;
@@ -57,14 +57,10 @@ pub(crate) fn batch<C: Affine, R: Rank, B: Backend>(
 
     // p: f and every polynomial, folded under beta with f weighted highest.
     let beta = transcript.squeeze_challenge()?;
-    let mut terms = Vec::with_capacity(polys.len() + 1);
-    let mut power = C::Scalar::ONE;
-    for poly in polys.iter().rev() {
-        terms.push((poly.as_ref(), power));
-        power *= beta;
-    }
-    terms.push((&f, power));
-    let p = B::sparse_linear_combination(&terms);
+    let p = B::sparse_linear_combination(&sparse::Polynomial::fold_terms(
+        core::iter::once(&f).chain(polys.iter().map(AsRef::as_ref)),
+        beta,
+    ));
 
     Ok((
         Batch {

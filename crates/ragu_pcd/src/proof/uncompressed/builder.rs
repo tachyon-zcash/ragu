@@ -887,8 +887,10 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// polynomials.
     pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         *self.online_commitments.get_or_init(|| {
-            let polys = self.online_polynomials();
-            core::array::from_fn(|i| self.host.commit(&polys[i]))
+            self.host
+                .commit_many(self.online_polynomials())
+                .try_into()
+                .expect("one commitment per online polynomial")
         })
     }
     setter!(
@@ -905,12 +907,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// Lazily computes and caches the commitments of the step's own online
     /// Fq polynomials, deterministic in their coefficients.
     pub(crate) fn online_fq_commitments(&self) -> &[C::NestedCurve] {
-        self.online_fq_commitments.get_or_init(|| {
-            self.online_fq_polynomials()
-                .iter()
-                .map(|poly| self.nested.commit(poly))
-                .collect()
-        })
+        self.online_fq_commitments
+            .get_or_init(|| self.nested.commit_many(self.online_fq_polynomials()))
     }
     setter!(
         set_online_fq_openings,

@@ -406,15 +406,7 @@ pub(crate) fn fold<T: Foldable<F>, F: Field>(
     for i in (0..items.len().saturating_sub(1)).rev() {
         powers[i] = powers[i + 1] * scale_factor;
     }
-    let mut sum = T::default();
-    for (item, power) in items.iter().zip(powers) {
-        if power == F::ONE {
-            sum.fold_add_assign(item.borrow());
-        } else {
-            sum.fold_add_scaled(item.borrow(), power);
-        }
-    }
-    sum
+    combine(&items, &powers)
 }
 
 /// The group count and group size for two-layer revdot folding.
@@ -512,10 +504,16 @@ fn weights<F: Field>(r: F, m: usize) -> Vec<F> {
         .collect()
 }
 
+/// $\sum\_i w\_i \cdot \text{source}\_i$ for the weights $w$. A unit weight adds
+/// its value unscaled.
 fn combine<T: Foldable<F>, F: Field>(source: &[impl Borrow<T>], weights: &[F]) -> T {
     let mut result = T::default();
     for (value, &weight) in source.iter().zip(weights) {
-        result.fold_add_scaled(value.borrow(), weight);
+        if weight == F::ONE {
+            result.fold_add_assign(value.borrow());
+        } else {
+            result.fold_add_scaled(value.borrow(), weight);
+        }
     }
     result
 }

@@ -150,11 +150,6 @@ fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<
     }
 }
 
-/// The number of jobs [`Polynomial::linear_combination_parallel`] splits the
-/// coefficient range into. Stored coefficients are spread unevenly over the
-/// range, so there are more jobs than a pool has workers.
-const LINEAR_COMBINATION_JOBS: usize = 32;
-
 /// Adds the coefficients of $\sum\_i c\_i \cdot p\_i$ at the degrees
 /// `start..start + out.len()` to `out`.
 fn accumulate<F: Field, R: Rank>(terms: &[(&Polynomial<F, R>, F)], start: usize, out: &mut [F]) {
@@ -400,16 +395,18 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     }
 
     /// Computes the linear combination with the coefficient range split into
-    /// independent jobs. Returns exactly [`Self::linear_combination`].
+    /// one contiguous range per worker. Returns exactly
+    /// [`Self::linear_combination`].
+    ///
+    /// Udon's scheduler assigns ranges to jobs statically, so a finer split
+    /// would not balance unevenly stored coefficients: each job would still
+    /// take an equal run of consecutive ranges.
     pub fn linear_combination_parallel(terms: &[(&Self, F)]) -> Self {
         let mut dense = alloc::vec![F::ZERO; R::num_coeffs()];
-        let len = R::num_coeffs().div_ceil(LINEAR_COMBINATION_JOBS).max(1);
-        let mut jobs: Vec<(usize, &mut [F])> = dense
-            .chunks_mut(len)
-            .enumerate()
-            .map(|(job, out)| (job * len, out))
-            .collect();
-        ragu_core::for_each_mut(&mut jobs, |_, (start, out)| accumulate(terms, *start, out));
+        let len = R::num_coeffs().div_ceil(ragu_core::worker_count()).max(1);
+        ragu_core::for_each_chunk_mut(&mut dense, len, |chunk, out| {
+            accumulate(terms, chunk * len, out);
+        });
         Self::from_coeffs(dense)
     }
 
@@ -429,12 +426,32 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// $\alpha$:
     ///
     /// $$\text{fold} = \alpha^{k-1} p\_{0} + \alpha^{k-2} p\_{1} + \cdots + p\_{k-1}$$
+    ///
+    /// It is the [`linear_combination`](Self::linear_combination) of
+    /// [`fold_terms`](Self::fold_terms), so no pass rescales the running sum.
     pub fn fold<E: Borrow<Self>>(polys: impl IntoIterator<Item = E>, scale_factor: F) -> Self {
-        polys.into_iter().fold(Self::default(), |mut acc, poly| {
-            acc.scale(scale_factor);
-            acc.add_assign(poly.borrow());
-            acc
-        })
+        let polys: Vec<E> = polys.into_iter().collect();
+        Self::linear_combination(&Self::fold_terms(
+            polys.iter().map(Borrow::borrow),
+            scale_factor,
+        ))
+    }
+
+    /// The terms of [`fold`](Self::fold): each polynomial with its power of
+    /// `scale_factor`, $\alpha^{k-1}$ for the first through one for the
+    /// last, in input order. A backend's linear combination of them is the
+    /// fold.
+    pub fn fold_terms<'a>(
+        polys: impl IntoIterator<Item = &'a Self>,
+        scale_factor: F,
+    ) -> Vec<(&'a Self, F)> {
+        let mut terms: Vec<_> = polys.into_iter().map(|poly| (poly, F::ONE)).collect();
+        let mut power = F::ONE;
+        for (_, weight) in terms.iter_mut().rev() {
+            *weight = power;
+            power *= scale_factor;
+        }
+        terms
     }
 
     /// Evaluates this polynomial at `z` using reverse Horner's method by block.

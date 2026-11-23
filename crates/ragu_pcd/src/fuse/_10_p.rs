@@ -95,14 +95,10 @@ fn accumulate<B: ragu_backend::Backend, F: Field, R: Rank>(
     rest: &[&sparse::Polynomial<F, R>],
     beta: F,
 ) -> sparse::Polynomial<F, R> {
-    let mut terms = Vec::with_capacity(rest.len() + 1);
-    let mut power = F::ONE;
-    for poly in rest.iter().rev() {
-        terms.push((*poly, power));
-        power *= beta;
-    }
-    terms.push((first, power));
-    B::sparse_linear_combination(&terms)
+    B::sparse_linear_combination(&sparse::Polynomial::fold_terms(
+        core::iter::once(first).chain(rest.iter().copied()),
+        beta,
+    ))
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>

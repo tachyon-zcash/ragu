@@ -22,6 +22,7 @@ use super::{
 };
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
+    committer::Committer,
     internal::{
         ky::{self, NativeKy, NestedKy},
         nested,
@@ -132,7 +133,11 @@ fn native_round(app: &Application<'static, Pasta, TestR, HEADER_SIZE>, seed: u64
     let (reduction, witness) = reduce_native::<Pasta, TestR, ReferenceBackend>(
         &proof,
         &app.native_registry,
-        Pasta::host_generators(crate::pasta::baked()),
+        &Committer::<_, _, ReferenceBackend>::new::<TestR>(
+            Pasta::host_generators(crate::pasta::baked()),
+            false,
+            None,
+        ),
         y,
         z,
         &[],
@@ -248,7 +253,7 @@ fn nested_reduction_verifies() {
     let (reduction, witness) = reduce_nested::<Pasta, TestR, ReferenceBackend>(
         proof,
         &app.nested_registry,
-        generators,
+        &Committer::<_, _, ReferenceBackend>::new::<TestR>(generators, false, None),
         y,
         z,
         &[],

@@ -20,6 +20,7 @@ type EqAffine = <Pasta as Cycle>::HostCurve;
 use super::{Batch, Batched, prover::batch, verifier::verify};
 use crate::{
     Application, ApplicationBuilder, Proof,
+    committer::Committer,
     compress::revdot::{self, OpeningClaim, Openings, Reduction},
     internal::{
         ky::{self, NativeKy, NestedKy},
@@ -111,7 +112,7 @@ fn duplicate_claims<C: Affine>(generators: &impl FixedGenerators<C>) {
     let (messages, witness) = batch::<C, TestRank, ReferenceBackend>(
         &polys,
         &claims,
-        generators,
+        &Committer::<_, _, ReferenceBackend>::new::<TestRank>(generators, false, None),
         &mut BatchTranscript::new(),
     )
     .unwrap();
@@ -143,7 +144,12 @@ fn duplicate_claims<C: Affine>(generators: &impl FixedGenerators<C>) {
 
     let mut prover = BatchTranscript::new();
     assert!(matches!(
-        batch::<C, TestRank, ReferenceBackend>(&polys, &conflicting, generators, &mut prover),
+        batch::<C, TestRank, ReferenceBackend>(
+            &polys,
+            &conflicting,
+            &Committer::<_, _, ReferenceBackend>::new::<TestRank>(generators, false, None),
+            &mut prover,
+        ),
         Err(Error::InvalidWitness(_))
     ));
     prover.assert_unused();
@@ -185,8 +191,13 @@ where
     R: Rank,
     T: IpaTranscript<C>,
 {
-    let (messages, witness) =
-        batch::<C, R, ReferenceBackend>(polys, &openings.claims, generators, transcript).unwrap();
+    let (messages, witness) = batch::<C, R, ReferenceBackend>(
+        polys,
+        &openings.claims,
+        &Committer::<_, _, ReferenceBackend>::new::<R>(generators, false, None),
+        transcript,
+    )
+    .unwrap();
     let claim = verify::<_, ReferenceBackend, _>(
         &openings.commitments,
         &openings.claims,
@@ -285,7 +296,7 @@ fn native_batch_opens_through_the_ipa() {
     let (reduction, witness) = revdot::prover::reduce_native::<Pasta, TestR, ReferenceBackend>(
         proof,
         &app.native_registry,
-        generators,
+        &Committer::<_, _, ReferenceBackend>::new::<TestR>(generators, false, None),
         y,
         z,
         &[],
@@ -412,7 +423,7 @@ fn nested_batch_opens_through_the_ipa() {
     let (reduction, witness) = revdot::prover::reduce_nested::<Pasta, TestR, ReferenceBackend>(
         proof,
         &app.nested_registry,
-        generators,
+        &Committer::<_, _, ReferenceBackend>::new::<TestR>(generators, false, None),
         y,
         z,
         &[],
