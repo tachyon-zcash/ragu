@@ -64,7 +64,7 @@
 //! Like the rest of the fuzzing surface it is gated behind `unstable-fuzzing`
 //! — by the inner attribute at the top of this file, so the pipeline modules
 //! carry none — and is **not** part of the stable API. The source lives in
-//! `src/fuzzing/` with the rest of that surface, but the module is mounted
+//! `tests/fuzzing/` with the rest of that surface, but the module is mounted
 //! under `fuse` (see `fuse/mod.rs`) because it calls the pipeline's
 //! `pub(super)` steps; harnesses reach it through
 //! [`fuzzing::patcher`](crate::fuzzing::patcher). It deliberately mirrors
@@ -476,7 +476,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .nested_registry
             .at(nested::challenge::<C>(*w.value().take())?);
 
-        use crate::profile::online::{Phase, batch::Challenges, prepared::PreparationChallenges};
+        use crate::profile::online::{Phase, PreparationChallenges, circuit::Challenges};
         let mut preparation = PreparationChallenges {
             w: Some(*w.value().take()),
             y: None,

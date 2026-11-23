@@ -24,7 +24,7 @@
 pub mod corrupt;
 
 /// The patcher seam over the internal recursion circuits. The implementation
-/// is `fuzzing/patcher.rs`, mounted as `fuse::patcher`.
+/// is `tests/fuzzing/patcher.rs`, mounted as `fuse::patcher`.
 pub mod patcher {
     pub use crate::fuse::patcher::{
         CircuitSpec, InternalCircuitVisitor, OutputRef, Resolution, capture_internal_circuits,

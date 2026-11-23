@@ -2,7 +2,7 @@
 //! Mutable access to a [`Proof`]'s components, for the corruption vocabulary
 //! in [`fuzzing::corrupt`](crate::fuzzing::corrupt).
 //!
-//! The source lives in `src/fuzzing/` with the rest of the fuzzing surface,
+//! The source lives in `tests/fuzzing/` with the rest of the fuzzing surface,
 //! but the module is mounted as a child of `proof` (see `proof/mod.rs`): that
 //! is what lets it reach `Proof`'s private fields — the `Cached` bridge
 //! polynomials and the commitment caches — without loosening their
