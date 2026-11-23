@@ -861,6 +861,7 @@ dependencies = [
 name = "ragu_core"
 version = "0.0.0"
 dependencies = [
+ "blake2b_simd",
  "proptest",
  "ragu_macros",
  "ragu_testing",
@@ -1558,6 +1559,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fbc0479dbf7fa7c6c7de8857238d3c3c2cbef2e9dd774ddd83e6bf2259a6fed3"
 dependencies = [
+ "cc",
  "zakura-bento",
 ]
 

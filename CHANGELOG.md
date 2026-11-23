@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Polynomial`, `Rank`, `WalletRank` and `AcceleratedProver`.
   `ragu_primitives`, `ragu_circuits`, `ragu_pcd` and `ragu_acceleration` stay
   reachable as the `primitives`, `circuits`, `pcd` and `acceleration` modules.
-  Its `baked`, `std`, `multicore` and `test-utils` features forward to the
-  member crates.
+  Its `asm`, `baked`, `std`, `multicore` and `test-utils` features forward
+  to the member crates. `asm` is enabled by default and selects Udon's
+  AArch64 field assembly.
 - `ragu_pcd::bridge_hash`, with `digest` and `rx`: the bridge hash of a
   host-curve point computed outside the circuit, without an `Application`.
 - Proof compression: `Application::compress`, `Application::verify_compressed`,

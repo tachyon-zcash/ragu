@@ -23,6 +23,18 @@
 //! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
 //!   counterparts — versioned byte encodings for storing and transporting
 //!   proofs, defined in [`serialization`].
+//!
+//! The default `asm` feature enables Udon's AArch64 field arithmetic. On
+//! x86-64, Udon uses its own assembly only in a build whose target features
+//! include BMI2 and ADX, or with its `x86_64-asm` feature; it does not detect
+//! the CPU at run time, and any other x86-64 build uses portable Rust. Other
+//! targets and Miri use the portable Rust kernels. To select portable
+//! arithmetic on AArch64, disable default features and retain `alloc`; on
+//! x86-64, a build compiled for those extensions stays portable with Udon's
+//! `portable` feature (`--features udon/portable` for this crate).
+//! `multicore` is an independent, opt-in feature. Cargo unifies dependency
+//! features, so portable AArch64 builds must ensure no other dependency
+//! enables Udon's `aarch64-asm` feature.
 
 // Prover and verifier code.
 //

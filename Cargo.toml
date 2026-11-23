@@ -19,7 +19,11 @@ rustdoc-args = ["--html-in-header", "katex-header.html"]
 all-features = true
 
 [features]
-default = ["multicore"]
+default = ["asm", "multicore"]
+# Udon's AArch64 field assembly, as `ragu_pcd`'s default `asm` feature; see
+# `ragu_pcd`'s README. An x86-64 build uses Udon's assembly only when it is
+# compiled for BMI2 and ADX, whatever this feature says.
+asm = ["ragu_pcd/asm"]
 # Embeds the Pasta generators derived at build time; see `pasta`.
 baked = ["ragu_pcd/baked"]
 multicore = [

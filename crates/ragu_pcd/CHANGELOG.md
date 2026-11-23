@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Application::verify` consults, and support for
   `ragu_acceleration::AcceleratedProver`, which accelerates proving while
   verifying with the reference kernels.
+- Added the default `asm` feature for Udon's AArch64 field assembly.
 - Added `Application::verify_differential` under `test-utils`: checks a proof
   with both verifiers and asserts they agree, returning the uncompressed
   verdict. The adversarial test suites and the fuzz harness check every proof

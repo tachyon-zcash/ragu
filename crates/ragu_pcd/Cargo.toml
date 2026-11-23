@@ -29,11 +29,18 @@ all-features = true
 
 [features]
 alloc = []
+# Udon's AArch64 field assembly. An x86-64 build uses Udon's own assembly
+# regardless, when its target features include BMI2 and ADX or Udon's
+# `x86_64-asm` feature is enabled, unless Udon's `portable` feature is too.
+# Other builds and Miri use portable Rust. There is no `portable` passthrough:
+# `--all-features` would enable it and take an x86-64 build compiled for
+# those extensions off the assembly.
+asm = ["udon/aarch64-asm"]
 # Embeds the Pasta generators derived at build time; see `pasta`.
 baked = ["alloc", "dep:bento", "dep:lazy_static"]
 # Additional, separately loaded generators for Aggregator extensions above R<13>.
 baked-aggregator = ["baked"]
-default = ["alloc"]
+default = ["alloc", "asm"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = ["alloc", "ragu_core/std"]
 # `serde::{Serialize, Deserialize}` for `Proof` and `CompressedProof`, as their wire bytes.

@@ -40,6 +40,7 @@ ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 thiserror = { version = "2.0.12", default-features = false }
 
 [dev-dependencies]
+blake2b_simd = { workspace = true }
 rand = { workspace = true }
 proptest = { workspace = true }
 ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
