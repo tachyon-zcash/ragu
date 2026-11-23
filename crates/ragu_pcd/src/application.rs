@@ -4,7 +4,7 @@
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder},
@@ -34,12 +34,15 @@ type ApplicationRegistration<'params, C, R> = Box<
 >;
 
 /// Builder for an [`Application`] for proof-carrying data.
+///
+/// Independent work uses [`AcceleratedBackend`] by default. Select another
+/// backend explicitly with [`Self::with_backend`].
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     pub(crate) native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     pub(crate) nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -609,7 +612,7 @@ pub struct Application<
     C: ProfiledCycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     pub(crate) native_registry: Registry<'params, C::CircuitField, R>,
     pub(crate) nested_registry: Registry<'params, C::ScalarField, R>,

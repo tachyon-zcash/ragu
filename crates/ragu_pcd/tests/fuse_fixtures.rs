@@ -15,7 +15,11 @@
 //! (see [`crate::ipa::fingerprint`]), and its transcript schedule and final
 //! MSMs must match the committed record, so a change to how it reads a proof
 //! shows even when its verdict does not. Tampered copies must be rejected,
-//! and at the check they should fail.
+//! and at the check they should fail. The checks run once per verifier
+//! backend, the accelerated default and the reference, against the same
+//! committed records: the recorder sees what the verifier absorbs, squeezes
+//! and multiplies, and each MSM's verdict, all of which every backend must
+//! reproduce.
 //!
 //! Each scenario is one proof in a fixed tree of fuses. Its honest proof has
 //! three files in `honest/`:
@@ -97,6 +101,7 @@ use core::{convert::Infallible, marker::PhantomData};
 use std::{fs, path::PathBuf};
 
 use blake2b_simd::{Params, State};
+use ragu_acceleration::AcceleratedBackend;
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
     polynomials::{AggregatorRank, Rank, WalletRank, sparse},
@@ -145,7 +150,8 @@ use crate::{
 };
 
 const HEADER_SIZE: usize = 4;
-type App<C> = Application<'static, C, <C as FixtureCycle>::Rank, HEADER_SIZE>;
+type App<C, B = AcceleratedBackend> =
+    Application<'static, C, <C as FixtureCycle>::Rank, HEADER_SIZE, B>;
 type TestPcd<C> = Pcd<C, <C as FixtureCycle>::Rank, Value>;
 
 /// A profile of the Pasta cycle the fixtures prove in.
@@ -154,17 +160,29 @@ trait FixtureCycle: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params =
     type Rank: Rank;
     /// The profile's fixture directory, under `tests/fixtures/fuse`.
     const DIR: &'static str;
-    /// The fixtures' application: their four steps, on the aggregator-rank
-    /// parameters, which the aggregator's decompression needs; their prefix
-    /// is the Standard tables, so the wallet's proofs are the same as over
-    /// those.
-    fn app() -> App<Self>;
+
+    /// The fixtures' application on backend `B`: their four steps, on the
+    /// aggregator-rank parameters, which the aggregator's decompression
+    /// needs; their prefix is the Standard tables, so the wallet's proofs
+    /// are the same as over those.
+    fn build<B: SelectableBackend>() -> App<Self, B>;
+
+    /// The fixtures' application.
+    fn app() -> App<Self> {
+        Self::build()
+    }
+
+    /// The same application on the reference backend, whose verifier must
+    /// reproduce the committed fingerprints.
+    fn reference_app() -> App<Self, ReferenceBackend> {
+        Self::build()
+    }
 }
 
 /// The fixtures' four steps, registered.
-fn steps<C: FixtureCycle>(
-    builder: ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE>,
-) -> ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE> {
+fn steps<C: FixtureCycle, B: SelectableBackend>(
+    builder: ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE, B>,
+) -> ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE, B> {
     builder
         .register(Seed::new())
         .and_then(|b| b.register(Merge::new()))
@@ -177,7 +195,7 @@ impl FixtureCycle for Pasta {
     type Rank = WalletRank;
     const DIR: &'static str = "standard";
 
-    fn app() -> App<Self> {
+    fn build<B: SelectableBackend>() -> App<Self, B> {
         steps(ApplicationBuilder::new())
             .finalize(crate::pasta::baked_aggregator())
             .expect("the wallet application must build")
@@ -191,8 +209,8 @@ impl FixtureCycle for Profiled<Pasta, Aggregator<HEADER_SIZE>> {
     /// The aggregator over the wallet application, whose canonical
     /// compressed proof is compressed under a fixed seed, so that the
     /// chunks every fuse runs over it are the same.
-    fn app() -> App<Self> {
-        let decompression = Decompression::new(Pasta::app(), &mut Tape::new(seed(0xa66)))
+    fn build<B: SelectableBackend>() -> App<Self, B> {
+        let decompression = Decompression::new(Pasta::build::<B>(), &mut Tape::new(seed(0xa66)))
             .expect("the canonical decompression prepares");
         steps(ApplicationBuilder::new())
             .finalize_with(crate::pasta::baked_aggregator(), decompression)
@@ -1512,8 +1530,8 @@ fn decode_fixture<C: Cycle, H: FixtureHeader>(
 }
 
 /// Runs the compressed verifier under the fingerprint recorder.
-fn verifier_run<C: FixtureCycle, H: FixtureHeader>(
-    app: &App<C>,
+fn verifier_run<C: FixtureCycle, H: FixtureHeader, B: SelectableBackend>(
+    app: &App<C, B>,
     data: H::Data,
     proof: CompressedProof<C>,
 ) -> (Result<bool>, Vec<Event>) {
@@ -1610,7 +1628,7 @@ fn accepted_fingerprint<C: FixtureCycle, H: FixtureHeader>(
     bytes: &[u8],
 ) -> Lines {
     let (data, proof) = decode_fixture::<C, H>(bytes).expect("the encoded proof decodes");
-    let (verdict, events) = verifier_run::<C, H>(app, data, proof);
+    let (verdict, events) = verifier_run::<C, H, _>(app, data, proof);
     assert!(
         matches!(verdict, Ok(true)),
         "{label}: the verifier rejected the proof just produced"
@@ -1631,7 +1649,7 @@ fn rejected_fingerprint<C: FixtureCycle, H: FixtureHeader>(
     bytes: &[u8],
 ) -> Lines {
     let (data, proof) = decode_fixture::<C, H>(bytes).expect("the fabricated proof decodes");
-    let (verdict, events) = verifier_run::<C, H>(app, data, proof);
+    let (verdict, events) = verifier_run::<C, H, _>(app, data, proof);
     assert!(
         matches!(verdict, Ok(false)),
         "{label}: the verifier did not reject the random proof"
@@ -1712,7 +1730,7 @@ fn fabricate<C: FixtureCycle, H: FixtureHeader>(
         .unwrap_or_else(|| panic!("{label}: no draw had usable challenges"));
 
     proof.native.reduction.q_at_r = host_q_at_r::<C, H>(app, &data, &proof);
-    let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof.clone());
+    let (verdict, events) = verifier_run::<C, H, _>(app, data.clone(), proof.clone());
     assert!(
         matches!(verdict, Ok(false)) && msm_verdicts(&events) == [false],
         "{label}: the planted q(r) does not carry the random proof to the host MSM"
@@ -1992,8 +2010,8 @@ fn compare_fingerprint(
 /// The committed random string decodes and re-encodes to the same bytes,
 /// the verifier rejects it at the host MSM, and its run matches the
 /// committed `.fingerprint`.
-fn verify_random<C: FixtureCycle, H: FixtureHeader>(
-    app: &App<C>,
+fn verify_random<C: FixtureCycle, H: FixtureHeader, B: SelectableBackend>(
+    app: &App<C, B>,
     fixtures: &Fixtures,
     name: &str,
     failures: &mut Vec<String>,
@@ -2003,7 +2021,7 @@ fn verify_random<C: FixtureCycle, H: FixtureHeader>(
     else {
         return;
     };
-    let (verdict, events) = verifier_run::<C, H>(app, data, proof);
+    let (verdict, events) = verifier_run::<C, H, _>(app, data, proof);
     if !matches!(verdict, Ok(false)) {
         failures.push(format!(
             "{label}: the verifier did not reject the random proof"
@@ -2020,8 +2038,8 @@ fn verify_random<C: FixtureCycle, H: FixtureHeader>(
 /// verifier accepts it without re-proving, and its run matches the
 /// committed `.fingerprint`; and each tampered copy is rejected where it
 /// should be, as zakura-common's rejected Orchard captures are.
-fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
-    app: &App<C>,
+fn verify_fixture<C: FixtureCycle, H: FixtureHeader, B: SelectableBackend>(
+    app: &App<C, B>,
     fixtures: &Fixtures,
     name: &str,
     failures: &mut Vec<String>,
@@ -2032,7 +2050,7 @@ fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
         return;
     };
 
-    let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof.clone());
+    let (verdict, events) = verifier_run::<C, H, _>(app, data.clone(), proof.clone());
     if !matches!(verdict, Ok(true)) {
         failures.push(format!(
             "{label}: the verifier rejected the committed compressed proof"
@@ -2044,7 +2062,7 @@ fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
     // MSMs are rejected there: a wrong host-curve IPA scalar fails the host
     // MSM, and a wrong nested one passes the host MSM and fails the nested.
     let mut rejected = |what: &str, proof: CompressedProof<C>, expected: Option<&[bool]>| {
-        let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof);
+        let (verdict, events) = verifier_run::<C, H, _>(app, data.clone(), proof);
         if !matches!(verdict, Ok(false)) {
             failures.push(format!("{label}: a proof with {what} was not rejected"));
         } else if let Some(expected) = expected
@@ -2077,23 +2095,41 @@ fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
     rejected("a wrong claimed v", tampered, None);
 }
 
+/// Every check of [`verifier_fixtures`] on `app`'s verifier, each failure
+/// naming `backend`.
+fn verify_all<C: FixtureCycle, B: SelectableBackend>(
+    app: &App<C, B>,
+    fixtures: &Fixtures,
+    backend: &str,
+    failures: &mut Vec<String>,
+) {
+    let mut found = Vec::new();
+    verify_fixture::<C, (), B>(app, fixtures, BOOTSTRAP, &mut found);
+    verify_random::<C, (), B>(app, fixtures, BOOTSTRAP, &mut found);
+    for name in [SEED_A, UNIT_LEFT, MERGE_AB, MERGE_ABCD, RERANDOMIZE] {
+        verify_fixture::<C, Value, B>(app, fixtures, name, &mut found);
+        verify_random::<C, Value, B>(app, fixtures, name, &mut found);
+    }
+    failures.extend(
+        found
+            .into_iter()
+            .map(|failure| format!("{backend} verifier: {failure}")),
+    );
+}
+
 /// The verifier accepts every committed compressed proof of `C`'s profile,
 /// as its committed fingerprint records, and rejects tampered copies and the
-/// random strings, the latter at the host MSM as theirs record.
+/// random strings, the latter at the host MSM as theirs record. The
+/// accelerated and the reference verifier each check the same records.
 fn verifier_fixtures<C: FixtureCycle>() {
     if writing() {
         // The prover test is rewriting the files, fingerprints included.
         return;
     }
     let fixtures = Fixtures::of::<C>();
-    let app = C::app();
     let mut failures = Vec::new();
-    verify_fixture::<C, ()>(&app, &fixtures, BOOTSTRAP, &mut failures);
-    verify_random::<C, ()>(&app, &fixtures, BOOTSTRAP, &mut failures);
-    for name in [SEED_A, UNIT_LEFT, MERGE_AB, MERGE_ABCD, RERANDOMIZE] {
-        verify_fixture::<C, Value>(&app, &fixtures, name, &mut failures);
-        verify_random::<C, Value>(&app, &fixtures, name, &mut failures);
-    }
+    verify_all(&C::app(), &fixtures, "accelerated", &mut failures);
+    verify_all(&C::reference_app(), &fixtures, "reference", &mut failures);
     assert!(
         failures.is_empty(),
         "the verifier fixtures changed:\n  {}\n\nIf the change is intended, regenerate them with\n    {REGENERATE}\nand review the diff.",

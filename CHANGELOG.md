@@ -96,7 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The PCD transcript tag is `ragu-pcd-v1`; proofs made under the placeholder
   tag do not verify. Compression has its own tag, `ragu-ipa-v1`.
 - `ApplicationBuilder` and `Application` take a fourth type parameter
-  `B: SelectableBackend`, defaulting to `ragu_backend::ReferenceBackend`.
+  `B: SelectableBackend`, defaulting to `ragu_acceleration::AcceleratedBackend`
+  for both proving and verification. Select `AcceleratedProver` for
+  accelerated proving with reference verification, or `ReferenceBackend`
+  for reference proving and verification.
 - Random-number bounds use `rand 0.10`'s `CryptoRng` instead of
   `CryptoRngCore` on `seed`, `fuse`, `rerandomize` and `verify`.
 - Header suffix `2` is reserved for the internal `Dummy` header; application
