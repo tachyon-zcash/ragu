@@ -95,7 +95,8 @@ mod revdot {
                 registry,
                 sampled.sigma,
             )
-            .unwrap();
+            .unwrap()
+            .masked;
         let shapes = claims::native_shapes::<Standard, _>(sampled.z, &masked).unwrap();
         let targets: Vec<Fp> = native::claims::ky_values::<Standard, _>(&targets)
             .take(shapes.len())
@@ -144,7 +145,8 @@ mod revdot {
         let (_, targets) = setup.targets(native_sampled.y, sampled.y);
         let masked = instance
             .nested_bindings::<TestR, ReferenceBackend>(&setup.challenges, registry, sampled.sigma)
-            .unwrap();
+            .unwrap()
+            .masked;
         let shapes = claims::nested_shapes::<Standard, _>(sampled.z, &masked).unwrap();
         let targets: Vec<Fq> = nested::claims::ky_values::<Standard, _>(&targets)
             .take(shapes.len())
@@ -895,7 +897,8 @@ mod derive {
                 registry,
                 sampled.sigma,
             )
-            .unwrap();
+            .unwrap()
+            .masked;
         let shapes = claims::native_shapes::<Standard, _>(lifted.z, &masked).unwrap();
         let position = |component| crate::compress::revdot::native_position::<Standard>(component);
         let shapes = shapes
@@ -984,7 +987,8 @@ mod derive {
 
         let masked = instance
             .nested_bindings::<TestR, ReferenceBackend>(&setup.challenges, registry, sampled.sigma)
-            .unwrap();
+            .unwrap()
+            .masked;
         let shapes = claims::nested_shapes::<Standard, _>(lifted.z, &masked).unwrap();
         let position = |component| crate::compress::revdot::nested_position::<Standard>(component);
         let shapes = shapes

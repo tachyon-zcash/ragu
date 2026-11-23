@@ -154,7 +154,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             let registry = &self.native_registry;
             let generators = C::host_generators(self.params);
             let Sampled { w, y, z, sigma } = native_sampled;
-            let masked =
+            let bindings =
                 instance.native_bindings::<R, B, HEADER_SIZE>(&challenges, registry, sigma)?;
             let (reduction, witness) = revdot::prover::reduce_native::<C, R, B>(
                 proof,
@@ -162,13 +162,17 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 generators,
                 y,
                 z,
-                &masked,
+                &bindings.masked,
                 &mut Lifted(transcript.host()),
             )?;
             let mut openings = witness.openings(&reduction, z)?;
             let mut polys = witness.polys();
-            let (commitments, claims) =
-                instance.native_openings::<R, B>(&challenges, registry, w, polys.len());
+            let (commitments, claims) = instance.native_openings::<R, B>(
+                &challenges,
+                &bindings.registry_xy,
+                w,
+                polys.len(),
+            );
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
             polys.extend(
@@ -234,20 +238,24 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             let registry = &self.nested_registry;
             let generators = C::nested_generators(self.params);
             let Sampled { w, y, z, sigma } = nested_sampled;
-            let masked = instance.nested_bindings::<R, B>(&challenges, registry, sigma)?;
+            let bindings = instance.nested_bindings::<R, B>(&challenges, registry, sigma)?;
             let (reduction, witness) = revdot::prover::reduce_nested::<C, R, B>(
                 proof,
                 registry,
                 generators,
                 y,
                 z,
-                &masked,
+                &bindings.masked,
                 &mut Lifted(transcript.nested()),
             )?;
             let mut openings = witness.openings(&reduction, z)?;
             let mut polys = witness.polys();
-            let (commitments, claims) =
-                instance.nested_openings::<R, B>(&challenges, registry, w, polys.len())?;
+            let (commitments, claims) = instance.nested_openings::<R, B>(
+                &challenges,
+                &bindings.registry_xy,
+                w,
+                polys.len(),
+            )?;
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
             polys.extend(

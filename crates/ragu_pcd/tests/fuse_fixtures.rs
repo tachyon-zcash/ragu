@@ -1821,7 +1821,8 @@ fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
 
     let masked = instance
         .native_bindings::<C::Rank, Checker, HEADER_SIZE>(&challenges, registry, sigma)
-        .expect("the bindings are computed");
+        .expect("the bindings are computed")
+        .masked;
     let shapes = claims::native_shapes::<C::Profile, _>(z, &masked).expect("the claims are shaped");
     let mut host = Lifted(transcript.host());
     let weights = reduction.fold.replay(&mut host).expect("the fold replays");

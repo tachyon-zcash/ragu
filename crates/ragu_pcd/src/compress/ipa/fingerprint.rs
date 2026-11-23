@@ -13,8 +13,8 @@
 //! [`MSM`]: super::MSM
 
 #[cfg(test)]
-pub(crate) use recorder::{Event, capture};
-pub(crate) use recorder::{record_challenge, record_msm, record_point, record_scalar};
+pub(crate) use recorder::{Event, capture, record_msm};
+pub(crate) use recorder::{record_challenge, record_point, record_scalar};
 
 #[cfg(not(test))]
 mod recorder {
@@ -28,15 +28,6 @@ mod recorder {
 
     #[inline]
     pub(crate) fn record_challenge<F: Field>(_challenge: &F) {}
-
-    #[inline]
-    pub(crate) fn record_msm<P: Affine>(
-        _scalars: &[P::Scalar],
-        _bases: &[P],
-        _proof_dependent_bases: usize,
-        _identity: bool,
-    ) {
-    }
 }
 
 #[cfg(test)]
@@ -99,16 +90,17 @@ mod recorder {
         record(|| Event::Challenge(field(value)));
     }
 
-    /// Records the MSM's scalars and the proof-dependent prefix of its bases.
+    /// Records scalars in evaluation order, including separately evaluated
+    /// prepared scalars, and the proof-dependent bases.
     pub(crate) fn record_msm<P: Affine>(
         scalars: &[P::Scalar],
-        bases: &[P],
-        proof_dependent_bases: usize,
+        prepared_scalars: &[P::Scalar],
+        proof_dependent_bases: &[P],
         identity: bool,
     ) {
         record(|| Event::Msm {
-            scalars: scalars.iter().map(field).collect(),
-            bases: bases[..proof_dependent_bases].iter().map(point).collect(),
+            scalars: scalars.iter().chain(prepared_scalars).map(field).collect(),
+            bases: proof_dependent_bases.iter().map(point).collect(),
             identity,
         });
     }

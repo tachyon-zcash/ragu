@@ -1,7 +1,7 @@
 //! The application: [`ApplicationBuilder`] registers the steps and finalizes
 //! into the [`Application`] in which proofs are made and checked.
 
-use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
 use ragu_acceleration::AcceleratedBackend;
@@ -10,7 +10,7 @@ use ragu_circuits::{
     registry::{Registry, RegistryBuilder},
     staging,
 };
-use ragu_core::{Cycle, Error, Result};
+use ragu_core::{Cycle, Error, FixedGenerators, PreparedMsm, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 
 use crate::{
@@ -487,17 +487,40 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_domain,
         )?;
 
+        // TODO: In terms of how it currently works, `finalize` builds the
+        // registries and derives the tags on every wallet startup. We'll
+        // eventually refactor toward the app pinning the two registry
+        // tags as constants (rederived and checked by a CI test) and
+        // shipping them in the wallet binary as a trusted build artifact,
+        // which the wallet loads at startup instead of hashing. This just
+        // felt like a good interstitial step towards that.
+        let native_registry = self.native_registry.finalize()?;
+        let nested_registry = self.nested_registry.finalize()?;
+        let host_generators = C::host_generators(params);
+        let nested_generators = C::nested_generators(params);
+        type Verifier<B> = <B as SelectableBackend>::Verifier;
+        let native_ipa_generators = <Verifier<B> as ragu_backend::Backend>::prepare_msm(
+            &host_generators.g()[..R::num_coeffs()],
+        )
+        .map(Arc::new);
+        let nested_ipa_generators = <Verifier<B> as ragu_backend::Backend>::prepare_msm(
+            &nested_generators.g()[..R::num_coeffs()],
+        )
+        .map(Arc::new);
+
         let mut app = Application {
             native_source: self.native_source,
             nested_source: self.nested_source,
-            native_registry: self.native_registry.finalize()?,
-            nested_registry: self.nested_registry.finalize()?,
+            native_registry,
+            nested_registry,
             params,
             num_application_steps: self.num_application_steps,
             #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
+            native_ipa_generators,
+            nested_ipa_generators,
             context,
             _marker: PhantomData,
         };
@@ -640,6 +663,9 @@ pub struct Application<
     /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
     /// `Application`.
     pub(crate) bootstrap: Option<Proof<C, R>>,
+    /// Fixed IPA bases prepared once during application startup.
+    pub(crate) native_ipa_generators: Option<Arc<PreparedMsm<C::HostCurve>>>,
+    pub(crate) nested_ipa_generators: Option<Arc<PreparedMsm<C::NestedCurve>>>,
     pub(crate) _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 

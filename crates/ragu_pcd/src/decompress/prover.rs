@@ -721,12 +721,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         let native = {
             let registry = &app.native_registry;
-            let masked = instance.native_bindings::<K, Verifier<B>, HEADER_SIZE>(
+            let bindings = instance.native_bindings::<K, Verifier<B>, HEADER_SIZE>(
                 &fuse,
                 registry,
                 native_sampled.sigma,
             )?;
-            let shapes = claims::native_shapes::<Standard, _>(native_sampled.z, &masked)?;
+            let shapes = claims::native_shapes::<Standard, _>(native_sampled.z, &bindings.masked)?;
             let kinds = shapes.iter().map(|shape| shape.kind).collect();
             let mut openings = crate::compress::revdot::verify_native::<C, K, Verifier<B>>(
                 |component| instance.native_commitment(component),
@@ -734,14 +734,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 native_sampled.y,
                 native_sampled.z,
                 &native_targets,
-                &masked,
+                &bindings.masked,
                 &proof.native.reduction,
                 &mut Lifted(lifted.host()),
             )?
             .ok_or_else(|| Error::InvalidWitness("the native reduction fails".into()))?;
             let (commitments, claims) = instance.native_openings::<K, Verifier<B>>(
                 &fuse,
-                registry,
+                &bindings.registry_xy,
                 native_sampled.w,
                 openings.commitments.len(),
             );
@@ -757,7 +757,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                     messages: &proof.native,
                     openings: &openings,
                     registry,
-                    masked: masked
+                    masked: bindings
+                        .masked
                         .iter()
                         .map(|m| {
                             (
@@ -782,12 +783,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         let nested = {
             let registry = &app.nested_registry;
-            let masked = instance.nested_bindings::<K, Verifier<B>>(
+            let bindings = instance.nested_bindings::<K, Verifier<B>>(
                 &fuse,
                 registry,
                 nested_sampled.sigma,
             )?;
-            let shapes = claims::nested_shapes::<Standard, _>(nested_sampled.z, &masked)?;
+            let shapes = claims::nested_shapes::<Standard, _>(nested_sampled.z, &bindings.masked)?;
             let kinds = shapes.iter().map(|shape| shape.kind).collect();
             let mut openings = crate::compress::revdot::verify_nested::<C, K, Verifier<B>>(
                 |component| instance.nested_commitment(component),
@@ -795,14 +796,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 nested_sampled.y,
                 nested_sampled.z,
                 &nested_targets,
-                &masked,
+                &bindings.masked,
                 &proof.nested.reduction,
                 &mut Lifted(lifted.nested()),
             )?
             .ok_or_else(|| Error::InvalidWitness("the nested reduction fails".into()))?;
             let (commitments, claims) = instance.nested_openings::<K, Verifier<B>>(
                 &fuse,
-                registry,
+                &bindings.registry_xy,
                 nested_sampled.w,
                 openings.commitments.len(),
             )?;
@@ -816,7 +817,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                     messages: &proof.nested,
                     openings: &openings,
                     registry,
-                    masked: masked
+                    masked: bindings
+                        .masked
                         .iter()
                         .map(|m| {
                             (
