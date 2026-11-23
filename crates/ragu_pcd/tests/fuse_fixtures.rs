@@ -35,7 +35,7 @@
 //!   rank, so this stands in for committing it: a mismatch names the fields
 //!   that drifted, and the file's diff in a pull request reads as the list
 //!   of stages the change touched. The `wire.*` lines then pin the wire
-//!   format (see `crate::wire`): the codec's field order, the length and
+//!   format (see `crate::serialization`): the codec's field order, the length and
 //!   digest of the proof's and the compressed proof's payload bytes. A change
 //!   to the proof's fields, their order, a codec
 //!   or an element's spelling fails them until the fixtures are regenerated
@@ -1472,7 +1472,7 @@ fn wire_lines<C: FixtureCycle>(
 ) {
     lines.push(
         "wire.fields",
-        super::codec::WIRE_FIELDS
+        crate::serialization::WIRE_FIELDS
             .iter()
             .copied()
             .filter(|&name| name != "nested_online_fold" || !proof.nested_online_fold.is_empty())
@@ -1491,11 +1491,11 @@ fn wire_lines<C: FixtureCycle>(
             .join(","),
     );
     let bytes = proof.to_bytes().unwrap();
-    let payload = &bytes[crate::wire::ENVELOPE_SIZE..];
+    let payload = &bytes[crate::serialization::ENVELOPE_SIZE..];
     lines.push("wire.proof.bytes", payload.len());
     lines.push("wire.proof.digest", digest(|d| d.bytes(payload)));
     let bytes = compressed.to_bytes().unwrap();
-    let payload = &bytes[crate::wire::ENVELOPE_SIZE..];
+    let payload = &bytes[crate::serialization::ENVELOPE_SIZE..];
     lines.push("wire.compressed.bytes", payload.len());
     lines.push("wire.compressed.digest", digest(|d| d.bytes(payload)));
 }

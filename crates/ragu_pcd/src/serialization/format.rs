@@ -7,7 +7,7 @@ use ragu_circuits::polynomials::Rank;
 use crate::{
     CompressedProof, Proof,
     profile::ProfiledCycle,
-    wire::{Decode, Dimensions, Encode, Error, MAX_RANK, Reader},
+    serialization::{Decode, Dimensions, Encode, Error, MAX_RANK, Reader},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
@@ -94,8 +94,8 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     /// # Errors
     ///
     /// Returns [`Error::Unencodable`] if dimensions exceed the limits in
-    /// [`wire`](crate::wire), vectors have inconsistent lengths or any point
-    /// is the identity.
+    /// [`serialization`](crate::serialization), vectors have inconsistent
+    /// lengths or any point is the identity.
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
         encode(self, PayloadKind::Proof, Dimensions::of::<R>())
     }
@@ -135,8 +135,8 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// # Errors
     ///
     /// Returns [`Error::Unencodable`] if dimensions exceed the limits in
-    /// [`wire`](crate::wire), vectors have inconsistent lengths or any point
-    /// is the identity.
+    /// [`serialization`](crate::serialization), vectors have inconsistent
+    /// lengths or any point is the identity.
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
         let dims = Dimensions {
             rank: self

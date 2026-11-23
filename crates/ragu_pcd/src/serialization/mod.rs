@@ -74,22 +74,25 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::{marker::PhantomData, mem::size_of};
 
-use ragu_circuits::polynomials::Rank;
+use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
 use ragu_primitives::vec::Len;
 use udon::{curve::Affine, field::Field};
 
 mod compressed;
 mod format;
 mod polynomial;
-mod registry;
 #[cfg(feature = "serde")]
 mod serde;
 #[cfg(test)]
+#[path = "../../tests/serialization/codecs.rs"]
 mod tests;
+mod uncompressed;
 
 #[cfg(any(test, feature = "serde"))]
 pub(crate) use format::ENVELOPE_SIZE;
 pub use format::{PayloadKind, read_payload_kind};
+#[cfg(test)]
+pub(crate) use uncompressed::WIRE_FIELDS;
 
 /// Largest compressed rank admitted by the byte formats.
 pub(crate) const MAX_RANK: u32 = 32;
@@ -306,6 +309,25 @@ macro_rules! integer {
     )*};
 }
 integer!(u8, u16, u32, u64);
+
+// A circuit index is a `u32` on the wire; `usize` is its only conversion out.
+impl Encode for CircuitIndex {
+    fn encode(&self, output: &mut Vec<u8>, dims: Dimensions) -> Result<(), Error<'static>> {
+        u32::try_from(usize::from(*self))
+            .expect("circuit index fits a u32")
+            .encode(output, dims)
+    }
+}
+
+impl Decode for CircuitIndex {
+    fn encoded_len(_: Dimensions) -> usize {
+        4
+    }
+
+    fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
+        u32::decode(reader, dims).map(CircuitIndex::from_u32)
+    }
+}
 
 impl<F: Field> Encode<Scalar> for F {
     fn encode(&self, output: &mut Vec<u8>, _: Dimensions) -> Result<(), Error<'static>> {

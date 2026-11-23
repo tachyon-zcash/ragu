@@ -7,7 +7,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use udon::curve::Affine as CurveAffine;
 
 use super::Proof;
-use crate::{Application, ApplicationBuilder, wire};
+use crate::{Application, ApplicationBuilder, serialization};
 
 type TestApp = Application<'static, Pasta, WalletRank, 4>;
 type TestProof = Proof<Pasta, WalletRank>;
@@ -61,12 +61,12 @@ fn rejects_malformed_vector_lengths() {
 }
 
 // The identity has no encoding, and the decoder rejects its canonical bytes
-// (see the `wire` unit tests); in memory the verifier rejects it, as it
+// (see the `serialization` unit tests); in memory the verifier rejects it, as it
 // allocates every point by its coordinates.
 fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
     assert_eq!(
         proof.to_bytes().unwrap_err(),
-        wire::Error::Unencodable,
+        serialization::Error::Unencodable,
         "{field}: the codec must reject the identity"
     );
     let result = app.verify_uncompressed(&proof.carry::<()>(()), StdRng::seed_from_u64(5678));

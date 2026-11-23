@@ -11,8 +11,9 @@ use ragu_primitives::vec::{ConstLen, Len};
 use udon::{curve::Affine, field::Field};
 
 use crate::{
+    CompressedProof,
     compress::{
-        CompressedProof, Messages,
+        Messages,
         batch::Batch,
         instance::{Child, Instance, NestedChild, OPENED},
         revdot::{
@@ -27,7 +28,7 @@ use crate::{
     },
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
-    wire::{
+    serialization::{
         Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, Point, Reader,
         Rounds, Scalar, SizedSequence, field_len,
     },

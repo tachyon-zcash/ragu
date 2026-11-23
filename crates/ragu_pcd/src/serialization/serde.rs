@@ -26,7 +26,7 @@ use serde::{
 use crate::{
     CompressedProof, Proof,
     profile::ProfiledCycle,
-    wire::{ENVELOPE_SIZE, Error},
+    serialization::{ENVELOPE_SIZE, Error},
 };
 
 /// A type serialized as its versioned byte encoding.
@@ -166,7 +166,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::wire::{
+    use crate::serialization::{
         Decode, Dimensions, MAX_RANK,
         format::{PayloadKind, write_envelope},
     };
