@@ -21,7 +21,7 @@ pub(super) fn record_dispatch() {
     PASTA_DISPATCHES.set(PASTA_DISPATCHES.get() + 1);
 }
 
-fn planned_msms<C: Retained>() {
+fn planned_msms<C: PastaCurve>() {
     let mut rng = StdRng::seed_from_u64(892);
     let sizes = [0, 1, 17, 257, 2049];
     let inputs = sizes.map(|n| {
@@ -156,11 +156,10 @@ fn random_msm<C: PastaCurve>(
     (scalars, bases)
 }
 
-/// Scratch left by one MSM must serve the next whatever their sizes, on
-/// either curve, and whichever thread runs it.
+/// Independent single and batched MSMs agree on both curves across threads.
 #[test]
-fn retained_scratch_serves_msms_of_any_size_in_any_order() {
-    fn check<C: Retained>(seed: u64) {
+fn concurrent_msms_match_separate_sums_across_sizes() {
+    fn check<C: PastaCurve>(seed: u64) {
         let mut rng = StdRng::seed_from_u64(seed);
         for n in [2049, 3, 513, 0, 2049, 17] {
             let (scalars, bases) = random_msm::<C>(n, &mut rng);
@@ -189,7 +188,6 @@ fn retained_scratch_serves_msms_of_any_size_in_any_order() {
 
 /// Buffers keep what a larger MSM initialized when a smaller one borrows
 /// them, and the smaller one is unaffected by what was left behind.
-#[cfg(feature = "std")]
 #[test]
 fn buffers_grow_to_the_largest_requirement_and_stay_there() {
     let mut rng = StdRng::seed_from_u64(77);
@@ -211,8 +209,14 @@ fn buffers_grow_to_the_largest_requirement_and_stay_there() {
             ProjectiveAdapter::new(sum),
             AffineAdapter::<Pallas>::msm(&scalars, &bases)
         );
-        assert!(buffers.bytes() >= largest, "buffers shrank");
-        largest = buffers.bytes();
+        let bytes = size_of_val(buffers.records.as_slice())
+            + size_of_val(buffers.digits.as_slice())
+            + size_of_val(buffers.affine.as_slice())
+            + size_of_val(buffers.projective.as_slice())
+            + size_of_val(buffers.field.as_slice())
+            + size_of_val(buffers.indices.as_slice());
+        assert!(bytes >= largest, "buffers shrank");
+        largest = bytes;
     }
     assert!(largest > 0);
 }

@@ -185,9 +185,12 @@ class CampaignTests(unittest.TestCase):
             "toolchain": "test", "environment": self.host, "warmups": 2,
             "repetitions": 2, "supplied_reference": None,
         }
-        bench.write_json(self.out / "manifest.json", self.manifest)
         self.invocations = []
         self.change_rng = False
+        self.write_campaign_files()
+
+    def write_campaign_files(self):
+        bench.write_json(self.out / "manifest.json", self.manifest)
         for config in self.cases:
             binary = self.out / "bin" / ("workflow-" + config["id"])
             binary.write_bytes(b"synthetic executable")
@@ -269,6 +272,17 @@ class CampaignTests(unittest.TestCase):
         self.run_campaign(execute=False)
         self.assertEqual(raw_hash, bench.tree_digest(self.out / "raw"))
         self.assertEqual(len(self.invocations), 20)
+
+    def test_asm_comparison_with_an_older_candidate(self):
+        self.cases[:] = [case(c["role"], c["mode"], asm=c["role"] == "baseline")
+                         for c in self.cases]
+        self.write_campaign_files()
+        self.run_campaign()
+        report = (self.out / "report.md").read_text()
+        self.assertIn("## ASM feature enabled", report)
+        self.assertNotIn("## ASM feature disabled", report)
+        self.assertIn("The candidate was built without the ASM feature.", report)
+        self.assertEqual(report.count("| Fuse two children | 4.500 → 3.500 s"), 2)
 
     def test_proof_rng_mismatch_stops_campaign_without_publishing_results(self):
         self.change_rng = True
@@ -403,6 +417,17 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(cases, [])
             _, cases = baselines("output-on-main", no_base=False, revision="main")
             self.assertEqual(cases, [])
+            # The candidate can also predate ASM, alone or against a newer baseline.
+            for selection in ("on", "both"):
+                manifest, _ = baselines("old-alone-" + selection, revision=old, base=None,
+                                        no_base=True, asm=selection)
+                self.assertEqual([c["id"] for c in manifest["cases"]],
+                                 ["candidate-asm-off-single", "candidate-asm-off-multi"])
+            manifest, cases = baselines("old-vs-new", base=baseline, no_base=False, asm="on")
+            self.assertEqual({c["asm"] for c in manifest["cases"] if c["role"] == "candidate"},
+                             {False})
+            self.assertEqual(cases, [("baseline-asm-on-multi", baseline),
+                                     ("baseline-asm-on-single", baseline)])
 
 
 if __name__ == "__main__":

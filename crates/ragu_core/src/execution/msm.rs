@@ -1,8 +1,5 @@
 //! Udon MSM execution with caller-owned scratch and Ragu's worker pool.
 
-#[cfg(feature = "std")]
-extern crate std;
-
 use alloc::{vec, vec::Vec};
 use core::any::Any;
 
@@ -25,8 +22,8 @@ use super::executor::{self, PoolExecutor};
 ///
 /// Buffers grow on demand and retain their capacity until this value is
 /// dropped. Ragu's compressed verifier scopes one to each check; a workspace
-/// uses no global or thread-local storage. MSMs without a workspace retain
-/// scratch of their own (see [`msm`]).
+/// owns the buffers it reuses. MSMs without a workspace allocate scratch
+/// for the duration of the call.
 #[derive(Default)]
 pub struct MsmWorkspace {
     pub(super) pallas: MsmBuffers<Pallas>,
@@ -42,20 +39,16 @@ pub(super) struct MsmBuffers<C: PastaCurve> {
     indices: Vec<usize>,
 }
 
-impl<C: PastaCurve> MsmBuffers<C> {
-    const EMPTY: Self = Self {
-        records: Vec::new(),
-        digits: Vec::new(),
-        affine: Vec::new(),
-        projective: Vec::new(),
-        field: Vec::new(),
-        indices: Vec::new(),
-    };
-}
-
 impl<C: PastaCurve> Default for MsmBuffers<C> {
     fn default() -> Self {
-        Self::EMPTY
+        Self {
+            records: Vec::new(),
+            digits: Vec::new(),
+            affine: Vec::new(),
+            projective: Vec::new(),
+            field: Vec::new(),
+            indices: Vec::new(),
+        }
     }
 }
 
@@ -83,69 +76,6 @@ impl<C: PastaCurve> MsmBuffers<C> {
             prefix(&mut self.indices, required.indices(), 0),
         )
     }
-
-    /// The bytes these buffers hold.
-    #[cfg(feature = "std")]
-    fn bytes(&self) -> usize {
-        size_of_val(self.records.as_slice())
-            + size_of_val(self.digits.as_slice())
-            + size_of_val(self.affine.as_slice())
-            + size_of_val(self.projective.as_slice())
-            + size_of_val(self.field.as_slice())
-            + size_of_val(self.indices.as_slice())
-    }
-}
-
-/// A Pasta curve whose MSMs without a workspace retain their scratch.
-pub(super) trait Retained: PastaCurve {
-    /// The curve's retained buffers, empty while an MSM has taken them.
-    #[cfg(feature = "std")]
-    fn retained() -> &'static std::sync::Mutex<MsmBuffers<Self>>;
-}
-
-macro_rules! impl_retained {
-    ($($curve:ty),*) => {$(
-        impl Retained for $curve {
-            #[cfg(feature = "std")]
-            fn retained() -> &'static std::sync::Mutex<MsmBuffers<Self>> {
-                static RETAINED: std::sync::Mutex<MsmBuffers<$curve>> =
-                    std::sync::Mutex::new(MsmBuffers::EMPTY);
-                &RETAINED
-            }
-        }
-    )*};
-}
-
-impl_retained!(Pallas, Vesta);
-
-/// Runs `work` with scratch buffers for an MSM on `C`.
-///
-/// With `std`, the MSM takes the curve's retained buffers, grows them to its
-/// own requirement, and hands them back, so that successive MSMs neither
-/// reallocate nor reinitialize their scratch. An MSM that finds the buffers
-/// taken starts from empty ones; whichever set is larger is kept. Without
-/// `std`, every MSM allocates and frees its own.
-fn with_buffers<C: Retained, T>(work: impl FnOnce(&mut MsmBuffers<C>) -> T) -> T {
-    #[cfg(feature = "std")]
-    {
-        // The lock is never held while an MSM runs, and a poisoned one still
-        // guards usable buffers: their contents are never read before they
-        // are overwritten.
-        let lock = || {
-            C::retained()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        };
-        let mut buffers = core::mem::take(&mut *lock());
-        let output = work(&mut buffers);
-        let mut retained = lock();
-        if buffers.bytes() > retained.bytes() {
-            *retained = buffers;
-        }
-        output
-    }
-    #[cfg(not(feature = "std"))]
-    work(&mut MsmBuffers::default())
 }
 
 /// Computes $\sum_i \mathrm{scalars}_i \cdot \mathrm{bases}_i$.
@@ -154,16 +84,8 @@ fn with_buffers<C: Retained, T>(work: impl FnOnce(&mut MsmBuffers<C>) -> T) -> T
 /// current Rayon pool when `multicore` is enabled. Other curves retain their
 /// [`Affine::msm`] implementation. Empty inputs return the identity.
 ///
-/// With `std`, each Pasta curve keeps the scratch of its largest MSM so far
-/// for the life of the process, and this function, [`msm_batch`] and
-/// [`msm_many`] reuse it. Without `std`, each call allocates and frees its
-/// scratch.
-///
-/// Proving holds witnesses and witness-derived polynomials in ordinary
-/// process memory. Uncompressed proofs retain such polynomials for recursion,
-/// and ordinary deallocation provides no erasure guarantee. With `std`, the
-/// MSM cache can also keep scalar-derived data after the proof and
-/// application are dropped. Later MSMs overwrite only the scratch they use.
+/// This function, [`msm_batch`] and [`msm_many`] release scratch when the
+/// call returns. Ordinary deallocation provides no erasure guarantee.
 ///
 /// Inputs are collected into owned vectors; passing vectors reuses their
 /// allocations. This lets the Pasta adapters borrow native buffers without
@@ -257,7 +179,7 @@ pub fn msm_many<C: Affine>(inputs: Vec<(Vec<C::Scalar>, Vec<C>)>) -> Vec<C::Proj
         })
 }
 
-fn pasta_many<C: Affine, P: Retained>(inputs: &dyn Any) -> Option<Vec<C::Projective>> {
+fn pasta_many<C: Affine, P: PastaCurve>(inputs: &dyn Any) -> Option<Vec<C::Projective>> {
     let inputs =
         inputs.downcast_ref::<Vec<(Vec<FieldAdapter<P::Scalar>>, Vec<AffineAdapter<P>>)>>()?;
     let inputs: Vec<_> = inputs
@@ -287,7 +209,7 @@ fn pasta_many<C: Affine, P: Retained>(inputs: &dyn Any) -> Option<Vec<C::Project
 }
 
 /// Executes indexed rows against one shared Pasta base bank.
-pub(super) fn execute_indexed<C: Affine, P: Retained>(
+pub(super) fn execute_indexed<C: Affine, P: PastaCurve>(
     bases: Bases<'_, P>,
     rows: &dyn Any,
 ) -> Vec<C::Projective> {
@@ -319,7 +241,7 @@ pub(super) fn execute_indexed<C: Affine, P: Retained>(
         .collect()
 }
 
-fn pasta_batch<C: Affine, P: Retained, const N: usize>(
+fn pasta_batch<C: Affine, P: PastaCurve, const N: usize>(
     inputs: &dyn Any,
 ) -> Option<[C::Projective; N]> {
     let inputs =
@@ -341,7 +263,7 @@ fn pasta_batch<C: Affine, P: Retained, const N: usize>(
     }))
 }
 
-fn execute_batch<C: Retained, X: Executor, const N: usize>(
+fn execute_batch<C: PastaCurve, X: Executor, const N: usize>(
     inputs: &[Input<'_, C>; N],
     options: ExecutionOptions,
     executor: &X,
@@ -353,7 +275,7 @@ fn execute_batch<C: Retained, X: Executor, const N: usize>(
 
 /// Executes `inputs` under one batch plan, writing each sum to its slot of
 /// `output`.
-pub(super) fn execute_plan<C: Retained, X: Executor>(
+pub(super) fn execute_plan<C: PastaCurve, X: Executor>(
     inputs: &[Input<'_, C>],
     output: &mut [ProjectivePoint<C>],
     options: ExecutionOptions,
@@ -366,10 +288,11 @@ pub(super) fn execute_plan<C: Retained, X: Executor>(
     let plan = BatchPlan::new(inputs, options, &mut jobs, &mut workers)
         .expect("MSM batch scratch size fits");
     let required = plan.requirements();
-    with_buffers(|buffers| plan.execute(output, executor, buffers.scratch(required)));
+    let mut buffers = MsmBuffers::default();
+    plan.execute(output, executor, buffers.scratch(required));
 }
 
-fn pasta<C: Affine, P: Retained>(scalars: &dyn Any, bases: &dyn Any) -> Option<C::Projective> {
+fn pasta<C: Affine, P: PastaCurve>(scalars: &dyn Any, bases: &dyn Any) -> Option<C::Projective> {
     let bases = bases.downcast_ref::<Vec<AffineAdapter<P>>>()?;
     let scalars = scalars
         .downcast_ref::<Vec<FieldAdapter<P::Scalar>>>()
@@ -389,20 +312,18 @@ fn pasta<C: Affine, P: Retained>(scalars: &dyn Any, bases: &dyn Any) -> Option<C
     )
 }
 
-fn execute<C: Retained, X: Executor>(
+fn execute<C: PastaCurve, X: Executor>(
     scalars: &[PastaField<C::Scalar>],
     bases: &[Point<C>],
     options: ExecutionOptions,
     executor: &X,
 ) -> ProjectivePoint<C> {
-    with_buffers(|buffers| {
-        execute_input(
-            Input::new(Bases::Points(bases), scalars),
-            options,
-            executor,
-            buffers,
-        )
-    })
+    execute_input(
+        Input::new(Bases::Points(bases), scalars),
+        options,
+        executor,
+        &mut MsmBuffers::default(),
+    )
 }
 
 pub(super) fn execute_prepared<C: PastaCurve, X: Executor>(

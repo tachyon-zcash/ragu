@@ -197,6 +197,15 @@ enum Side<'rx, F: Field, R: Rank> {
     Bonding(CircuitIndex),
 }
 
+impl<F: Field, R: Rank> Side<'_, F, R> {
+    fn circuit_id(&self) -> Option<CircuitIndex> {
+        match self {
+            Self::Circuit(id) | Self::Bonding(id) => Some(*id),
+            Self::Given(_) => None,
+        }
+    }
+}
+
 /// The polynomial pairs of a list of revdot claims, in claim order.
 pub struct Claims<'rx, A, F: Field, R: Rank> {
     /// The claims' `a` polynomials.
@@ -279,9 +288,12 @@ where
 
     /// Computes every claim's `b` and returns the claims.
     ///
-    /// Each job computes one circuit restriction and fills every claim
-    /// that uses it before releasing the restriction.
-    pub fn finish(self) -> Claims<'rx, A, F, R> {
+    /// The claim builders emit each internal circuit's claims consecutively.
+    /// Each run shares its restriction and keeps the original claim order.
+    pub fn finish(self) -> Claims<'rx, A, F, R>
+    where
+        A: Sync,
+    {
         let Self {
             registry,
             y,
@@ -292,41 +304,34 @@ where
             ..
         } = self;
 
-        // Borrow each claim's slot so sorting the jobs leaves claim order intact.
-        let mut pending: Vec<_> = a
-            .iter()
-            .zip(&mut b)
-            .filter_map(|(a, slot)| {
-                let (circuit, trace) = match slot {
-                    Side::Given(_) => return None,
-                    Side::Circuit(id) => (*id, Some(a.borrow())),
-                    Side::Bonding(id) => (*id, None),
+        let mut traces = a.as_slice();
+        let jobs = b
+            .chunk_by_mut(|left, right| left.circuit_id() == right.circuit_id())
+            .filter_map(|sides| {
+                let (group, rest) = traces.split_at(sides.len());
+                traces = rest;
+                sides[0].circuit_id().map(|id| (id, group, sides))
+            });
+        // The serial backend consumes one run at a time.
+        B::map(jobs, |(id, traces, sides)| {
+            let mut restriction = B::registry_circuit_y(registry, id, y);
+            let last = sides.len() - 1;
+            for (i, (trace, side)) in traces.iter().zip(sides).enumerate() {
+                let poly = if matches!(side, Side::Circuit(_)) {
+                    let mut poly = trace.borrow().clone();
+                    poly.dilate(z);
+                    poly.add_assign(&restriction);
+                    poly.add_assign(&tz);
+                    poly
+                } else if i == last {
+                    core::mem::take(&mut restriction)
+                } else {
+                    restriction.clone()
                 };
-                Some((circuit, trace, slot))
-            })
-            .collect();
-        pending.sort_unstable_by_key(|(id, _, _)| usize::from(*id));
-        let mut groups: Vec<_> = pending
-            .chunk_by_mut(|left, right| left.0 == right.0)
-            .collect();
-        B::for_each_mut(&mut groups, |_, claims| {
-            let mut restriction = B::registry_circuit_y(registry, claims[0].0, y);
-            let last = claims.len() - 1;
-            for (i, (_, trace, slot)) in claims.iter_mut().enumerate() {
-                let poly = match trace {
-                    Some(rx) => {
-                        let mut poly = (*rx).clone();
-                        poly.dilate(z);
-                        poly.add_assign(&restriction);
-                        poly.add_assign(&tz);
-                        poly
-                    }
-                    None if i == last => core::mem::take(&mut restriction),
-                    None => restriction.clone(),
-                };
-                **slot = Side::Given(Cow::Owned(poly));
+                *side = Side::Given(Cow::Owned(poly));
             }
-        });
+        })
+        .for_each(drop);
 
         let b = b
             .into_iter()

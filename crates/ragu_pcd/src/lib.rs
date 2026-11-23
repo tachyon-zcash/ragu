@@ -39,11 +39,9 @@
 //! # Prover memory
 //!
 //! Proving holds witnesses and witness-derived polynomials in ordinary
-//! process memory. Uncompressed proofs retain those polynomials for recursion,
-//! and ordinary deallocation provides no erasure guarantee. With `std`,
-//! including `multicore`, the process-wide Pasta MSM cache can retain
-//! scalar-derived data after the proof and application are dropped. Later MSMs
-//! overwrite only the scratch they use. See [`ragu_core::msm`].
+//! process memory. Uncompressed proofs retain those polynomials for recursion.
+//! Prover MSMs release their scratch when the call returns. Ordinary
+//! deallocation provides no erasure guarantee. See [`ragu_core::msm`].
 
 // Prover and verifier code.
 //

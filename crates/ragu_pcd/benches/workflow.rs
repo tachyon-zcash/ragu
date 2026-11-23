@@ -148,17 +148,13 @@ fn main() -> Result<()> {
         assert!(timed("wallet", "verify_compressed", i, || wallet
             .verify_compressed(&proof))?);
         compressed::<_, WalletRank>("wallet", &format!("leaf_{i}"), proof.proof());
+        proofs.push((*leaf.data(), proof));
         leaves.push(leaf);
-        proofs.push(proof);
     }
+    let right = leaves.pop().unwrap();
+    let left = leaves.pop().unwrap();
     let (wallet_parent, _) = timed("wallet", "fuse", 0, || {
-        wallet.fuse(
-            &mut rng,
-            Hash2 { poseidon_params },
-            (),
-            leaves[0].clone(),
-            leaves[1].clone(),
-        )
+        wallet.fuse(&mut rng, Hash2 { poseidon_params }, (), left, right)
     })?;
     assert!(wallet.verify_uncompressed(&wallet_parent, &mut rng)?);
     ordinary("wallet_parent", wallet_parent.proof());
@@ -178,11 +174,11 @@ fn main() -> Result<()> {
         builder.finalize_with(params, context)
     })?;
     let mut nodes = Vec::new();
-    for (i, proof) in proofs.iter().enumerate() {
+    for (i, (leaf_data, proof)) in proofs.iter().enumerate() {
         let node = timed("aggregator", "decompress", i, || {
             aggregator.decompress(&mut rng, proof)
         })?;
-        assert_eq!(node.data(), leaves[i].data());
+        assert_eq!(node.data(), leaf_data);
         assert!(timed("aggregator", "verify_uncompressed", i, || {
             aggregator.verify_uncompressed(&node, &mut rng)
         })?);

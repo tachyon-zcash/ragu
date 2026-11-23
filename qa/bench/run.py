@@ -362,15 +362,13 @@ def initialize(args):
         sources[sha] = {"archive_sha256": sha256(archive), "source_sha256": tree_digest(source),
                         "lock_sha256": sha256(source / "Cargo.lock"),
                         "asm_feature": "asm" in tomllib.loads(content).get("features", {})}
-    # A baseline that predates the asm feature, or one the caller asks for, is
-    # built only without ASM; the ASM tables compare against that build.
-    without_asm = {sha for role, sha in revisions if role == "baseline"
-                   and (args.baseline_without_asm or not sources[sha]["asm_feature"])}
     cases = []
     for asm in (["off", "on"] if args.asm == "both" else [args.asm]):
         for mode in args.modes:
             for role, sha in revisions:
-                built = "off" if sha in without_asm and role == "baseline" else asm
+                can_enable = sources[sha]["asm_feature"] and not (
+                    role == "baseline" and args.baseline_without_asm)
+                built = asm if can_enable else "off"
                 case_id = f"{role}-asm-{built}-{mode}"
                 if any(c["id"] == case_id for c in cases):
                     continue
@@ -706,18 +704,17 @@ def summarize(out):
                  "identities.", ""]
     for asm in [False, True]:
         current = [c for c in manifest["cases"] if c["asm"] == asm]
-        # A baseline built only without ASM is compared in the ASM section.
-        if not any(c["role"] == "candidate" for c in current):
+        missing_roles = roles - {c["role"] for c in current}
+        if not current or (not asm and missing_roles):
             continue
         text += ["## ASM feature " + ("enabled" if asm else "disabled"), ""]
         lookup = {(c["role"], c["mode"]): c["id"] for c in current}
-        if asm and "baseline" in roles and not any(c["role"] == "baseline" for c in current):
+        for role in sorted(missing_roles):
             for c in manifest["cases"]:
-                if c["role"] == "baseline" and not c["asm"]:
-                    lookup[("baseline", c["mode"])] = c["id"]
-            text += ["The baseline was built without the ASM feature: before values come from "
-                     "that build, so these cells show the change between the two revisions' "
-                     "default builds.", ""]
+                if c["role"] == role and not c["asm"]:
+                    lookup[(role, c["mode"])] = c["id"]
+            text += [f"The {role} was built without the ASM feature. Its timings in this "
+                     "table come from that build.", ""]
         def mode(m):
             return ("single" if m == "single" else
                     f"{next(c['workers'] for c in current if c['mode'] == m)} workers")

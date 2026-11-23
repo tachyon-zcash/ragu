@@ -217,7 +217,6 @@ mod tests {
         let prepared = crate::PreparedMsm::new(&bases).unwrap();
         assert_eq!(prepared.evaluate_many_indexed(rows.clone()), expected);
         assert_eq!(table.msm_many(rows.clone()), expected);
-        // The retained scratch serves a second run.
         assert_eq!(table.msm_many(rows), expected);
         assert!(table.msm_many(Vec::new()).is_empty());
 

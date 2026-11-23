@@ -57,10 +57,10 @@ archived revisions. Each revision must contain its committed Cargo.lock and
 support the workload's APIs. Only committed library code is measured; uncommitted
 library edits are not included. The tool does not fetch remote refs. A mismatch
 in proof digests, shapes, or RNG state stops the comparison, so protocol-changing
-revisions require separate campaigns. A baseline whose `ragu_pcd` has no `asm`
-feature, as main's may not, is built only without ASM, and the ASM-enabled
-tables compare against that build: the two revisions' default builds.
---baseline-without-asm does the same for a baseline that has the feature.
+revisions require separate campaigns. A revision that predates the `ragu_pcd/asm`
+feature builds with ASM disabled in standalone and comparison runs. If the
+other revision enables ASM, the report identifies which revision used its
+ASM-disabled build. --baseline-without-asm forces that build for the baseline.
 
 Limit a run or prepare its builds in advance:
 
