@@ -55,7 +55,7 @@ pub struct Witness<C: Affine, P: Profile> {
     pub native_points_registry_wx: C,
     /// Commitments of the step's own native fold randomizers $a_r$ and
     /// $b_r$ (see
-    /// [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)), fixed
+    /// [`revdot`](crate::internal::revdot#the-randomizer)), fixed
     /// here before the fold's challenges.
     pub randomizer_a: C,
     pub randomizer_b: C,

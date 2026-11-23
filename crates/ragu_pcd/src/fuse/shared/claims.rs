@@ -1,0 +1,333 @@
+//! Fuse-path claim sources and native commitment tracking.
+//!
+//! In the native fuse pipeline, `A` polynomials carry their corresponding
+//! commitments so that `_06_ab` can compute `a_commitment` via a small MSM
+//! over known child-proof commitments instead of a full polynomial-degree MSM.
+//!
+//! Each polynomial entering the claims pipeline is tagged with a [`FoldKey`]
+//! key — a `(`[`Side`]`, `[`RxComponent`]`)` pair identifying which child
+//! proof and component it came from, or the step's own application trace.
+//! As polynomials are summed and folded, the corresponding
+//! [`CommitmentDecomposition`] accumulates the linear combination of those
+//! keys, so the final commitment can be resolved directly from the child
+//! proofs and the step's own application commitment.
+//!
+//! The nested source supplies polynomial references; its folded commitments
+//! are computed from the resulting polynomials directly.
+
+use alloc::{borrow::Cow, vec::Vec};
+use core::borrow::Borrow;
+
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::CircuitIndex,
+};
+use ragu_core::{Cycle, Result};
+use udon::field::Field;
+
+use crate::{
+    Proof,
+    internal::{
+        native::{InternalCircuitIndex, RxComponent, claims::Processor},
+        nested,
+        revdot::{self, Builder, Foldable, Source},
+    },
+    profile::Profile,
+};
+
+/// Tracks how a polynomial decomposes as a linear combination of source
+/// polynomials, so that the corresponding commitment can be computed from
+/// the source commitments via a small MSM.
+///
+/// Each term `(key, coefficient)` records that this polynomial includes
+/// `coefficient * source[key]`. The same key may appear multiple times;
+/// duplicates are summed during resolution. The key type `K` is chosen by
+/// the caller (the fuse path uses [`FoldKey`]).
+#[derive(Clone)]
+pub(in crate::fuse) struct CommitmentDecomposition<K, F: Field> {
+    pub(in crate::fuse) terms: Vec<(K, F)>,
+}
+
+impl<K, F: Field> Default for CommitmentDecomposition<K, F> {
+    fn default() -> Self {
+        Self { terms: Vec::new() }
+    }
+}
+
+impl<K: Copy, F: Field> CommitmentDecomposition<K, F> {
+    /// Decomposition for a single source polynomial with coefficient one.
+    pub(in crate::fuse) fn single(key: K) -> Self {
+        Self {
+            terms: Vec::from([(key, F::ONE)]),
+        }
+    }
+}
+
+/// A polynomial paired with its [`CommitmentDecomposition`].
+///
+/// In the fuse pipeline, the `A` polynomials need to carry their
+/// corresponding commitments so that `a_commitment` can be computed cheaply.
+/// Rather than materializing the commitment at each fold step, we track the
+/// linear combination of source polynomials and resolve to commitments once
+/// at the end. Implements [`Foldable`] so it flows through [`fold_inner`]
+/// / [`fold_outer`] transparently.
+///
+/// The polynomial is held as a [`Cow`] to avoid cloning borrowed polynomials
+/// during claim building; the fold itself always produces owned results.
+///
+/// [`Cow`]: alloc::borrow::Cow
+/// [`fold_inner`]: crate::internal::revdot::fold_inner
+/// [`fold_outer`]: crate::internal::revdot::fold_outer
+#[derive(Clone)]
+pub(in crate::fuse) struct TrackedPoly<'a, K, F: Field, R: Rank> {
+    pub(in crate::fuse) poly: Cow<'a, sparse::Polynomial<F, R>>,
+    pub(in crate::fuse) decomp: CommitmentDecomposition<K, F>,
+}
+
+impl<K, F: Field, R: Rank> Default for TrackedPoly<'_, K, F, R> {
+    fn default() -> Self {
+        Self {
+            poly: Default::default(),
+            decomp: Default::default(),
+        }
+    }
+}
+
+impl<'a, K: Copy, F: Field, R: Rank> TrackedPoly<'a, K, F, R> {
+    pub(in crate::fuse) fn new(
+        poly: Cow<'a, sparse::Polynomial<F, R>>,
+        decomp: CommitmentDecomposition<K, F>,
+    ) -> Self {
+        Self { poly, decomp }
+    }
+
+    pub(in crate::fuse) fn single(poly: Cow<'a, sparse::Polynomial<F, R>>, key: K) -> Self {
+        Self::new(poly, CommitmentDecomposition::single(key))
+    }
+
+    /// Returns a tracked polynomial equal to the sum of the given [`Atom`]s,
+    /// each with coefficient one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `atoms` is empty.
+    pub(in crate::fuse) fn sum(mut atoms: impl Iterator<Item = Atom<'a, K, F, R>>) -> Self {
+        let first = atoms.next().expect("must provide at least one atom");
+        let decomp = CommitmentDecomposition::single(first.key);
+        match atoms.next() {
+            None => Self::new(Cow::Borrowed(first.poly), decomp),
+            Some(second) => {
+                let mut poly = first.poly.clone();
+                let mut decomp = decomp;
+                poly.add_assign(second.poly);
+                decomp.terms.push((second.key, F::ONE));
+                for a in atoms {
+                    poly.add_assign(a.poly);
+                    decomp.terms.push((a.key, F::ONE));
+                }
+                Self::new(Cow::Owned(poly), decomp)
+            }
+        }
+    }
+}
+
+impl<K: Copy, F: Field, R: Rank> Foldable<F> for TrackedPoly<'_, K, F, R> {
+    fn fold_scale(&mut self, by: F) {
+        self.poly.to_mut().scale(by);
+        for (_, coeff) in &mut self.decomp.terms {
+            *coeff *= by;
+        }
+    }
+    fn fold_add_assign(&mut self, other: &Self) {
+        self.poly.to_mut().add_assign(&other.poly);
+        self.decomp.terms.extend_from_slice(&other.decomp.terms);
+    }
+}
+
+impl<K, F: Field, R: Rank> Borrow<sparse::Polynomial<F, R>> for TrackedPoly<'_, K, F, R> {
+    fn borrow(&self) -> &sparse::Polynomial<F, R> {
+        &self.poly
+    }
+}
+
+/// A polynomial reference paired with a key that identifies the corresponding
+/// commitment in the child proofs.
+///
+/// The fuse pipeline threads these through the claims builder so that each
+/// `A` polynomial retains a link back to its commitment.
+pub(in crate::fuse) struct Atom<'rx, K, F: Field, R: Rank> {
+    pub(in crate::fuse) key: K,
+    pub(in crate::fuse) poly: &'rx sparse::Polynomial<F, R>,
+}
+
+// Manual Copy/Clone: derive(Copy) would add spurious F: Copy and R: Copy bounds.
+// Atom only holds a reference (always Copy) and a K (bounded K: Copy here).
+impl<K: Copy, F: Field, R: Rank> Clone for Atom<'_, K, F, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<K: Copy, F: Field, R: Rank> Copy for Atom<'_, K, F, R> {}
+
+use crate::{
+    fuse::{_01_application::NativeApplication, randomizer::NativeRandomizer},
+    internal::Side,
+};
+
+/// Key identifying a polynomial and its corresponding commitment within the
+/// fuse pipeline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::fuse) enum FoldKey {
+    /// A component of one of the child proofs.
+    Child(Side, RxComponent),
+    /// The step's own application trace.
+    Application,
+    /// The step's own application stage.
+    ApplicationStage,
+    /// The step's own fold randomizer $a_r$.
+    RandomizerA,
+}
+
+/// The two child proofs being fused, and the step's own application
+/// polynomials and fold randomizer. Provides [`Atom`]-tagged rx values for
+/// claim building, and resolves [`FoldKey`] keys back to their commitments
+/// for the MSM in `_06_ab`.
+pub(in crate::fuse) struct NativeFuseProofSource<'rx, C: Cycle, R: Rank> {
+    pub(in crate::fuse) left: &'rx Proof<C, R>,
+    pub(in crate::fuse) right: &'rx Proof<C, R>,
+    pub(in crate::fuse) application: &'rx NativeApplication<C, R>,
+    pub(in crate::fuse) randomizer: &'rx NativeRandomizer<C, R>,
+}
+
+impl<'rx, C: Cycle, R: Rank> NativeFuseProofSource<'rx, C, R> {
+    /// Look up the commitment for a [`FoldKey`]: in the corresponding child
+    /// proof, or one of the step's own application commitments.
+    pub(in crate::fuse) fn get(&self, key: FoldKey) -> C::HostCurve {
+        match key {
+            FoldKey::Child(Side::Left, component) => self.left.native_commitment(component),
+            FoldKey::Child(Side::Right, component) => self.right.native_commitment(component),
+            FoldKey::Application => self.application.commitment,
+            FoldKey::ApplicationStage => self.application.stage.commitment,
+            FoldKey::RandomizerA => self.randomizer.a_commitment,
+        }
+    }
+
+    /// The fold randomizer's $a$ side, tagged with its commitment's key.
+    pub(in crate::fuse) fn randomizer_a(&self) -> TrackedPoly<'rx, FoldKey, C::CircuitField, R> {
+        TrackedPoly::single(Cow::Borrowed(&self.randomizer.a), FoldKey::RandomizerA)
+    }
+}
+
+impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
+    type RxComponent = RxComponent;
+    type Rx = Atom<'rx, FoldKey, C::CircuitField, R>;
+    type AppCircuitId = CircuitIndex;
+
+    fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
+        [
+            Atom {
+                key: FoldKey::Child(Side::Left, component),
+                poly: &self.left[component],
+            },
+            Atom {
+                key: FoldKey::Child(Side::Right, component),
+                poly: &self.right[component],
+            },
+        ]
+        .into_iter()
+    }
+
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
+        core::iter::once((
+            self.application.circuit_id,
+            [
+                Atom {
+                    key: FoldKey::Application,
+                    poly: &self.application.rx,
+                },
+                Atom {
+                    key: FoldKey::ApplicationStage,
+                    poly: &self.application.stage.rx,
+                },
+            ],
+        ))
+    }
+}
+
+/// [`Builder`] specialized for the fuse pipeline, where `A`
+/// polynomials carry [`CommitmentDecomposition`]s via [`TrackedPoly`].
+pub(in crate::fuse) type NativeFuseBuilder<'m, 'rx, F, R, B> =
+    Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>;
+
+/// Fuse-path [`Processor`] implementation.
+///
+/// Each method pairs the polynomial with a [`CommitmentDecomposition`] that
+/// records how it decomposes as a linear combination of child-proof
+/// polynomials (and therefore their commitments). The decomposition is
+/// consumed in `_06_ab` to compute `a_commitment` via MSM.
+impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
+    Processor<P, Atom<'rx, FoldKey, F, R>, CircuitIndex>
+    for Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>
+{
+    fn raw_claim(&mut self, a: Atom<'rx, FoldKey, F, R>, b: Atom<'rx, FoldKey, F, R>) {
+        self.a
+            .push(TrackedPoly::single(Cow::Borrowed(a.poly), a.key));
+        self.b.push(Cow::Borrowed(b.poly));
+    }
+
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.circuit_impl(circuit_id, TrackedPoly::sum(rxs));
+    }
+
+    fn internal_circuit_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.circuit_impl(id.circuit_index::<P>(), TrackedPoly::sum(rxs));
+    }
+
+    fn grouped_bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
+    ) -> Result<()> {
+        let folded = revdot::fold(groups.map(TrackedPoly::sum), self.z);
+        self.bonding_impl(id.circuit_index::<P>(), folded);
+        Ok(())
+    }
+}
+
+/// The two child proofs' nested-field polynomials, for folding the children's
+/// nested claims.
+///
+/// Nothing is tracked here: the nested accumulator commitments are computed
+/// by committing the folded polynomials directly, so the fold works on plain
+/// polynomial references.
+pub(in crate::fuse) struct NestedFuseProofSource<'rx, C: Cycle, R: Rank> {
+    pub(in crate::fuse) left: &'rx Proof<C, R>,
+    pub(in crate::fuse) right: &'rx Proof<C, R>,
+}
+
+impl<'rx, C: Cycle, R: Rank> Source for NestedFuseProofSource<'rx, C, R> {
+    type RxComponent = nested::RxComponent;
+    type Rx = &'rx sparse::Polynomial<C::ScalarField, R>;
+    type AppCircuitId = ();
+
+    fn rx(&self, component: nested::RxComponent) -> impl Iterator<Item = Self::Rx> {
+        [&self.left[component], &self.right[component]].into_iter()
+    }
+
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
+        core::iter::empty()
+    }
+}
+
+/// [`Builder`] specialized for folding the children's nested claims in the
+/// fuse pipeline.
+pub(in crate::fuse) type NestedFuseBuilder<'m, 'rx, F, R, B> =
+    Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>;

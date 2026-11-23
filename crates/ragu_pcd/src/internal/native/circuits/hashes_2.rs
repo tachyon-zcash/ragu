@@ -76,7 +76,7 @@ use super::super::{
     unified::{self, OutputBuilder},
 };
 use crate::{
-    internal::{fold_revdot, transcript::Transcript},
+    internal::{revdot, transcript::Transcript},
     profile::ProfiledCycle,
 };
 
@@ -86,12 +86,12 @@ use crate::{
 /// circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: revdot::Parameters> {
     params: &'params C::Params,
     _marker: PhantomData<(R, FP)>,
 }
 
-impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit.
@@ -112,7 +112,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revd
 /// Combines the unified instance with the
 /// [`outer_error`](super::super::stages::outer_error) stage witness needed to resume
 /// the Fiat-Shamir transcript from the saved sponge state.
-pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
+pub struct Witness<'a, C: Cycle, FP: revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
@@ -124,7 +124,7 @@ pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
     type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;

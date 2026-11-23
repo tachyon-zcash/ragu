@@ -15,11 +15,11 @@ use ragu_core::{
 use udon::{curve::Affine as _, field::Field};
 
 use super::{
-    Chunk, ElementSrc, Last, Limits, Native, Nested, Op, PointSrc, Schedule, Step, ab_layout,
-    native_schedule, native_sizes, nested_schedule, nested_sizes, schedule, sizes,
+    AbValue, Chunk, ElementSrc, Last, Limits, Native, Nested, Op, PointSrc, Schedule, Step,
+    ab_layout, native_schedule, native_sizes, nested_schedule, nested_sizes, schedule, sizes,
 };
 use crate::{
-    decompress::{circuit::AbValue, stages::Sizes},
+    decompress::stages::Sizes,
     internal::nested::{self, stages::ab},
     profile::Standard,
     proof::bridge_alpha_power,

@@ -32,10 +32,10 @@ use super::claims::{
 use crate::{
     Application,
     internal::{
-        fold_revdot::{self, Parameters},
         ky, native,
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
+        revdot::{self, Parameters},
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -66,7 +66,7 @@ where
     Ok(child.unified_ky_values(dr, y)?.1)
 }
 
-type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
+type NativeNumGroups<P> = <native::RevdotParameters<P> as revdot::Parameters>::NumGroups;
 type NestedNumGroups<P> = <nested::RevdotParameters<P> as Parameters>::NumGroups;
 
 /// The wireless emulator the fuse step's scalar-field computations run in.
@@ -115,14 +115,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // another header than its preamble's copy.
         #[cfg(test)]
         let forged_left_bridge_header = builder.forged_left_bridge_header().map(<[_]>::to_vec);
-        let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.a,
-            mu,
-        );
-        let native_b = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.b,
-            mu,
-        );
+        let native_a =
+            revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(&native_claims.a, mu);
+        let native_b =
+            revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(&native_claims.b, mu);
         drop(native_claims);
 
         // The target of the fold randomizer's claim, which the inner error
@@ -280,14 +276,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // The grid of targets, with the fold randomizer's, as
                 // `collapse` lays it out.
                 let zero = Element::zero(dr);
-                let mut ky = fold_revdot::randomized::<_, native::RevdotParameters<C::Profile>>(
+                let mut ky = revdot::randomized::<_, native::RevdotParameters<C::Profile>>(
                     native::claims::ky_values::<C::Profile, _>(&ky_source),
                     zero.clone(),
                     Element::constant(dr, randomizer_c),
                     zero,
                 );
 
-                let fold_products = fold_revdot::ClaimFolder::new(&mu);
+                let fold_products = revdot::ClaimFolder::new(&mu);
 
                 let collapsed = FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
@@ -317,7 +313,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             },
         )?;
 
-        let error_terms = fold_revdot::outer_error_terms_with_backend::<
+        let error_terms = revdot::outer_error_terms_with_backend::<
             B,
             _,
             R,
@@ -384,7 +380,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// (see [`nested::challenge`]). The transcript squeezes $y$ after the
     /// `s_prime` bridge, and $\mu$ only after the bridge carrying
     /// the layer-1 error terms is absorbed. The collapsed values are computed
-    /// through [`fold_revdot::ClaimFolder`] exactly as the nested collapse
+    /// through [`revdot::ClaimFolder`] exactly as the nested collapse
     /// circuit does, from the children's $k(y_n)$ values
     /// the bridge preamble's copies of their nested unified instances
     /// determine, so the witness this stage commits is the one that circuit
@@ -408,12 +404,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_y = nested::challenge::<C>(native_y)?;
         let nested_mu = nested::challenge::<C>(native_mu)?;
 
-        let a = fold_revdot::fold_inner::<
+        let a = revdot::fold_inner::<
             sparse::Polynomial<C::ScalarField, R>,
             _,
             nested::RevdotParameters<C::Profile>,
         >(&nested_claims.a, nested_mu);
-        let b = fold_revdot::fold_inner::<
+        let b = revdot::fold_inner::<
             sparse::Polynomial<C::ScalarField, R>,
             _,
             nested::RevdotParameters<C::Profile>,
@@ -511,14 +507,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 );
                 // The grid of targets, with the nested fold randomizer's.
                 let zero = Element::zero(dr);
-                let mut ky = fold_revdot::randomized::<_, nested::RevdotParameters<C::Profile>>(
+                let mut ky = revdot::randomized::<_, nested::RevdotParameters<C::Profile>>(
                     nested::claims::ky_values::<C::Profile, _>(&ky_source),
                     zero.clone(),
                     Element::constant(dr, randomizer_c),
                     zero,
                 );
 
-                let fold_products = fold_revdot::ClaimFolder::new(&nested_mu);
+                let fold_products = revdot::ClaimFolder::new(&nested_mu);
 
                 FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
@@ -533,7 +529,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             },
         )?;
 
-        let error_terms = fold_revdot::outer_error_terms_with_backend::<
+        let error_terms = revdot::outer_error_terms_with_backend::<
             B,
             _,
             R,

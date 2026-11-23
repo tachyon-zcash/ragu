@@ -10,7 +10,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use super::Proof;
 use crate::{
     ApplicationBuilder,
-    wire::{Dimensions, Encode, Error},
+    serialization::{Dimensions, Encode, Error},
 };
 
 type TestProof = Proof<Pasta, WalletRank>;

@@ -50,14 +50,15 @@ test *ARGS:
 # Aggregator or extension profiles, recurse through several generations, or
 # compare backends. They are about 100 tests but most of the suite's test time,
 # each taking from half a minute to several minutes. What remains still proves end to end
-# (`nontrivial`, `wire`, `compress::tests`, the standard-profile `verify::tests`,
-# and others). `ci_test_all`, `backend_lane` and `ci_fixtures` run the skipped ones.
+# (`nontrivial`, `serialization`, `compress::tests`, the standard-profile
+# `verifier::tests`, and others). `ci_test_all`, `backend_lane` and `ci_fixtures`
+# run the skipped ones.
 #
 # The last four are whole suites over custom online profiles and the base case.
 # Together they took 13 of the 15 minutes `just test` reached after they landed.
 # `profile::tests` still proves an online Fq polynomial end to end, about 30
 # `profile::online` unit tests cover the batch, layout, mesh, preparation and
-# claim targets without proving, and `verify::tests` still confines the base
+# claim targets without proving, and `verifier::tests` still confines the base
 # case to a bootstrap proof.
 _test_skip := (
   "--skip proof::profile_substitution_tests " +

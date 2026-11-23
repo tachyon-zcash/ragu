@@ -169,7 +169,10 @@ mod challenge_binding {
     /// The decider's check of a root: its challenge stage is the stage of its
     /// own lifts and headers.
     fn stage_matches(proof: &Proof<C, R>) -> Result<bool> {
-        crate::verify::nested_challenges_match::<C, R>(proof, &proof.challenges().lifts::<C>()?)
+        crate::proof::uncompressed::verifier::nested_challenges_match::<C, R>(
+            proof,
+            &proof.challenges().lifts::<C>()?,
+        )
     }
 
     /// Changes one lift and repairs every cache `install_lifts` lists, so
@@ -220,7 +223,9 @@ mod challenge_binding {
             proof.nested_challenges_commitment(),
             honest.proof().nested_challenges_commitment()
         );
-        assert!(crate::verify::nested_points_match(&proof)?);
+        assert!(crate::proof::uncompressed::verifier::nested_points_match(
+            &proof
+        )?);
         assert!(
             !stage_matches(&proof)?,
             "lift {slot}: the changed stage must break the root's equality"
@@ -546,7 +551,9 @@ fn install_walk(
     )?;
     proof.native_bind_endoscalar_commitment.0 =
         native_commit(app, &proof.native_bind_endoscalar_rx);
-    assert!(crate::verify::nested_points_match(proof)?);
+    assert!(crate::proof::uncompressed::verifier::nested_points_match(
+        proof
+    )?);
     Ok(())
 }
 
@@ -852,7 +859,9 @@ mod claim_values {
             proof.nested_c(),
             original.nested_c() + nested_delta.unwrap_or(Fq::ZERO)
         );
-        assert!(crate::verify::nested_points_match(&proof)?);
+        assert!(crate::proof::uncompressed::verifier::nested_points_match(
+            &proof
+        )?);
         Ok(proof)
     }
 

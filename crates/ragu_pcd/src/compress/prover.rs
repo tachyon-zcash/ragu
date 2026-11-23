@@ -8,18 +8,18 @@ use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
 use super::{
-    CompressedPcd, CompressedProof, Lifted, Messages, Sampled,
+    Lifted, Messages, Sampled,
     batch::{self, Batch},
     instance::Instance,
     revdot::{self, Openings},
     transcript,
 };
 use crate::{
-    Application, Pcd, RAGU_TAG, SelectableBackend,
+    Application, CompressedPcd, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
-    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
+    profile::{Profile, ProfiledCycle, online::mesh::Coordinates},
     proof::commitments_match,
 };
 
@@ -34,7 +34,7 @@ fn open<P: Affine, R: Rank, B: SelectableBackend>(
     rng: &mut impl CryptoRng,
 ) -> Result<(Batch<P>, IpaProof<P>)> {
     let (batch, witness) =
-        batch::batch::<_, R, B>(polys, &openings.claims, generators, transcript)?;
+        batch::prover::batch::<_, R, B>(polys, &openings.claims, generators, transcript)?;
     let params = Params::with_k(generators, u, R::RANK);
     let opening = ipa::create_proof::<B, _>(&params, rng, transcript, &witness.p, witness.u)?;
     Ok((batch, opening))
@@ -156,7 +156,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             let Sampled { w, y, z, sigma } = native_sampled;
             let masked =
                 instance.native_bindings::<R, B, HEADER_SIZE>(&challenges, registry, sigma)?;
-            let (reduction, witness) = revdot::reduce_native::<C, R, B>(
+            let (reduction, witness) = revdot::prover::reduce_native::<C, R, B>(
                 proof,
                 registry,
                 generators,
@@ -235,7 +235,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             let generators = C::nested_generators(self.params);
             let Sampled { w, y, z, sigma } = nested_sampled;
             let masked = instance.nested_bindings::<R, B>(&challenges, registry, sigma)?;
-            let (reduction, witness) = revdot::reduce_nested::<C, R, B>(
+            let (reduction, witness) = revdot::prover::reduce_nested::<C, R, B>(
                 proof,
                 registry,
                 generators,

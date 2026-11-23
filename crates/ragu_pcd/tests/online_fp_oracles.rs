@@ -6,16 +6,28 @@
 //! design is in the book (`book/src/protocol/poly-oracle.md`): its use cases
 //! T1–T5 and capabilities C1–C4 label the sections.
 //!
-//! | Section | Use case | API shown |
-//! |---|---|---|
-//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header::OnlinePolyCommit`], [`OnlinePoly`], [`Padding`], [`NUM_ONLINE_FP_POLYS`] |
-//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::prepare`], [`Prepared`], [`Step::NUM_STAGED`], [`Oracles::zeta`], [`Oracles::output`], [`Oracle::open`](ragu_pcd::step::Oracle::open), [`Oracles::staged`] |
-//! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput::polynomial`] |
-//! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
-//! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::left`] at a wire |
-//! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
-//! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Oracles::left`], [`Oracles::right`], [`Oracles::output`] |
-//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments), the wire format |
+//! 1. [Headers](#1-headers), C1, two polynomial slots per proof:
+//!    [`Header::OnlinePolyCommit`], [`OnlinePoly`], [`Padding`],
+//!    [`NUM_ONLINE_FP_POLYS`].
+//! 2. [Seed a set](#2-seed-a-set), T2 and T3, private roots and a
+//!    challenge: [`Step::prepare`], [`Prepared`], [`Step::NUM_STAGED`],
+//!    [`Oracles::zeta`], [`Oracles::output`],
+//!    [`Oracle::open`](ragu_pcd::step::Oracle::open), [`Oracles::staged`].
+//! 3. [Insert into a set](#3-insert-into-a-set), T2, public and private
+//!    polynomials: a left input's polynomial, [`HeaderInput::polynomial`].
+//! 4. [Merge two sets](#4-merge-two-sets), T1, public polynomials only:
+//!    the left, right and output slots.
+//! 5. [Membership](#5-membership), T4, evaluation at a witnessed point:
+//!    [`Oracles::left`] at a wire.
+//! 6. [Anchor chain](#6-anchor-chain), T5, hashing a commitment:
+//!    [`Oracles::bridge_hash`], [`Application::bridge_hash`],
+//!    [`Application::commit`], [`Pcd::commitments`].
+//! 7. [Every slot](#7-every-slot), C4, all six slots at once:
+//!    [`Oracles::left`], [`Oracles::right`], [`Oracles::output`].
+//! 8. [The application](#8-the-application): [`ApplicationBuilder`],
+//!    `seed`, `fuse`, `rerandomize`, verify, compress,
+//!    [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments),
+//!    the wire format.
 //!
 //! ## The rule for checks at $\zeta$
 //!

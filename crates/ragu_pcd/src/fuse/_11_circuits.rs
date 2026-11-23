@@ -16,7 +16,7 @@ use crate::{
     Application,
     header::NUM_ONLINE_FP_POLYS,
     internal::{native, native::total_circuit_counts, nested},
-    profile::{Profile, ProfiledCycle, Source, online::batch::Challenges},
+    profile::{Profile, ProfiledCycle, Source, online::circuit::Challenges},
     proof::ProofBuilder,
 };
 

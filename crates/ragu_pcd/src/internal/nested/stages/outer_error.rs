@@ -27,8 +27,8 @@ use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
     internal::{
-        fold_revdot::{NumErrorTerms, Parameters},
         nested::RevdotParameters,
+        revdot::{NumErrorTerms, Parameters},
     },
     profile::Profile,
 };

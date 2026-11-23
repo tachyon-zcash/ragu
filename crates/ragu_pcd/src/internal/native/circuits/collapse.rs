@@ -94,7 +94,7 @@ use super::super::{
     unified::{self, OutputBuilder},
 };
 use crate::{
-    internal::{fold_revdot, ky},
+    internal::{ky, revdot},
     profile::{Profile, ProfiledCycle},
 };
 
@@ -104,11 +104,11 @@ use crate::{
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: revdot::Parameters> {
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
     /// Creates the multi-stage circuit for both revdot folding layers.
@@ -120,13 +120,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
 }
 
 /// Witness for the native collapse circuit.
-pub struct Witness<
-    'a,
-    C: ProfiledCycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    FP: fold_revdot::Parameters,
-> {
+pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
+{
     /// The binding stage: the children's walked commitments, for the
     /// nested extension stages the binding circuit's k(y) is over.
     pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
@@ -140,7 +135,7 @@ pub struct Witness<
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
     type Last = native_inner_error::Stage<C, R, HEADER_SIZE, FP>;
@@ -247,7 +242,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
 
         // Get layer 1 folding challenges from the unified instance.
         let mu = unified_output.mu.read(dr, allocator)?;
-        let fold_products = fold_revdot::ClaimFolder::new(&mu);
+        let fold_products = revdot::ClaimFolder::new(&mu);
 
         // Assemble k(y) values from multiple sources. The ordering must match
         // claims's iteration order for correct folding correspondence.
@@ -337,7 +332,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // group, and zeros in the last group, whose claim holds for any
         // randomizer.
         let zero = Element::zero(dr);
-        let mut ky = fold_revdot::randomized::<_, FP>(
+        let mut ky = revdot::randomized::<_, FP>(
             ky_values::<C::Profile, _>(&ky),
             zero.clone(),
             inner_error.randomizer_c.clone(),
@@ -361,7 +356,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // Compute the final folded revdot claim c via layer 2 reduction.
         // The collapsed values checked above are this layer's k(y) inputs.
         {
-            let fold_products = fold_revdot::ClaimFolder::new(&mu_prime);
+            let fold_products = revdot::ClaimFolder::new(&mu_prime);
             let computed_c = fold_products.fold_outer::<FP>(
                 dr,
                 &outer_error.error_terms,

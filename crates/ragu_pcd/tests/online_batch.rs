@@ -28,10 +28,8 @@ use crate::{
         CircuitSlot, Extension, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext,
         Registered, Standard,
         online::{
-            Challenge, Layout, Opening, Phase, Point,
-            batch::Challenges,
-            circuit,
-            prepared::PreparationChallenges,
+            Challenge, Layout, Opening, Phase, Point, PreparationChallenges,
+            circuit::{self, Challenges},
             stages::{InputStage, InputWitness, Nested, QueryStage, QueryWitness},
         },
         testing::UnitStep,

@@ -11,13 +11,19 @@
 //! nested batch's commitments are fixed before the challenges the nested
 //! openings are at, exactly as the native batch's are:
 //!
-//! | stage | holds | fixed before | carried by |
-//! |---|---|---|---|
-//! | [`BindingStage`] | the children's bridge and challenge-stage commitments, $A_n$, $B_n$, `registry_xy`, $P_n$ and nested extension stages | $w$ | `preamble` bridge |
-//! | [`PreambleStage`] | the rest of the children's nested commitments, and the step's own online Fq commitments | $w$ | `preamble` bridge |
-//! | [`RegistryWxStage`] | $m_n(w_n, x_{i,n}, Y)$ | $y$ | `s_prime` bridge |
-//! | [`AbStage`] | $m_n(w_n, X, y_n)$, $A_n$, $B_n$ | $x$ | `ab` bridge |
-//! | [`FStage`] | $m_n(W, x_n, y_n)$, $F_n$ | $u$ | `f` bridge |
+//! - [`BindingStage`] holds the children's bridge and challenge-stage
+//!   commitments, $A_n$, $B_n$, `registry_xy`, $P_n$ and the nested
+//!   extension stages, fixed before $w$ and carried by the `preamble`
+//!   bridge.
+//! - [`PreambleStage`] holds the rest of the children's nested commitments
+//!   and the step's own online Fq commitments, fixed before $w$ and carried
+//!   by the `preamble` bridge.
+//! - [`RegistryWxStage`] holds $m_n(w_n, x_{i,n}, Y)$, fixed before $y$ and
+//!   carried by the `s_prime` bridge.
+//! - [`AbStage`] holds $m_n(w_n, X, y_n)$, $A_n$ and $B_n$, fixed before $x$
+//!   and carried by the `ab` bridge.
+//! - [`FStage`] holds $m_n(W, x_n, y_n)$ and $F_n$, fixed before $u$ and
+//!   carried by the `f` bridge.
 //!
 //! Every point is fixed before the random point it is opened at: the
 //! `registry_wy` restriction is opened at $x_n$, and the `registry_xy`

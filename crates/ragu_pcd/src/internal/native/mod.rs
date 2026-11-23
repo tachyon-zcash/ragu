@@ -28,7 +28,7 @@ use ragu_core::Result;
 use ragu_primitives::vec::{ConstLen, FixedVec, Len};
 
 use crate::{
-    internal::{endoscalar, fold_revdot::Parameters, nested},
+    internal::{endoscalar, nested, revdot::Parameters},
     profile::{BondingSlot, CircuitSlot, Profile, ProfiledCycle, Shape},
     step,
 };
@@ -148,7 +148,7 @@ pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 5 + 2;
 /// The minimum groups for the native quotient fold: fourteen groups with
 /// seven claims each provide room for 98 claims, and the fifteenth holds the
 /// randomizer's half-claim (see
-/// [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)). Larger
+/// [`revdot`](crate::internal::revdot#the-randomizer)). Larger
 /// profiles grow the group count.
 pub const NUM_FOLD_GROUPS: usize = 15;
 
@@ -175,13 +175,13 @@ pub fn num_claims<P: Profile>() -> usize {
 /// Length type for the native fold's groups in profile `P`: the standard
 /// profile's [`NUM_FOLD_GROUPS`], or as many groups of [`FOLD_GROUP_SIZE`]
 /// as the profile's [`num_claims`] need beside the randomizer's (see
-/// [`fold_revdot::num_groups`](crate::internal::fold_revdot::num_groups)),
+/// [`revdot::num_groups`](crate::internal::revdot::num_groups)),
 /// whichever is more.
 pub struct NumFoldGroups<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumFoldGroups<P> {
     fn len() -> usize {
-        NUM_FOLD_GROUPS.max(crate::internal::fold_revdot::num_groups(
+        NUM_FOLD_GROUPS.max(crate::internal::revdot::num_groups(
             num_claims::<P>(),
             FOLD_GROUP_SIZE,
         ))
@@ -233,6 +233,7 @@ pub mod circuits {
 
 pub mod claims;
 pub mod online;
+pub mod pcs;
 pub mod unified;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -869,90 +870,6 @@ pub enum RxComponent {
     Rx(RxIndex),
 }
 
-/// Static prefix of the polynomial-query order used to construct and verify
-/// the fuse quotient polynomial $f(X)$.
-///
-/// These queries are consumed by both the prover-side `compute_f` path and the
-/// `compute_v` circuit. Keeping this prefix in one ordered list prevents the
-/// two implementations from drifting independently; the dynamic suffixes are
-/// still driven by [`RxIndex::ALL`] and [`InternalCircuitIndex::ALL`].
-pub(crate) enum StaticFQuery {
-    /// Left child proof $p(u)=v$ check.
-    LeftP,
-    /// Right child proof $p(u)=v$ check.
-    RightP,
-    /// Left child registry-xy polynomial queried at the current $w$.
-    LeftRegistryXyAtW,
-    /// Right child registry-xy polynomial queried at the current $w$.
-    RightRegistryXyAtW,
-    /// Current $m(w, x_0, Y)$ queried at the left child's $y$.
-    RegistryWx0AtLeftY,
-    /// Current $m(w, x_1, Y)$ queried at the right child's $y$.
-    RegistryWx1AtRightY,
-    /// Current $m(w, x_0, Y)$ queried at the current $y$.
-    RegistryWx0AtY,
-    /// Current $m(w, x_1, Y)$ queried at the current $y$.
-    RegistryWx1AtY,
-    /// Current $m(w, X, y)$ queried at the left child's $x$.
-    RegistryWyAtLeftX,
-    /// Current $m(w, X, y)$ queried at the right child's $x$.
-    RegistryWyAtRightX,
-    /// Current $m(w, X, y)$ queried at the current $x$.
-    RegistryWyAtX,
-    /// Current registry-xy polynomial queried at the current $w$.
-    RegistryXyAtW,
-    /// Current registry-xy polynomial queried at the step's own circuit id:
-    /// the selector restriction of the step's application claim.
-    RegistryXyAtCircuitId,
-    /// Left child $a$ polynomial queried at $xz$.
-    LeftAbAAtXz,
-    /// Left child $b$ polynomial queried at $x$.
-    LeftAbBAtX,
-    /// Right child $a$ polynomial queried at $xz$.
-    RightAbAAtXz,
-    /// Right child $b$ polynomial queried at $x$.
-    RightAbBAtX,
-    /// Current accumulator $a$ polynomial queried at $xz$.
-    CurrentAAtXz,
-    /// Current accumulator $b$ polynomial queried at $x$.
-    CurrentBAtX,
-    /// The step's own application rx queried at $xz$.
-    CurrentApplicationAtXz,
-    /// The step's own application stage rx queried at $xz$.
-    CurrentApplicationStageAtXz,
-    /// The step's own fold randomizer $a_r$ queried at $xz$.
-    RandomizerAAtXz,
-    /// The step's own fold randomizer $b_r$ queried at $x$.
-    RandomizerBAtX,
-}
-
-/// Ordered static prefix for fuse quotient polynomial queries.
-pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 23] = [
-    StaticFQuery::LeftP,
-    StaticFQuery::RightP,
-    StaticFQuery::LeftRegistryXyAtW,
-    StaticFQuery::RightRegistryXyAtW,
-    StaticFQuery::RegistryWx0AtLeftY,
-    StaticFQuery::RegistryWx1AtRightY,
-    StaticFQuery::RegistryWx0AtY,
-    StaticFQuery::RegistryWx1AtY,
-    StaticFQuery::RegistryWyAtLeftX,
-    StaticFQuery::RegistryWyAtRightX,
-    StaticFQuery::RegistryWyAtX,
-    StaticFQuery::RegistryXyAtW,
-    StaticFQuery::RegistryXyAtCircuitId,
-    StaticFQuery::LeftAbAAtXz,
-    StaticFQuery::LeftAbBAtX,
-    StaticFQuery::RightAbAAtXz,
-    StaticFQuery::RightAbBAtX,
-    StaticFQuery::CurrentAAtXz,
-    StaticFQuery::CurrentBAtX,
-    StaticFQuery::CurrentApplicationAtXz,
-    StaticFQuery::CurrentApplicationStageAtXz,
-    StaticFQuery::RandomizerAAtXz,
-    StaticFQuery::RandomizerBAtX,
-];
-
 /// Registers internal native circuits and masks into the provided registry.
 ///
 /// Does not register internal steps (rerandomize, bootstrap); those are
@@ -980,7 +897,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         use InternalCircuitIndex::*;
         registry = match id {
             ExtensionCircuit(k) => {
-                use crate::profile::online::{extension, stages::Native};
+                use crate::profile::online::stages::{self as extension, Native};
                 let slot = CircuitSlot::new(registry);
                 let (registry, registration) =
                     if Some(k) == extension::helper::<C::Profile, Native>() {
@@ -999,7 +916,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 registry
             }
             ExtensionBonding(j) => {
-                use crate::profile::online::{extension, stages::Native};
+                use crate::profile::online::stages::{self as extension, Native};
                 let slot = BondingSlot::new(registry);
                 let (registry, registration) =
                     match extension::bonding::<C::Profile, Native>(j as usize)? {

@@ -43,7 +43,11 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_circuits::{
+    Blind,
+    polynomials::{Rank, sparse},
+    staging::StageExt,
+};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use udon::curve::Affine;
@@ -54,13 +58,16 @@ use super::{
 };
 use crate::{
     Application,
-    internal::{fold_revdot, native, nested},
+    internal::{
+        native::{self, stages::points as native_points},
+        nested, revdot,
+    },
     profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
-type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
-type NestedNumGroups<P> = <nested::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
+type NativeNumGroups<P> = <native::RevdotParameters<P> as revdot::Parameters>::NumGroups;
+type NestedNumGroups<P> = <nested::RevdotParameters<P> as revdot::Parameters>::NumGroups;
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
@@ -114,14 +121,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     {
         let nested_mu_prime = nested::challenge::<C>(*native_mu_prime.value().take())?;
 
-        let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            a,
-            nested_mu_prime,
-        );
-        let b_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            b,
-            nested_mu_prime,
-        );
+        let a_poly =
+            revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(a, nested_mu_prime);
+        let b_poly =
+            revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(b, nested_mu_prime);
 
         builder.set_nested_a_poly(a_poly);
         builder.set_nested_b_poly(b_poly);
@@ -145,11 +148,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let TrackedPoly {
             poly: a_poly,
             decomp: a_decomp,
-        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime);
+        } = revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime);
         let a_poly = a_poly.into_owned();
 
-        let b_poly =
-            fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(b, mu_prime);
+        let b_poly = revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(b, mu_prime);
         let host_gen = C::host_generators(self.params);
 
         // Compute a_commitment from decomposition: small MSM over known
@@ -187,6 +189,33 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_a_poly(a_poly, a_commitment);
         builder.set_native_b_poly(b_poly, b_commitment);
 
+        Ok(())
+    }
+
+    /// Commits the native points stage holding the nested `registry_wy`
+    /// commitment, $A_n$ and $B_n$, before $x$ is squeezed; the `ab` bridge
+    /// carries its commitment.
+    pub(crate) fn commit_native_points_ab<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        registry_wy: C::NestedCurve,
+        a: C::NestedCurve,
+        b: C::NestedCurve,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let witness = native_points::AbWitness {
+            registry_wy,
+            a,
+            b,
+            online_points: builder.nested_online_phase::<2>(),
+        };
+        builder.set_native_points_ab_rx(<native_points::AbStage<C::NestedCurve, C::Profile> as StageExt<
+            C::CircuitField,
+            R,
+        >>::rx(
+            Blind::random(rng),
+            &witness,
+        )?);
         Ok(())
     }
 }

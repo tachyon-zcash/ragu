@@ -68,7 +68,6 @@ use ragu_core::{Cycle, PoseidonPermutation, Result};
 use udon::field::Field;
 
 use super::{
-    circuit::AbValue,
     online::{Values, input},
     side::{Native, Nested, Side},
     stages::{
@@ -90,9 +89,9 @@ use crate::{
         },
     },
     internal::{
-        claims::Source,
         native::{self, stages::eval::generator_index},
         nested::{self, stages::challenges as challenge_stage},
+        revdot::Source,
     },
     ipa::{IPA_TAG, IpaCycle},
     profile::{ProfiledCycle, Standard},
@@ -1899,6 +1898,19 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
         });
     }
     (bindings, digits)
+}
+
+/// A coefficient of the `ab` bridge stage: which of its values it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AbValue {
+    /// A coordinate of the native $A$ commitment, $x$ then $y$.
+    A(usize),
+    /// A coordinate of the native $B$ commitment.
+    B(usize),
+    /// A coordinate of the native points stage's commitment.
+    PointsAb(usize),
+    /// The `ab` bridge stage's alpha, `bridge_alpha` squared.
+    Alpha,
 }
 
 /// The `ab` bridge stage's layout: the generator index each of its

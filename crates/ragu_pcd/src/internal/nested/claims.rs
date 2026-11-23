@@ -23,7 +23,7 @@ use udon::field::Field;
 
 use super::{InternalCircuitIndex, RxComponent, RxIndex};
 use crate::{
-    internal::claims::{Builder, Source, sum_polynomials},
+    internal::revdot::{Builder, Source, sum_polynomials},
     profile::Profile,
 };
 
@@ -338,7 +338,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 "a profile with a binding circuit takes one binding value per proof"
             );
             let helper_ky: Vec<S::Ky> = source.online_helper_ky().collect();
-            let helper = crate::profile::online::extension::helper::<
+            let helper = crate::profile::online::stages::helper::<
                 P,
                 crate::profile::online::stages::Nested,
             >();

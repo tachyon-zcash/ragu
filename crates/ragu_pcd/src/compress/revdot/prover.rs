@@ -20,8 +20,8 @@ use crate::{
     Proof,
     compress::revdot::claims::{self, Kind, Masked, Shape},
     internal::{
-        claims::{Builder, Source},
         native, nested,
+        revdot::{Builder, Source},
     },
     ipa::IpaTranscript,
     profile::ProfiledCycle,
@@ -116,7 +116,7 @@ impl<C: Affine, R: Rank> Witness<C, R> {
 
 /// The decider's polynomial [`Source`] over one proof, the raw accumulator
 /// claim included: what the compressor feeds
-/// [`claims::Builder`](crate::internal::claims::Builder).
+/// [`claims::Builder`](crate::internal::revdot::Builder).
 pub(crate) struct NativePolys<'a, C: Cycle, R: Rank>(pub &'a Proof<C, R>);
 
 impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {

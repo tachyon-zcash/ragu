@@ -49,8 +49,8 @@
 //! not.
 //!
 //! [`challenges`]: stages::challenges
-//! [`ClaimFolder::fold_inner`]: fold_revdot::ClaimFolder::fold_inner
-//! [`ClaimFolder::fold_outer`]: fold_revdot::ClaimFolder::fold_outer
+//! [`ClaimFolder::fold_inner`]: revdot::ClaimFolder::fold_inner
+//! [`ClaimFolder::fold_outer`]: revdot::ClaimFolder::fold_outer
 //! [`TwoProofKySource`]: crate::internal::nested::claims::TwoProofKySource
 //! [`build`]: crate::internal::nested::claims::build
 //! [`ChildOutput::nested_instance`]: stages::preamble::ChildOutput::nested_instance
@@ -77,13 +77,14 @@ use super::common;
 use crate::{
     header::NUM_ONLINE_FP_POLYS,
     internal::{
-        fold_revdot, ky,
+        ky,
         nested::{
             RevdotParameters,
             claims::{TwoProofKySource, ky_values},
             stages::{self, challenges},
             unified,
         },
+        revdot,
     },
     profile::Profile,
 };
@@ -248,7 +249,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         );
         // The grid holds the claims' targets with the fold randomizer's.
         let zero = Element::zero(dr);
-        let mut ky = fold_revdot::randomized::<_, RevdotParameters<P>>(
+        let mut ky = revdot::randomized::<_, RevdotParameters<P>>(
             ky_values::<P, _>(&ky),
             zero.clone(),
             stages.inner_error.randomizer_c.clone(),
@@ -256,7 +257,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         );
 
         // Layer 1: each group's fold must be the collapsed value witnessed.
-        let fold = fold_revdot::ClaimFolder::new(&lifts[challenges::MU].lift);
+        let fold = revdot::ClaimFolder::new(&lifts[challenges::MU].lift);
         for (error_terms, collapsed) in stages
             .inner_error
             .error_terms
@@ -270,7 +271,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
 
         // Layer 2: the fold of the collapsed values is c_n, outside the base
         // case.
-        let fold = fold_revdot::ClaimFolder::new(&lifts[challenges::MU_PRIME].lift);
+        let fold = revdot::ClaimFolder::new(&lifts[challenges::MU_PRIME].lift);
         let computed_c = fold.fold_outer::<RevdotParameters<P>>(
             dr,
             &stages.outer_error.error_terms,

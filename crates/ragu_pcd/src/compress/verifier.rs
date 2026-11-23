@@ -3,13 +3,13 @@
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result};
 
-use super::{CompressedPcd, CompressedProof, Lifted, Sampled, batch, revdot, transcript};
+use super::{Lifted, Sampled, batch, revdot, transcript};
 use crate::{
-    Application, RAGU_TAG, SelectableBackend,
+    Application, CompressedPcd, CompressedProof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{ky, nested},
     ipa::{CycleTranscript, IpaCycle},
-    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
+    profile::{Profile, ProfiledCycle, online::mesh::Coordinates},
 };
 
 /// The backend whose kernels [`Application::verify_compressed`] consults for

@@ -48,9 +48,10 @@
 //! after the step's circuit, Ragu opens it at $\zeta$ and holds the value
 //! to one, so a step pins nothing by hand. If the step prepared a
 //! polynomial other than one for that slot, the opening is not one, except
-//! with negligible probability: the honest prover stops with [`Error::InvalidWitness`], and the verifier rejects a proof
-//! that a modified prover makes. A step that leaves an output slot to the
-//! steps that consume it, as a hint, opens it once and ignores the value.
+//! with negligible probability: the honest prover stops with
+//! [`Error::InvalidWitness`], and the verifier rejects a proof that a
+//! modified prover makes. A step that leaves an output slot to the steps
+//! that consume it, as a hint, opens it once and ignores the value.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;

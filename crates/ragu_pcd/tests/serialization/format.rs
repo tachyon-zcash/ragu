@@ -1,6 +1,6 @@
 //! Byte round trips of wallet-rank proofs through the versioned envelope.
 
-use ragu_pcd::wire::Error;
+use ragu_pcd::serialization::Error;
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 

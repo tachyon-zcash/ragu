@@ -20,10 +20,8 @@ use crate::{
     profile::{
         Profile, Profiled, ProfiledCycle, ProverContext, Standard,
         online::{
-            Challenge, Layout, Opening, Phase, Point,
+            Challenge, Layout, Opening, Phase, Point, PreparationChallenges, SourceRegistry,
             mesh::{Helper, Mesh, Restriction},
-            prepared::PreparationChallenges,
-            source::SourceRegistry,
         },
         testing::UnitStep,
     },

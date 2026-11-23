@@ -7,10 +7,10 @@ RAGU004|crates/ragu_circuits/src/raw.rs|173|The reserved extra wire is intention
 RAGU005|crates/ragu_core/src/drivers/emulator.rs|354|Known prediction bypasses execution only in the constraint-free Wire-equals-unit emulator.
 RAGU005|crates/ragu_pcd/src/step/encoder.rs|97|The enum structurally distinguishes a pre-encoded value from one requiring conversion.
 RAGU005|crates/ragu_pcd/src/step/internal/padded.rs|99|The early error depends only on the structural number of header elements already written.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|548|The fixed interpolation-node index selects an endpoint product or a multiplication; it does not depend on witness values.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|550|The fixed group size and node index select the last endpoint product instead of multiplying by one.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|586|The quotient slice comes from a FixedVec length type; a singleton claim has no quotient coefficients or correction operations.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|618|The interpolation-basis cache is keyed by the fixed length type and prior structural fold calls, never by witness values.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|732|The fixed interpolation-node index selects an endpoint product or a multiplication; it does not depend on witness values.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|734|The fixed group size and node index select the last endpoint product instead of multiplying by one.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|770|The quotient slice comes from a FixedVec length type; a singleton claim has no quotient coefficients or correction operations.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|802|The interpolation-basis cache is keyed by the fixed length type and prior structural fold calls, never by witness values.
 RAGU004|crates/ragu_primitives/src/allocator.rs|68|The stateless allocator intentionally returns A and wastes the zero B and C wires of its allocation gate.
 RAGU005|crates/ragu_primitives/src/allocator.rs|109|Structural pool occupancy selects redemption of a D wire or allocation of a fresh gate.
 RAGU004|crates/ragu_primitives/src/allocator.rs|112|The pooled allocator intentionally returns A, stores Extra, and wastes the zero B and C wires.
@@ -34,46 +34,46 @@ RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|217|The public-rate threshold
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|254|Save behavior is selected by structural sponge mode at an explicit API boundary.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|257|Pending-value count is structural sponge state, not a circuit witness.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|325|ALPHA is a type-level permutation parameter and unsupported values panic before synthesis.
-RAGU005|crates/ragu_pcd/src/decompress/derive.rs|517|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
-RAGU005|crates/ragu_pcd/src/decompress/ipa.rs|71|The first factor seeds the product; later factors multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|349|The first square is the base itself; each later one squares the previous.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|377|The exponent is a constant of the rank; its set bits fix which squares multiply.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|378|The exponent is a constant of the rank; its first set bit seeds the product.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|396|The first two powers are one and the base; later ones multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/revdot.rs|304|A claim's kind is fixed by the protocol's claim list, never by the witness.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|211|A point source is a constant of the schedule, a pure function of the proof system's constants.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|231|An element source is a constant of the schedule, a pure function of the proof system's constants.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|281|Which challenges a side squeezes and which it takes from bits is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|500|A challenge's endoscalar is read once per chain chunk; the chunk's challenge list is a constant of the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|508|Whether a chain continues a work slot is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|513|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|517|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|527|Whether a term is scaled is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|533|The first term seeds the accumulator; later terms add once each, per the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|594|The chunk kind is the schedule's constant descriptor; each chunk circuit runs the one at its index.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|601|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|609|The transcript's operation list is a constant of the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|621|Whether a transcript chunk saves the sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|635|Which challenges a side squeezes and which it takes from bits is fixed by the schedule; a lift chunk allocates the bits of a challenge from bits alone, the write holding them to the lifts stage.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|778|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|787|Whether a scaling part sums its digits' generators for the other side's digits stage is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|570|The first digit's term seeds the sum; later digits add once each, over the schedule's fixed digit range.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|453|Whether a side's instance stage carries a step binding is a constant of the side's layout: the circuit-field side's does and checks it, the scalar-field side's does not.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|477|Whether a side's work stage holds an online Fq opening is a constant of the side's schedule: the scalar-field side's does and checks it, the circuit-field side's does not.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1172|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|619|The first factor seeds the product; later factors multiply once each.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1329|The first square is the base itself; each later one squares the previous.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1357|The exponent is a constant of the rank; its set bits fix which squares multiply.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1358|The exponent is a constant of the rank; its first set bit seeds the product.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1376|The first two powers are one and the base; later ones multiply once each.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|318|A claim's kind is fixed by the protocol's claim list, never by the witness.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|723|A point source is a constant of the schedule, a pure function of the proof system's constants.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|743|An element source is a constant of the schedule, a pure function of the proof system's constants.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|793|Which challenges a side squeezes and which it takes from bits is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1012|A challenge's endoscalar is read once per chain chunk; the chunk's challenge list is a constant of the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1020|Whether a chain continues a work slot is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1025|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1029|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1039|Whether a term is scaled is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1045|The first term seeds the accumulator; later terms add once each, per the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1106|The chunk kind is the schedule's constant descriptor; each chunk circuit runs the one at its index.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1113|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1121|The transcript's operation list is a constant of the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1133|Whether a transcript chunk saves the sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1147|Which challenges a side squeezes and which it takes from bits is fixed by the schedule; a lift chunk allocates the bits of a challenge from bits alone, the write holding them to the lifts stage.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1290|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1299|Whether a scaling part sums its digits' generators for the other side's digits stage is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|1082|The first digit's term seeds the sum; later digits add once each, over the schedule's fixed digit range.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|965|Whether a side's instance stage carries a step binding is a constant of the side's layout: the circuit-field side's does and checks it, the scalar-field side's does not.
+RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|989|Whether a side's work stage holds an online Fq opening is a constant of the side's schedule: the scalar-field side's does and checks it, the circuit-field side's does not.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|385|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.
-RAGU005|crates/ragu_pcd/src/internal/ky.rs|273|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
-RAGU005|crates/ragu_pcd/src/step/oracles.rs|242|A second opening of the same slot is a structural API misuse by the step: which slots a step opens is fixed by its circuit, not by witness values.
-RAGU005|crates/ragu_pcd/src/step/oracles.rs|284|Which output slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are held to one.
-RAGU005|crates/ragu_pcd/src/step/oracles.rs|300|Which slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are opened at zeta.
-RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|221|Wire counts are checked against the setup-fixed layout before synthesis; a mismatch is an API error, not a witness-dependent circuit branch.
-RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|233|The opening descriptor is fixed by the profile at setup; it selects a constant, challenge wire or staged point without inspecting witness values.
-RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|298|The exponent is a profile layout length fixed at setup; a zero exponent returns the value unchanged without inspecting witness values.
-RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|304|Square-and-multiply branches on the bits of the setup-fixed exponent, a profile layout length, never on witness values.
-RAGU005|crates/ragu_pcd/src/internal/ky.rs|596|The profile fixes at setup whether its nested binding exports online Fq openings and whether the private batch exists; a profile with neither reuses the unified target without adding gates, and any other always synthesizes the same targets.
+RAGU005|crates/ragu_pcd/src/internal/shared/ky.rs|273|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
+RAGU005|crates/ragu_pcd/src/step/oracles.rs|243|A second opening of the same slot is a structural API misuse by the step: which slots a step opens is fixed by its circuit, not by witness values.
+RAGU005|crates/ragu_pcd/src/step/oracles.rs|285|Which output slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are held to one.
+RAGU005|crates/ragu_pcd/src/step/oracles.rs|301|Which slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are opened at zeta.
+RAGU005|crates/ragu_pcd/src/profile/online/circuit.rs|477|Wire counts are checked against the setup-fixed layout before synthesis; a mismatch is an API error, not a witness-dependent circuit branch.
+RAGU005|crates/ragu_pcd/src/profile/online/circuit.rs|489|The opening descriptor is fixed by the profile at setup; it selects a constant, challenge wire or staged point without inspecting witness values.
+RAGU005|crates/ragu_pcd/src/profile/online/circuit.rs|554|The exponent is a profile layout length fixed at setup; a zero exponent returns the value unchanged without inspecting witness values.
+RAGU005|crates/ragu_pcd/src/profile/online/circuit.rs|560|Square-and-multiply branches on the bits of the setup-fixed exponent, a profile layout length, never on witness values.
+RAGU005|crates/ragu_pcd/src/internal/shared/ky.rs|596|The profile fixes at setup whether its nested binding exports online Fq openings and whether the private batch exists; a profile with neither reuses the unified target without adding gates, and any other always synthesizes the same targets.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|351|The profile fixes at setup whether its native binding exports online Fq commitments and whether private commitment exports exist; a layout with neither reuses its unified target, and any other always exports every declared point.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|274|The profile fixes whether any online batch export exists at setup; a profile without one reuses its unified target, and a profile with one always synthesizes the same compute-v target.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|310|The profile fixes whether the native private helper exists at setup; inactive profiles have no helper target, and active profiles always synthesize the same challenge, sum and commitment target.
-RAGU005|crates/ragu_pcd/src/internal/ky.rs|619|The profile fixes whether the nested helper exists: native-only layouts still export stage points from compute-v and then omit only the absent helper target.
-RAGU005|crates/ragu_pcd/src/internal/ky.rs|613|The nested mesh is fixed by the profile at setup; every active proof exports the same four inherited coordinate wires, without a witness-controlled activation flag.
+RAGU005|crates/ragu_pcd/src/internal/shared/ky.rs|619|The profile fixes whether the nested helper exists: native-only layouts still export stage points from compute-v and then omit only the absent helper target.
+RAGU005|crates/ragu_pcd/src/internal/shared/ky.rs|613|The nested mesh is fixed by the profile at setup; every active proof exports the same four inherited coordinate wires, without a witness-controlled activation flag.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|290|The native mesh is fixed by the profile at setup; its target always includes both inherited coordinate pairs from the common helper metadata.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|295|The nested mesh is fixed by the profile at setup; its carry target always includes both inherited walk commitments and cannot be disabled by a witness.

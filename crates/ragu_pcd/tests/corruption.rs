@@ -42,7 +42,7 @@ use ragu_pcd::{
         NativeRx, NestedAccumulator, NestedCommitment, NestedRx, RxComponent,
     },
     header::Header,
-    wire,
+    serialization,
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2};
 use rand::{SeedableRng, rngs::StdRng};
@@ -457,7 +457,11 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
         let bytes = match corrupted.proof.to_bytes() {
             Ok(bytes) => bytes,
             Err(error) => {
-                assert_eq!(error, wire::Error::Unencodable, "{shape:?}: {described}");
+                assert_eq!(
+                    error,
+                    serialization::Error::Unencodable,
+                    "{shape:?}: {described}"
+                );
                 assert!(
                     !corrupted.verify(&app, 1234),
                     "{shape:?}: a proof with no encoding verified: {described}",

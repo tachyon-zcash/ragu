@@ -34,11 +34,11 @@ use super::{
 };
 use crate::{
     Application, Proof,
+    fuse::par_join,
     internal::{
         native::{self, online},
         nested,
     },
-    multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,
 };

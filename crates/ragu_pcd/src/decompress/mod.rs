@@ -17,8 +17,9 @@
 //!   (see *What binds the two sides*).
 //! - **Field identities.** The fold's weights and $W(r)$, the public parts
 //!   of the folded claims, the split identity, the batch's $f(u)$ and $v$
-//!   and the IPA's $b$ are arithmetic in one field: [`Element`] arithmetic
-//!   in the circuit over that field, with inverses as advised witnesses.
+//!   and the IPA's $b$ are arithmetic in one field:
+//!   [`Element`](ragu_primitives::Element) arithmetic in the circuit over
+//!   that field, with inverses as advised witnesses.
 //! - **Registry evaluations.** The native verifier evaluates the wallet
 //!   registry at $(w, r, y)$, at the circuits' $\omega_c$ and at the
 //!   children's points. The chunks take these as stage wires and hold each
@@ -47,48 +48,51 @@
 //!   Both curves' are bound so, over round challenges a digest that step
 //!   committed with them fixes (see *The step binding*).
 //!
-//! The scalar checks are written once as [`Driver`]-generic gadget code
+//! The scalar checks are written once as [`Driver`](ragu_core::drivers::Driver)-generic gadget code
 //! and run in the circuit over the matching field: the host curve's in the
 //! native circuits, the nested curve's in the nested ones.
 //!
 //! # Layout
 //!
-//! - [`revdot`], [`batch`] and [`ipa`]: the fold and split, the batch's
-//!   $f(u)$, $v$ and $\beta$ weights, and the IPA's round inverses, $b$
-//!   and final-check scalars, as gadgets, with $s$ at any point
-//!   ([`ipa::s_at`]), which the step binding checks an opening against.
-//! - The compression's transcript over the allocated instance and messages,
-//!   squeezing the native challenges; the derived commitments, $\[H\]$ and
-//!   the IPA's final check as endoscalar chains over the other curve's
-//!   points; and the verifier assembled from the gadgets as the two
-//!   circuits of the cycle, each side one circuit, which the tests run end
-//!   to end.
-//! - [`program`], [`stages`], [`run`], [`side`] and [`chunk`]: each side
-//!   cut into chunk circuits under the gate budget, every chunk loading
-//!   the compressed proof's data from stages and leaving its results in a
-//!   work stage for later chunks, with the prover's native run of the same
-//!   program filling the stages. The chunk circuits take two ranks, the
+//! - [`gadgets`]: the verifier's checks as gadgets: the fold and split,
+//!   the batch's $f(u)$, $v$ and $\beta$ weights, and the IPA's round
+//!   inverses, $b$ and final-check scalars, with $s$ at any point
+//!   ([`ipa::s_at`](gadgets::ipa::s_at)), which the step binding checks
+//!   an opening against; and the derived commitments, $\[H\]$ and the
+//!   IPA's final check as endoscalar chains over the other curve's points.
+//! - [`side`], [`program`], [`stages`] and [`circuits`]: each side cut into
+//!   chunk circuits under the gate budget, every chunk loading the
+//!   compressed proof's data from stages and leaving its results in a work
+//!   stage for later chunks. The chunk circuits take two ranks, the
 //!   compressed proof's and their own, so that an aggregator at
 //!   [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) cuts a
 //!   wallet's wallet-rank proof into fewer chunks, whose circuit counts
 //!   the aggregator profile pins
 //!   ([`native_circuits`](crate::profile::Aggregator::native_circuits) and
 //!   [`NESTED_CIRCUITS`](crate::profile::Aggregator::NESTED_CIRCUITS)).
-//! - [`extension`] and [`prover`]: the chunk circuits as the aggregator
-//!   profile's extension, declared from the pinned counts and registered
-//!   through the profile's hooks, and their polynomials for every proof
-//!   from the canonical compressed proof the application holds.
+//! - [`aggregator`] and [`online`]: the aggregator profile, which declares
+//!   the chunk circuits as its extension from the pinned counts and
+//!   registers them through its hooks, and its online batches, which
+//!   hold the registry evaluations the chunks read.
+//! - [`prover`]: the prover's native run of the same program filling the
+//!   stages, and the extension's polynomials for every proof from the
+//!   canonical compressed proof the application holds.
 //! - The decompression step
 //!   ([`decompress`](crate::step::internal::decompress)): the one step
 //!   whose output header is the decompressed proof's, with the native
-//!   extension's statement circuit ([`chunk::StatementCircuit`]) exposing
-//!   the header the chunks verified and its claim's $k(y)$ holding the
-//!   step's output header to it.
+//!   extension's statement circuit
+//!   ([`StatementCircuit`](circuits::StatementCircuit)) exposing the
+//!   header the chunks verified and its claim's $k(y)$ holding the step's
+//!   output header to it.
+//!
+//! The tests run the verifier assembled from the gadgets as two
+//! whole-side circuits, one per field of the cycle, beside the chunks
+//! (`tests/decompression/oracle.rs`).
 //!
 //! # Integration
 //!
-//! The [`chunk`] circuits check the verifier's equations on both sides over
-//! the stages of [`stages`]. [`extension`] lays the chunk circuits and their
+//! The [`circuits`] check the verifier's equations on both sides over
+//! the stages of [`stages`]. [`aggregator`] lays the chunk circuits and their
 //! stages out as a profile's extension (see [`profile`](crate::profile))
 //! and registers them through the profile's hooks beside the fuse's
 //! circuits, on both registries; [`prover`] fills their polynomials for
@@ -122,7 +126,7 @@
 //! run. Its binding circuit exposes the point for the proof's consumer to
 //! hold to the stage's actual commitment through the circuit's claim (see
 //! [`stages`] for the stages,
-//! [`chunk::BindingCircuit`] for the circuit and
+//! [`BindingCircuit`](circuits::BindingCircuit) for the circuit and
 //! [`Binding`](crate::profile::Binding) for the consumer's check).
 //!
 //! Each run commitment binds the checked values before the transcript
@@ -174,12 +178,13 @@
 //!   fuse proves the opening is of the committed polynomial, as it does
 //!   an application's.
 //! - Under the flag, the circuit-field side holds the opened value to
-//!   [`ipa::s_at`] at that point over the round challenges its transcript
-//!   squeezed. The committed polynomial and, by the digest, the round
-//!   challenges were fixed before $\zeta$, so the two agree at $\zeta$
-//!   only if the slot holds that proof's $s(X)$, except with the
-//!   probability that $\zeta$ is a root of their difference: at most the
-//!   rank's coefficient count over the size of the challenge's range.
+//!   [`ipa::s_at`](gadgets::ipa::s_at) at that point over the round
+//!   challenges its transcript squeezed. The committed polynomial and, by
+//!   the digest, the round challenges were fixed before $\zeta$, so the
+//!   two agree at $\zeta$ only if the slot holds that proof's $s(X)$,
+//!   except with the probability that $\zeta$ is a root of their
+//!   difference: at most the rank's coefficient count over the size of the
+//!   challenge's range.
 //! - The flag crosses to the scalar-field side as a digit of the
 //!   circuit-field side's digits stage, which that side's binding circuit
 //!   recomputes. Its binding circuit also exposes a point the proof's
@@ -215,9 +220,10 @@
 //!   circuit-field side's $G'$ is the commitment the step made before
 //!   $w$, and the opening the scalar-field side took is the one the step
 //!   folded.
-//! - The scalar-field side holds that opening's value to [`ipa::s_at`]
-//!   at its point over the round challenges it holds, which the
-//!   circuit-field side's transcript squeezed and its lifts stage binds.
+//! - The scalar-field side holds that opening's value to
+//!   [`ipa::s_at`](gadgets::ipa::s_at) at its point over the round
+//!   challenges it holds, which the circuit-field side's transcript
+//!   squeezed and its lifts stage binds.
 //!   The argument is the host curve's: the polynomial was fixed before
 //!   $w$, and so before $\zeta_q$, and in the decompression step the
 //!   digest fixed the round challenges before $w$ too. There $\zeta_q$
@@ -306,99 +312,18 @@
 //! challenge bits, or without the enforcement of a chunk's work-stage
 //! writes, the chunk tests that target them fail.
 
-use alloc::vec::Vec;
-
-use ragu_core::{Result, drivers::Driver};
-use ragu_primitives::Element;
-
 pub(crate) mod aggregator;
-pub(crate) mod batch;
-pub(crate) mod chunk;
-pub(crate) mod circuit;
-pub(crate) mod derive;
-pub(crate) mod extension;
-pub(crate) mod ipa;
+pub(crate) mod circuits;
+pub(crate) mod gadgets;
 pub(crate) mod online;
 pub(crate) mod program;
 pub(crate) mod prover;
-pub(crate) mod revdot;
-pub(crate) mod run;
 pub(crate) mod side;
 pub(crate) mod stages;
-#[cfg(test)]
-pub(crate) mod transcript;
 
+#[cfg(test)]
+#[path = "../../tests/decompression/oracle.rs"]
+pub(crate) mod oracle;
 #[cfg(test)]
 #[path = "../../tests/decompression/support.rs"]
 pub(crate) mod support;
-
-/// An element's powers $x^{2^i}$, for raising it to constant exponents by
-/// square-and-multiply.
-pub(crate) struct Powers<'dr, D: Driver<'dr>> {
-    squares: Vec<Element<'dr, D>>,
-}
-
-impl<'dr, D: Driver<'dr>> Powers<'dr, D> {
-    /// The squares of `base` up to $x^{2^{\text{bits} - 1}}$, so that every
-    /// exponent below $2^\text{bits}$ can be formed. Costs `bits - 1`
-    /// gates.
-    pub(crate) fn new(dr: &mut D, base: &Element<'dr, D>, bits: u32) -> Result<Self> {
-        let mut squares = Vec::with_capacity(bits as usize);
-        let mut current = base.clone();
-        for i in 0..bits {
-            if i > 0 {
-                current = current.square(dr)?;
-            }
-            squares.push(current.clone());
-        }
-        Ok(Powers { squares })
-    }
-
-    /// $x^{2^i}$ for each $i$ below the prepared bits, in order.
-    pub(crate) fn squares(&self) -> &[Element<'dr, D>] {
-        &self.squares
-    }
-
-    /// $x^e$ for the constant `exponent`: one gate per set bit beyond the
-    /// first.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the exponent needs more bits than [`new`](Self::new)
-    /// prepared.
-    pub(crate) fn pow(&self, dr: &mut D, exponent: usize) -> Result<Element<'dr, D>> {
-        assert!(
-            exponent >> self.squares.len() == 0,
-            "exponent {exponent} exceeds the prepared {} bits",
-            self.squares.len()
-        );
-        let mut result: Option<Element<'dr, D>> = None;
-        for (i, square) in self.squares.iter().enumerate() {
-            if (exponent >> i) & 1 == 1 {
-                result = Some(match result {
-                    None => square.clone(),
-                    Some(acc) => acc.mul(dr, square)?,
-                });
-            }
-        }
-        Ok(result.unwrap_or_else(Element::one))
-    }
-}
-
-/// $1, x, x^2, \ldots, x^{\text{count} - 1}$: `count - 2` gates.
-pub(crate) fn consecutive_powers<'dr, D: Driver<'dr>>(
-    dr: &mut D,
-    base: &Element<'dr, D>,
-    count: usize,
-) -> Result<Vec<Element<'dr, D>>> {
-    let mut powers: Vec<Element<'dr, D>> = Vec::with_capacity(count);
-    for i in 0..count {
-        let next = match i {
-            0 => Element::one(),
-            1 => base.clone(),
-            _ => powers[i - 1].mul(dr, base)?,
-        };
-        powers.push(next);
-    }
-    Ok(powers)
-}
