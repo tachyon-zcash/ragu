@@ -1,5 +1,13 @@
 # The Refinement Ladder
 
+```admonish warning
+**The ladder is an expository tool and is not authoritative.** Read it for the
+reason behind each component of the protocol, and not for the protocol's exact
+statements. Those are given by the [Construction](../construction/index.md)
+section and [Compression](../recursion/compression.md), and by the `ragu_pcd`
+crate that they describe. Where a rung differs from them, they take precedence.
+```
+
 Ragu builds [proof-carrying data](../../concepts/pcd.md) (PCD) from an
 accumulation scheme. An accumulation scheme never verifies a proof in full while
 the computation is still growing. It performs the cheap parts of verification,
