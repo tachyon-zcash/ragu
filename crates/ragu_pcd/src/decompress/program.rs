@@ -230,6 +230,8 @@ pub(crate) enum Chunk {
     /// the unified one's alone.
     Targets {
         out: Vec<usize>,
+        /// The native bridge target includes the output header.
+        header_size: usize,
     },
     /// The fold's $W(r)$ for both layers, $t(r, z)$ and $1/r$.
     RevdotWeights {
@@ -622,7 +624,10 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
             })
             .sum(),
         // The one-off chunks, at the larger of the two sides' measures.
-        Chunk::Targets { .. } => 210,
+        // The fitted cost covers both sides at four elements. Each
+        // additional header element is allocated and absorbed by Horner
+        // evaluation of the native bridge target.
+        Chunk::Targets { header_size, .. } => 210 + 2 * header_size.saturating_sub(4),
         Chunk::RevdotWeights { .. } => 1440,
         Chunk::Bindings { .. } => 1080,
         Chunk::RevdotPublic { .. } => 355,
@@ -1707,6 +1712,7 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
     b.regions.targets = b.slots.elements(body.targets);
     b.chunks.push(Chunk::Targets {
         out: b.regions.targets.clone(),
+        header_size: layout.instance.output_header.len,
     });
     let mut named: Vec<(CircuitIndex, usize)> = Vec::new();
     b.regions.restrictions = body

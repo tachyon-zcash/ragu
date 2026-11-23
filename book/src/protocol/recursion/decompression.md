@@ -10,9 +10,12 @@ used as a child.
 - The wallet application supplies the two source registries and the header
   types. The implementation uses the wallet rank $k=13$ of
   [Compression](compression.md#compression-preliminaries) and the aggregator
-  rank $15$. Each encoded header has four field elements. Both applications
-  share one parameter instance.
-  On each curve the wallet's generators are a prefix of the aggregator's.
+  rank $15$. Both applications use the same header size and share one
+  parameter instance. The aggregator supports sizes from 1 through 195
+  field elements, including the suffix. The Standard wallet's
+  [gate budget](../../guide/configuration.md#header-size-trade-offs)
+  limits a wallet and aggregator pair to at most 194. On each curve the
+  wallet's generators are a prefix of the aggregator's.
 - For each application-defined output suffix a wallet step uses, the
   aggregator must register the wallet's own header type. That type must
   leave both output slots to padding. The decompression step uses the first

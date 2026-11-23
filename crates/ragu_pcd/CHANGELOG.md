@@ -44,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   least one value, which the decompression step stages. A
   profile that names none, the Standard one included, exports nothing and
   its proofs are unchanged.
-  `Aggregator` is pinned for 4-element headers alone; other header sizes do
-  not compile. An `Aggregator` application refuses, at `finalize_with`, a
+  `Aggregator` accepts header sizes from 1 through 195 field elements.
+  An `Aggregator` application refuses, at `finalize_with`, a
   wallet application whose steps output a header naming an online
   polynomial: a decompressed proof's slots hold the host IPA's challenge
   polynomial and padding, not the compressed proof's polynomials.

@@ -44,8 +44,8 @@ use crate::{
 
 type P = Aggregator<HEADER_SIZE>;
 
-/// The pinned layouts are the schedules' at the aggregator rank, for the
-/// test header size and for the internal tests', and lay out as the
+/// The pinned layouts match the schedules at the aggregator rank at sampled
+/// header widths and every width-band boundary, and lay out as the
 /// module says: transcript chunks first and digits chunks last, over six
 /// native stages and, on the nested side, a stage per run, the trailing
 /// stage and the lifts, work and digits stages, with the statement and
@@ -54,24 +54,29 @@ type P = Aggregator<HEADER_SIZE>;
 fn pinned_layout_is_the_schedules() {
     /// The internal tests' header size.
     const CENSUS: usize = crate::internal::tests::HEADER_SIZE;
-    std::println!(
-        "native counts at census header: {:?}",
-        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap()
-    );
-    assert_eq!(
-        P::native_circuits(HEADER_SIZE),
-        native_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
-        "the native pins for the test header size"
-    );
+    fn check_native_counts<const H: usize>() {
+        assert_eq!(
+            Aggregator::<H>::native_circuits(H),
+            native_counts::<Pasta, WalletRank, AggregatorRank, H>().unwrap(),
+            "native circuit counts at header size {H}"
+        );
+    }
+    check_native_counts::<1>();
+    check_native_counts::<2>();
+    check_native_counts::<3>();
+    check_native_counts::<HEADER_SIZE>();
+    check_native_counts::<9>();
+    check_native_counts::<57>();
+    check_native_counts::<58>();
+    check_native_counts::<100>();
+    check_native_counts::<153>();
+    check_native_counts::<154>();
+    check_native_counts::<CENSUS>();
+    check_native_counts::<195>();
     assert_eq!(
         P::NESTED_CIRCUITS,
         nested_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
         "the nested pins"
-    );
-    assert_eq!(
-        Aggregator::<CENSUS>::native_circuits(CENSUS),
-        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap(),
-        "the native pins for the internal tests' header size"
     );
     assert_eq!(
         P::native_extension(),
@@ -161,15 +166,18 @@ fn pinned_layout_is_the_schedules() {
 }
 
 /// Every chunk and mask of both sides registers through the hooks at
-/// the aggregator rank, one past the last fails, and the wallet rank
-/// is refused.
+/// the aggregator rank at the maximum profile width. One past the last
+/// fails, and the wallet rank is refused.
 #[test]
 fn hooks_register_every_chunk_and_stage() {
+    const H: usize = 195;
+    type Wide = Aggregator<H>;
+
     let params = crate::pasta::baked_aggregator();
-    let native = P::native_extension();
+    let native = Wide::native_extension();
     let mut registry = RegistryBuilder::<Fp, AggregatorRank>::new();
     for circuit in 0..native.circuits.len() {
-        registry = P::register_native_circuit::<Pasta, AggregatorRank, HEADER_SIZE>(
+        registry = Wide::register_native_circuit::<Pasta, AggregatorRank, H>(
             circuit,
             CircuitSlot::new(registry),
             params,
@@ -178,7 +186,7 @@ fn hooks_register_every_chunk_and_stage() {
         .into_registry();
     }
     for mask in 0..native.masks() {
-        registry = P::register_native_mask::<Pasta, AggregatorRank, HEADER_SIZE>(
+        registry = Wide::register_native_mask::<Pasta, AggregatorRank, H>(
             mask,
             MaskSlot::new(registry),
             params,
@@ -188,7 +196,7 @@ fn hooks_register_every_chunk_and_stage() {
     }
     assert_eq!(registry.num_internal_circuits(), native.internal());
     assert!(matches!(
-        P::register_native_mask::<Pasta, AggregatorRank, HEADER_SIZE>(
+        Wide::register_native_mask::<Pasta, AggregatorRank, H>(
             native.masks(),
             MaskSlot::new(registry),
             params
@@ -196,7 +204,7 @@ fn hooks_register_every_chunk_and_stage() {
         Err(Error::Initialization(_))
     ));
     assert!(matches!(
-        P::register_native_circuit::<Pasta, TestR, HEADER_SIZE>(
+        Wide::register_native_circuit::<Pasta, TestR, H>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params
@@ -204,10 +212,10 @@ fn hooks_register_every_chunk_and_stage() {
         Err(Error::Initialization(_))
     ));
 
-    let nested = P::nested_extension();
+    let nested = Wide::nested_extension();
     let mut registry = RegistryBuilder::<Fq, AggregatorRank>::new();
     for circuit in 0..nested.circuits.len() {
-        registry = P::register_nested_circuit::<Pasta, AggregatorRank>(
+        registry = Wide::register_nested_circuit::<Pasta, AggregatorRank>(
             circuit,
             CircuitSlot::new(registry),
             params,
@@ -216,14 +224,17 @@ fn hooks_register_every_chunk_and_stage() {
         .into_registry();
     }
     for mask in 0..nested.masks() {
-        registry =
-            P::register_nested_mask::<Pasta, AggregatorRank>(mask, MaskSlot::new(registry), params)
-                .unwrap()
-                .into_registry();
+        registry = Wide::register_nested_mask::<Pasta, AggregatorRank>(
+            mask,
+            MaskSlot::new(registry),
+            params,
+        )
+        .unwrap()
+        .into_registry();
     }
     assert_eq!(registry.num_internal_circuits(), nested.internal());
     assert!(matches!(
-        P::register_nested_circuit::<Pasta, TestR>(
+        Wide::register_nested_circuit::<Pasta, TestR>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params

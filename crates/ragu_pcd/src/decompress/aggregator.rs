@@ -85,13 +85,11 @@ use crate::{
 /// budget. At four times the budget the fuse carries the extension, and
 /// the hooks refuse any other rank.
 ///
-/// A profile's declaration is a constant, so the circuit counts are
-/// pinned per header size ([`native_circuits`](Self::native_circuits))
-/// rather than computed from the schedule, and the hooks check the pins
-/// against the schedule they register. A header size without a pin does
-/// not compile; pin it from the counts the schedule's tests report. Only
-/// 4-element headers are pinned outside the crate's tests, so
-/// `Aggregator<4>` is the one aggregator that compiles.
+/// Applications can choose a header size from 1 through 195 field
+/// elements. Decompression uses the same width on both sides, so
+/// the wallet application must also fit at [`WalletRank`].
+/// The profile declares its circuit counts at compile time and checks
+/// them against the schedule when registering the circuits.
 ///
 /// Every proof of the profile carries the chunk circuits' polynomials, so
 /// every fuse runs the chunks over a compressed proof, a step that
@@ -163,24 +161,23 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     ///
     /// # Panics
     ///
-    /// Panics, in constant evaluation, for a header size without a pin,
-    /// so that an aggregator over an unpinned header size does not compile.
-    /// The internal tests' 194-element header and the aggregator capacity
-    /// test's 195-element header are pinned in tests alone.
+    /// A header size outside 1 through 195 panics. This fails at compile
+    /// time when evaluating the profile's associated constants.
     pub const fn native_circuits(header_size: usize) -> Counts {
-        match header_size {
-            4 => Counts {
-                circuits: 32,
-                transcript: 4,
-                digits: 1,
-            },
-            #[cfg(test)]
-            194 | 195 => Counts {
-                circuits: 34,
-                transcript: 6,
-                digits: 1,
-            },
-            _ => panic!("the aggregator profile pins no circuit counts for this header size"),
+        // The rank-15 schedule packs the same 27 work circuits and one
+        // digits circuit across this range. Only the number of transcript
+        // circuits changes. Registration checks these counts against the
+        // actual schedule for the chosen width.
+        let transcript = match header_size {
+            1..=57 => 4,
+            58..=153 => 5,
+            154..=195 => 6,
+            _ => panic!("the aggregator header size must be between 1 and 195"),
+        };
+        Counts {
+            circuits: 27 + transcript + 1,
+            transcript,
+            digits: 1,
         }
     }
 
