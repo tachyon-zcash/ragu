@@ -207,8 +207,8 @@ and the table names them by path inside it.
 | revdot product, dilation and $t(X, z)$ | [Arithmetization](arithmetization.md) | `sparse::Polynomial::revdot` and `dilate`, and `Rank::tz`, in `ragu_circuits::polynomials` |
 | registry, its restrictions and its capacity | [Registry](registry.md), [Registry Chain](batch.md#registry-chain) | `ragu_circuits::registry`: `Registry::xy` gives $m(W, x, y)$, and `Registry::at` fixes $w$, after which `RegistryAt::x` gives $m(w, x, Y)$ and `RegistryAt::y` gives $m(w, X, y)$; `RegistryBuilder::finalize` |
 | stages and masks | [Stages and Bonding Polynomials](staging.md) | `ragu_circuits::staging` |
-| claim lists and targets | [Claims and Fold](claims.md#native-claims) | `internal::native::claims`, `internal::nested::claims`, the shared `internal::claims::Builder`, and `internal::ky` for the targets |
-| fold, quotients and grid | [Fold](claims.md#fold), [Randomizer](claims.md#randomizer) | `internal::fold_revdot`: `randomized`, `fold_inner`, `fold_outer`, and the in-circuit `ClaimFolder` and `EvaluationFolder`; `fuse::randomizer` |
+| claim lists and targets | [Claims and Fold](claims.md#native-claims) | `internal::native::claims`, `internal::nested::claims`, the shared `internal::revdot::Builder`, and `internal::ky` for the targets |
+| fold, quotients and grid | [Fold](claims.md#fold), [Randomizer](claims.md#randomizer) | `internal::revdot`: `randomized`, `fold_inner`, `fold_outer`, and the in-circuit `ClaimFolder` and `EvaluationFolder`; `fuse::randomizer` |
 | opening lists and batch | [Batched Opening](batch.md) | `internal::native::circuits::compute_v`, `internal::nested::pcs`, `fuse::_08_f` |
 | walks | [Walks](walks.md) | `internal::endoscalar`, `internal::native::circuits::endoscaling_step` and `bind_endoscalar`, `fuse::_10_p` |
 | stages of a fuse | [Stage Contents](stage_contents.md) | `internal::native::stages`, `internal::nested::stages` |
