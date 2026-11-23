@@ -148,20 +148,20 @@ fn wxy((registry, (w, x, y)): (Registry<'_, Fp, TestRank>, (Fp, Fp, Fp))) {
 
 #[library_benchmark(setup = setup_with_rng)]
 #[bench::xy_heavy_routines(registry_heavy_routines(), (f, f))]
-fn xy_heavy_routines((registry, (x, y)): (Registry<'_, Fp, ProductionRank>, (Fp, Fp))) {
+fn xy_heavy_routines((registry, (x, y)): (Registry<'_, Fp, WalletRank>, (Fp, Fp))) {
     black_box(registry.xy(x, y));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
 #[bench::wxy_heavy_routines(registry_heavy_routines(), (f, f, f))]
-fn wxy_heavy_routines((registry, (w, x, y)): (Registry<'_, Fp, ProductionRank>, (Fp, Fp, Fp))) {
+fn wxy_heavy_routines((registry, (w, x, y)): (Registry<'_, Fp, WalletRank>, (Fp, Fp, Fp))) {
     black_box(registry.wxy(w, x, y));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
 #[bench::wxy_combined_heavy_routines(registry_heavy_routines(), (f, f, f))]
 fn wxy_combined_heavy_routines(
-    (registry, (w, x, y)): (Registry<'_, Fp, ProductionRank>, (Fp, Fp, Fp)),
+    (registry, (w, x, y)): (Registry<'_, Fp, WalletRank>, (Fp, Fp, Fp)),
 ) {
     black_box(registry.wxy_combined(w, x, y));
 }

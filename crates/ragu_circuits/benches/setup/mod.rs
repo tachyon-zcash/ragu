@@ -102,8 +102,8 @@ pub fn registry_simple<'a>() -> Registry<'a, Fp, TestRank> {
 /// Registry with circuits that use heavy routines (for memoization benchmarks).
 ///
 /// Uses 100 iterations per routine call to make the memoization savings visible.
-pub fn builder_heavy_routines<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {
-    RegistryBuilder::<'a, Fp, ProductionRank>::new()
+pub fn builder_heavy_routines<'a>() -> RegistryBuilder<'a, Fp, WalletRank> {
+    RegistryBuilder::<'a, Fp, WalletRank>::new()
         .register_circuit(HeavyRoutineCircuit {
             num_calls: 5,
             iterations_per_call: 100,
@@ -146,6 +146,6 @@ pub fn builder_heavy_routines<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {
         .unwrap()
 }
 
-pub fn registry_heavy_routines<'a>() -> Registry<'a, Fp, ProductionRank> {
+pub fn registry_heavy_routines<'a>() -> Registry<'a, Fp, WalletRank> {
     builder_heavy_routines().finalize().unwrap()
 }
