@@ -87,7 +87,6 @@ mod fuse;
 #[path = "../tests/fuzzing/mod.rs"]
 pub mod fuzzing;
 mod internal;
-mod memo;
 pub mod pasta;
 pub mod profile;
 mod proof;

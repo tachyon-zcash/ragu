@@ -1076,9 +1076,8 @@ pub(crate) const NO_NATIVE_EXTENSION_PROVER: &str = "the profile's native extens
 /// The nested counterpart of [`NO_NATIVE_EXTENSION_PROVER`].
 pub(crate) const NO_NESTED_EXTENSION_PROVER: &str = "the profile's nested extension has no prover";
 
-/// Invariant layout dimensions used by arithmetic index lookups. Keep the
-/// descriptor's Vec allocations out of these lookups, as well as the index
-/// lists themselves. The no-std path retains the original allocation behavior.
+/// The lengths of a profile's extension, which are all that the arithmetic
+/// index lookups need from it.
 #[derive(Clone, Copy)]
 pub(crate) struct ExtensionLengths {
     pub circuits: usize,
@@ -1086,31 +1085,18 @@ pub(crate) struct ExtensionLengths {
     pub bondings: usize,
 }
 
+/// The lengths of profile `P`'s nested extension when `nested` is set, and
+/// of its native extension otherwise.
 pub(crate) fn extension_lengths<P: Profile>(nested: bool) -> ExtensionLengths {
-    /// The key a side's lengths are kept under.
-    struct Kept<P, const NESTED: bool>(PhantomData<P>);
-
-    fn kept<P: Profile, const NESTED: bool>() -> ExtensionLengths {
-        let Ok(lengths) =
-            crate::memo::memo::<Kept<P, NESTED>, _, core::convert::Infallible>(|| {
-                let extension = if NESTED {
-                    nested_extension::<P>()
-                } else {
-                    native_extension::<P>()
-                };
-                Ok(ExtensionLengths {
-                    circuits: extension.circuits.len(),
-                    stages: extension.stages,
-                    bondings: extension.bondings(),
-                })
-            });
-        lengths
-    }
-
-    if nested {
-        kept::<P, true>()
+    let extension = if nested {
+        nested_extension::<P>()
     } else {
-        kept::<P, false>()
+        native_extension::<P>()
+    };
+    ExtensionLengths {
+        circuits: extension.circuits.len(),
+        stages: extension.stages,
+        bondings: extension.bondings(),
     }
 }
 
