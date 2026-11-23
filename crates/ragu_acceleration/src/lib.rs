@@ -12,7 +12,8 @@
 //! scratch, and execution budget; the reference backend runs them separately.
 //! Independent polynomial work also uses Udon's scoped scheduler rather than
 //! the reference backend's serial loop.
-//! Single MSMs and FFTs retain the defaults, which also use Udon.
+//! Fixed Pasta generators can retain cached endomorphism coordinates across
+//! verifier MSMs. Other single MSMs and FFTs retain the defaults, which use Udon.
 //! Overrides of the kernels that `ragu_pcd`'s verifier consults belong in
 //! [`verifier`], which carries a stricter review and testing bar than
 //! prover-only overrides. An override arrives with its differential test
@@ -28,8 +29,13 @@ extern crate alloc;
 #[cfg(feature = "multicore")]
 use alloc::vec::Vec;
 
-use ragu_backend::Backend;
-use udon::curve::Affine;
+use ragu_backend::{Backend, RegistryEvaluation};
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{CircuitIndex, Registry, RegistryAt},
+};
+use ragu_core::{BaseTable, MsmWorkspace, PreparedMsm};
+use udon::{curve::Affine, field::Field};
 
 pub mod verifier;
 
@@ -65,7 +71,38 @@ macro_rules! impl_accelerated_backends {
     };
 }
 
+fn commitment_row<F: Field, R: Rank>(
+    poly: &sparse::Polynomial<F, R>,
+) -> (alloc::vec::Vec<F>, alloc::vec::Vec<u32>) {
+    poly.iter_stored_coeffs()
+        .map(|(index, coefficient)| {
+            let position = u32::try_from(index).expect("a coefficient's index fits");
+            (*coefficient, position)
+        })
+        .unzip()
+}
+
 impl_accelerated_backends! {
+    fn registry_wxy_over_domain<F: Field, R: Rank>(registry: &Registry<'_, F, R>, x: F, y: F) -> alloc::vec::Vec<F> {
+        verifier::registry_wxy_over_domain(registry, x, y)
+    }
+
+    fn registry_circuits_xy<F: Field, R: Rank>(registry: &Registry<'_, F, R>, circuits: &[CircuitIndex], x: F, y: F) -> alloc::vec::Vec<F> {
+        verifier::registry_circuits_xy(registry, circuits, x, y)
+    }
+
+    fn registry_at_x<F: Field, R: Rank>(registry: &RegistryAt<'_, F, R>, x: F) -> sparse::Polynomial<F, R> {
+        verifier::registry_at_x(registry, x)
+    }
+
+    fn registry_at_y<F: Field, R: Rank>(registry: &RegistryAt<'_, F, R>, y: F) -> sparse::Polynomial<F, R> {
+        verifier::registry_at_y(registry, y)
+    }
+
+    fn registry_wxy<F: Field>(registry: &(impl RegistryEvaluation<F> + ?Sized), w: F, x: F, y: F) -> F {
+        verifier::registry_wxy(registry, w, x, y)
+    }
+
     #[cfg(feature = "multicore")]
     fn map<I: IntoIterator, T: Send>(
         inputs: I,
@@ -83,6 +120,75 @@ impl_accelerated_backends! {
         });
         jobs.into_iter()
             .map(|(_, output)| output.expect("each output is initialized"))
+    }
+
+    fn join<L: Send, R: Send>(
+        left: impl FnOnce() -> L + Send,
+        right: impl FnOnce() -> R + Send,
+    ) -> (L, R) {
+        ragu_core::join(left, right)
+    }
+
+    fn sparse_linear_combination<F: Field, R: Rank>(
+        terms: &[(&sparse::Polynomial<F, R>, F)],
+    ) -> sparse::Polynomial<F, R> {
+        sparse::Polynomial::linear_combination_parallel(terms)
+    }
+
+    // One plan for the whole slice, where the default plans groups of eight:
+    // the planner then schedules across every commitment at once.
+    fn sparse_commit_many_to_affine<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
+        polys: &[sparse::Polynomial<C::Scalar, R>],
+        generators: &G,
+    ) -> alloc::vec::Vec<C> {
+        let bases = generators.g();
+        assert!(bases.len() >= R::num_coeffs());
+        let projective = ragu_core::msm_many(
+            polys
+                .iter()
+                .map(|poly| {
+                    poly.iter_stored_coeffs()
+                        .map(|(index, coefficient)| (*coefficient, bases[index]))
+                        .unzip()
+                })
+                .collect(),
+        );
+        let mut affine = alloc::vec![C::identity(); projective.len()];
+        C::batch_to_affine(&projective, &mut affine);
+        affine
+    }
+
+    fn prepare_commitments<C: Affine>(bases: &[C]) -> Option<BaseTable<C>> {
+        BaseTable::new(bases)
+    }
+
+    fn sparse_commit_many_prepared_to_affine<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
+        polys: &[sparse::Polynomial<C::Scalar, R>],
+        _generators: &G,
+        prepared: &PreparedMsm<C>,
+    ) -> alloc::vec::Vec<C> {
+        assert!(prepared.bases().len() >= R::num_coeffs());
+        let projective = prepared.evaluate_many_indexed(polys.iter().map(commitment_row).collect());
+        let mut affine = alloc::vec![C::identity(); projective.len()];
+        C::batch_to_affine(&projective, &mut affine);
+        affine
+    }
+
+    fn sparse_commit_tabled<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
+        polys: &[&sparse::Polynomial<C::Scalar, R>],
+        _generators: &G,
+        table: &BaseTable<C>,
+    ) -> alloc::vec::Vec<C::Projective> {
+        assert!(table.len() >= R::num_coeffs());
+        table.msm_many(polys.iter().copied().map(commitment_row).collect())
+    }
+
+    fn prepare_msm<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {
+        verifier::prepare_msm(bases)
+    }
+
+    fn msm_prepared<C: Affine>(coeffs: alloc::vec::Vec<C::Scalar>, bases: &PreparedMsm<C>, workspace: &mut MsmWorkspace) -> C::Projective {
+        verifier::msm_prepared(coeffs, bases, workspace)
     }
 
     fn msm_batch<
