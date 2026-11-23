@@ -128,9 +128,12 @@ fn check_bindings<F, Id, R>(
 }
 
 /// The degrees the decompression lays the wire bindings out by are the
-/// ones the bindings pin: [`native_binding_degrees`](crate::decompress::program::native_binding_degrees) and
-/// [`nested_binding_degrees`](crate::decompress::program::nested_binding_degrees) list each binding's wires as
-/// `native_bindings` and `nested_bindings` do, in their order.
+/// ones the bindings pin:
+/// [`native_binding_degrees`](crate::decompress::program::native_binding_degrees)
+/// and
+/// [`nested_binding_degrees`](crate::decompress::program::nested_binding_degrees)
+/// list each binding's wires as `native_bindings` and `nested_bindings` do,
+/// in their order.
 #[test]
 fn binding_degrees_are_the_bindings() {
     let (app, _, instance) = setup();

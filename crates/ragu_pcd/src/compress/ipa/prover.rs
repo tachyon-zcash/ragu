@@ -4,6 +4,8 @@
 
 use alloc::vec::Vec;
 
+#[cfg(feature = "multicore")]
+use maybe_rayon::current_num_threads;
 use ragu_core::{Error, Result};
 use rand::CryptoRng;
 use udon::{
@@ -13,7 +15,7 @@ use udon::{
 };
 
 use super::{IpaProof, IpaTranscript, Params, msm::multiexp_batch};
-use crate::{SelectableBackend, multicore::parallelize};
+use crate::SelectableBackend;
 
 /// Creates an unblinded opening of `p_poly` at `x_3`.
 ///
@@ -173,5 +175,37 @@ fn parallel_generator_collapse<C: Affine>(g: &mut [C], challenge: C::Scalar) {
             tmp.push(g_lo.to_projective() + &(*g_hi * challenge));
         }
         C::batch_to_affine(&tmp, g_lo);
+    });
+}
+
+/// One thread, as a build without `multicore` runs.
+#[cfg(not(feature = "multicore"))]
+fn current_num_threads() -> usize {
+    1
+}
+
+/// Applies `f` to disjoint chunks of `v`, in parallel when the `multicore`
+/// feature is enabled. Each call receives one chunk and the index in `v` at
+/// which that chunk starts. The slice is split into as many chunks as there
+/// are threads.
+fn parallelize<T: Send, F: Fn(&mut [T], usize) + Send + Sync + Clone>(v: &mut [T], f: F) {
+    let n = v.len();
+    if n == 0 {
+        return;
+    }
+    let num_threads = current_num_threads();
+    let mut chunk = n / num_threads;
+    if chunk < num_threads {
+        chunk = n;
+    }
+
+    maybe_rayon::scope(|scope| {
+        for (chunk_num, v) in v.chunks_mut(chunk).enumerate() {
+            let f = f.clone();
+            scope.spawn(move |_| {
+                let start = chunk_num * chunk;
+                f(v, start);
+            });
+        }
     });
 }

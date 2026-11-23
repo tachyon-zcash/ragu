@@ -17,7 +17,7 @@ use udon::{curve::Affine, field::Field, polynomial::evaluate_iter};
 type EpAffine = <Pasta as Cycle>::NestedCurve;
 type EqAffine = <Pasta as Cycle>::HostCurve;
 
-use super::{Batch, Batched, batch, verifier::verify};
+use super::{Batch, Batched, prover::batch, verifier::verify};
 use crate::{
     Application, ApplicationBuilder, Proof,
     compress::revdot::{self, OpeningClaim, Openings, Reduction},
@@ -282,7 +282,7 @@ fn native_batch_opens_through_the_ipa() {
 
     // The reduction, on the prover's and the verifier's transcripts.
     let mut prover = transcript();
-    let (reduction, witness) = revdot::reduce_native::<Pasta, TestR, ReferenceBackend>(
+    let (reduction, witness) = revdot::prover::reduce_native::<Pasta, TestR, ReferenceBackend>(
         proof,
         &app.native_registry,
         generators,
@@ -409,7 +409,7 @@ fn nested_batch_opens_through_the_ipa() {
     };
 
     let mut prover = transcript();
-    let (reduction, witness) = revdot::reduce_nested::<Pasta, TestR, ReferenceBackend>(
+    let (reduction, witness) = revdot::prover::reduce_nested::<Pasta, TestR, ReferenceBackend>(
         proof,
         &app.nested_registry,
         generators,

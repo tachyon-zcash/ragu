@@ -130,7 +130,7 @@ The fabricator knows the discrete log of every point it draws. That is
 harmless here: the strings are inputs the verifier must reject, not
 forgeries, and the test checks that it does.
 
-The recorder lives in `src/ipa/fingerprint.rs`. Recording and event encoding
+The recorder lives in `src/compress/ipa/fingerprint.rs`. Recording and event encoding
 compile only for tests; production observation helpers are inline no-ops.
 The helpers observe the cycle transcript's absorb, scalar and squeeze, and
 the IPA MSM's evaluation, so the fingerprint is of the verifier's own code path.

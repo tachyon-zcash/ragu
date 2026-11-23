@@ -150,5 +150,5 @@ impl<C: Affine> Params<C> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/ipa.rs"]
+#[path = "../../../tests/ipa.rs"]
 mod tests;

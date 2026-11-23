@@ -12,7 +12,7 @@
 //! must equal $\sum_i \rho^i k_i$, and $q$ at $r$.
 //!
 //! Both sides take the claims in the decider's order, the prover through
-//! [`claims::Builder`](crate::internal::claims::Builder) and the verifier
+//! [`claims::Builder`](crate::internal::revdot::Builder) and the verifier
 //! through the [`claims`]' shapes.
 //!
 //! The transcript is assumed to have seen the commitments the claims are
@@ -31,10 +31,9 @@ use crate::{
 
 pub(crate) mod claims;
 pub(crate) mod fold;
-mod prover;
+pub(crate) mod prover;
 mod verifier;
 
-pub(crate) use prover::{reduce_native, reduce_nested};
 pub(crate) use verifier::{verify_native, verify_nested};
 
 /// An opening claim: the polynomial at `poly` in an [`Openings`]' list takes
