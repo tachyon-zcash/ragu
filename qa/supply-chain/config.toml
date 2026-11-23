@@ -29,8 +29,14 @@ url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/
 ours = "crypto-reviewed"
 theirs = "crypto-reviewed"
 
+[policy.ragu_acceleration]
+audit-as-crates-io = false
+
+[policy.ragu_backend]
+audit-as-crates-io = false
+
 [policy.ragu_gadgets]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.ragu_testing]
 audit-as-crates-io = true
@@ -181,8 +187,9 @@ version = "1.0.229"
 criteria = "safe-to-deploy"
 
 [[exemptions.spin]]
-version = "0.9.8"
+version = "0.9.9"
 criteria = "safe-to-deploy"
+notes = "Replaces the yanked 0.9.8. Carries forward the existing exemption; this is not an audit."
 
 [[exemptions.tachyon-maybe-rayon]]
 version = "0.1.2"
