@@ -4,8 +4,9 @@
 //! for the claimed evaluations in the `query` stage. This also constructs the
 //! `f` bridge stage, which carries the polynomial's commitment.
 //!
-//! Each `udon::polynomial::divide_linear_rev` call below produces the coefficients of $(p\_i(X) - v\_i)
-//! / (X - x\_i)$ for a single query. The static query prefix is defined by
+//! Each `udon::polynomial::divide_linear_rev` call below produces the
+//! coefficients of $(p\_i(X) - v\_i) / (X - x\_i)$ for a single query. The
+//! static query prefix is defined by
 //! [`STATIC_F_QUERIES`] and consumed by both this prover path and the
 //! `compute_v` circuit.
 //!
@@ -38,7 +39,11 @@ use crate::{
     Application, Proof,
     internal::{
         native,
-        native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery, online},
+        native::{
+            RxComponent, RxIndex, online,
+            pcs::{STATIC_F_QUERIES, StaticFQuery},
+            stages::points as native_points,
+        },
         nested::{self, pcs},
     },
     profile::ProfiledCycle,
@@ -268,7 +273,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 
-        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = crate::profile::online::circuit::quotient_sum::<_, R>(iters, alpha);
         let poly = builder.native_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
@@ -291,7 +296,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
             .collect();
 
-        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = crate::profile::online::circuit::quotient_sum::<_, R>(iters, alpha);
         let poly = builder.nested_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
@@ -344,5 +349,32 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             left: pcs::ChildChallenges::of(left)?,
             right: pcs::ChildChallenges::of(right)?,
         })
+    }
+
+    /// Commits the native points stage holding the nested `registry_xy`
+    /// commitment, $F_n$ and the nested batch randomizer's commitment,
+    /// before $u$ is squeezed; the `f` bridge carries its commitment.
+    pub(crate) fn commit_native_points_f<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        registry_xy: C::NestedCurve,
+        f: C::NestedCurve,
+        mask: C::NestedCurve,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let witness = native_points::FWitness {
+            registry_xy,
+            f,
+            mask,
+            online_points: builder.nested_online_phase::<3>(),
+        };
+        builder.set_native_points_f_rx(<native_points::FStage<C::NestedCurve, C::Profile> as StageExt<
+            C::CircuitField,
+            R,
+        >>::rx(
+            Blind::random(rng),
+            &witness,
+        )?);
+        Ok(())
     }
 }

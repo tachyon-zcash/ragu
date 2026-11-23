@@ -28,8 +28,8 @@ use super::{
 use crate::{
     Application,
     internal::{
-        fold_revdot::{self, NumErrorTerms, Parameters},
         native, nested,
+        revdot::{self, NumErrorTerms, Parameters},
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -137,7 +137,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let native_inner_error_witness =
             native::stages::inner_error::Witness::<C, native::RevdotParameters<C::Profile>> {
-                error_terms: fold_revdot::inner_error_terms_with_backend::<
+                error_terms: revdot::inner_error_terms_with_backend::<
                     B,
                     _,
                     R,
@@ -217,7 +217,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &randomizer.b,
         );
 
-        let error_terms = fold_revdot::inner_error_terms_with_backend::<
+        let error_terms = revdot::inner_error_terms_with_backend::<
             B,
             _,
             R,

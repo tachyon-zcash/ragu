@@ -14,19 +14,25 @@ mod _08_f;
 mod _09_eval;
 mod _10_p;
 mod _11_circuits;
-pub(crate) mod claims;
-pub(crate) mod randomizer;
+// What the phases share: the claim sources the fold reads, the step's own
+// randomizers and the fork-join the phases run under, in `shared/`.
+mod shared {
+    pub(crate) mod claims;
+    pub(crate) mod par_join;
+    pub(crate) mod randomizer;
+}
+pub(crate) use shared::{claims, par_join::par_join, randomizer};
 // PCS and folding properties use private fuse internals. The proof-binding
 // properties live under `proof` for direct access to cached fields.
 #[cfg(test)]
 #[path = "../../tests/pcs.rs"]
 mod pcs_tests;
 // The patcher seam (see `crate::fuzzing`). Its source lives with the rest of
-// the fuzzing surface in `src/fuzzing/`, but it is mounted here because it
+// the fuzzing surface in `tests/fuzzing/`, but it is mounted here because it
 // calls this pipeline's `pub(super)` steps. The file gates itself behind
 // `unstable-fuzzing` with an inner `#![cfg]`, so no feature attribute appears
 // here.
-#[path = "../fuzzing/patcher.rs"]
+#[path = "../../tests/fuzzing/patcher.rs"]
 pub(crate) mod patcher;
 
 #[cfg(test)]
@@ -43,7 +49,7 @@ use crate::{
     internal::{nested, transcript::Transcript},
     profile::{
         ProfiledCycle, Source,
-        online::{Phase, prepared::PreparationChallenges},
+        online::{Phase, PreparationChallenges},
     },
     proof::ProofBuilder,
     step::Step,

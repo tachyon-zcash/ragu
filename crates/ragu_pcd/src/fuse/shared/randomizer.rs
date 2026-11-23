@@ -9,7 +9,7 @@
 //! all uniformly random:
 //!
 //! - $a_r$ and $b_r$, which the fold takes as claims of its own (see
-//!   [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)), and
+//!   [`revdot`](crate::internal::revdot#the-randomizer)), and
 //!   which the batch opens as it opens a child's $a$ and $b$;
 //! - a mask, which the batch folds into $p$ and no query names.
 //!
@@ -66,7 +66,7 @@
 //!   With the second pass's $A$ and $B$ fixed, these depend on the first
 //!   pass's polynomials. The fold places its randomizer's claims so that
 //!   the first pass's uniform $A$ and $B$ move the quotient coefficients
-//!   (see [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)).
+//!   (see [`revdot`](crate::internal::revdot#the-randomizer)).
 //!   A test checks the local rank at fixed challenges for a few inputs;
 //!   at non-node challenges the displayed first-pass $c$ and $c_r$ are
 //!   tied to the quotients by the fold identity, rather than adding
@@ -192,7 +192,7 @@ pub(crate) mod observed {
     use udon::field::Field;
 
     use super::Randomizers;
-    use crate::internal::fold_revdot::{self, Parameters};
+    use crate::internal::revdot::{self, Parameters};
 
     std::thread_local! {
         static LAST: RefCell<Option<Box<dyn Any>>> = const { RefCell::new(None) };
@@ -215,7 +215,7 @@ pub(crate) mod observed {
         /// The rank of the first-order movement of the quotient coefficients
         /// and the two displayed targets, as the first claim and randomizer
         /// move against each other with folded $A$ and $B$ fixed (see
-        /// [`fold_revdot::accumulator_rows`]). The targets obey the fold
+        /// [`revdot::accumulator_rows`]). The targets obey the fold
         /// identity, so this rank does not measure independent uniform
         /// outputs or establish their hiding distribution.
         pub(crate) accumulator: usize,
@@ -242,7 +242,7 @@ pub(crate) mod observed {
     /// $\operatorname{revdot}(a_r, b_k) + \operatorname{revdot}(a_k, b_r)$
     /// over its group's claims $k$, and the second layer's of the values
     /// $\operatorname{revdot}(a_r, b'\_g)$ over the groups' folded $b$ sides
-    /// (see [`fold_revdot`]). Both are linear in $(a_r, b_r)$, so the rank
+    /// (see [`revdot`]). Both are linear in $(a_r, b_r)$, so the rank
     /// is that of the vectors $(b_k, a_k)$ and $(b'\_g, 0)$. The second
     /// layer's are taken at a fixed challenge.
     ///
@@ -268,7 +268,7 @@ pub(crate) mod observed {
                     .collect()
             })
             .collect();
-        let grid: Vec<_> = fold_revdot::randomized::<_, P>(
+        let grid: Vec<_> = revdot::randomized::<_, P>(
             b.iter().map(|b| b.borrow().clone()),
             zero.clone(),
             zero.clone(),
@@ -279,7 +279,7 @@ pub(crate) mod observed {
             F::from(0x9e37_79b9_7f4a_7c15),
             F::from(0x2545_f491_4f6c_dd1d),
         );
-        let folded = fold_revdot::fold_inner::<sparse::Polynomial<F, R>, _, P>(&grid, mu);
+        let folded = revdot::fold_inner::<sparse::Polynomial<F, R>, _, P>(&grid, mu);
         let occupied = a.len().div_ceil(P::GroupSize::len() - 1);
         rows.extend(folded.iter().take(occupied).map(|b| {
             b.iter_coeffs()
@@ -290,7 +290,7 @@ pub(crate) mod observed {
         let reach = Reach {
             rank: rank(rows),
             coefficients,
-            accumulator: rank(fold_revdot::accumulator_rows::<F, R, P>(
+            accumulator: rank(revdot::accumulator_rows::<F, R, P>(
                 a, b, randomizer, mu, mu_prime,
             )),
         };

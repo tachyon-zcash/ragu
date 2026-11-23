@@ -575,7 +575,9 @@ mod stages {
                 support::coordinates(honest.proof().native_p_commitment()),
                 "{mutation:?}: the nested walk must still end at the committed P"
             );
-            assert!(crate::verify::nested_points_match(&changed)?);
+            assert!(crate::proof::uncompressed::verifier::nested_points_match(
+                &changed
+            )?);
             let child = changed.carry::<Value>(data);
             let expected = !native && !nested;
             assert_eq!(

@@ -23,7 +23,12 @@ use rand::CryptoRng;
 use udon::curve::Affine;
 
 use super::{_01_application::NativeApplication, randomizer::Randomizers};
-use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
+use crate::{
+    Application, Proof,
+    internal::{native::stages::points as native_points, nested},
+    profile::ProfiledCycle,
+    proof::ProofBuilder,
+};
 
 /// Ephemeral native-field data for $s'(X)$, used only during the fuse step.
 pub(super) struct NativeSPrime<C: Cycle, R: Rank> {
@@ -153,5 +158,32 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             registry_wx1_poly,
             registry_wx1_commitment,
         })
+    }
+
+    /// Commits the native points stage holding the nested `registry_wx`
+    /// commitments, before $y$ is squeezed; the `s_prime` bridge carries its
+    /// commitment.
+    pub(crate) fn commit_native_points_registry_wx<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        registry_wx0: C::NestedCurve,
+        registry_wx1: C::NestedCurve,
+        randomizer: [C::NestedCurve; 2],
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let witness = native_points::RegistryWxWitness {
+            online_points: builder.nested_online_phase::<1>(),
+            registry_wx0,
+            registry_wx1,
+            randomizer_a: randomizer[0],
+            randomizer_b: randomizer[1],
+        };
+        builder.set_native_points_registry_wx_rx(<native_points::RegistryWxStage<
+            C::NestedCurve,
+            C::Profile,
+        > as StageExt<C::CircuitField, R>>::rx(
+            Blind::random(rng), &witness
+        )?);
+        Ok(())
     }
 }

@@ -1097,7 +1097,9 @@ mod endpoints {
             }
             assert_eq!(changed.v(), native_v);
             assert_eq!(changed.nested_v()?, nested_v);
-            assert!(crate::verify::nested_points_match(&changed)?);
+            assert!(crate::proof::uncompressed::verifier::nested_points_match(
+                &changed
+            )?);
             let child = changed.carry::<Value>(data);
             let expected = !native && !nested;
             assert_eq!(
@@ -1376,7 +1378,9 @@ mod timing {
             }
             assert_eq!(changed.x(), honest.proof().x());
             assert_eq!(changed.u(), honest.proof().u());
-            assert!(crate::verify::nested_points_match(&changed)?);
+            assert!(crate::proof::uncompressed::verifier::nested_points_match(
+                &changed
+            )?);
             let child = changed.carry::<Value>(data);
             let expected = case == "honest";
             assert_eq!(
@@ -1671,7 +1675,9 @@ mod commitments {
         );
 
         for pcd in [parent_pcd, left_pcd, right_pcd] {
-            assert!(crate::verify::nested_points_match(pcd.proof())?);
+            assert!(crate::proof::uncompressed::verifier::nested_points_match(
+                pcd.proof()
+            )?);
             assert!(app.verify_differential(pcd, inputs.verifier_rng())?);
         }
 
@@ -1694,7 +1700,7 @@ mod commitments {
             ] {
                 *cache(&mut changed) = point;
                 assert!(
-                    !crate::verify::nested_points_match(&changed)?,
+                    !crate::proof::uncompressed::verifier::nested_points_match(&changed)?,
                     "mismatched {name}"
                 );
             }

@@ -16,14 +16,15 @@
 //! nested-curve commitment $P_n$ is the Horner walk over the batch's
 //! nested-curve commitments, performed by the native endoscaling steps over
 //! the points stages the earlier phases committed (see
-//! [`native::stages::points`](crate::internal::native::stages::points)).
+//! [`native::stages::points`]).
 
 use alloc::vec::Vec;
 use core::ops::AddAssign;
 
 use ragu_circuits::{
-    Blind,
+    Blind, CircuitExt,
     polynomials::{Rank, sparse},
+    staging::{MultiStage, StageExt},
 };
 use ragu_core::{
     Cycle, Result,
@@ -45,11 +46,15 @@ use super::{
 use crate::{
     Application, Proof,
     internal::{
+        endoscalar::EndoscalarStage,
         native::{
-            RxComponent, RxIndex, online,
-            stages::points::{Inputs, WalkWitness},
+            self, RxComponent, RxIndex, online,
+            stages::points::{self as native_points, Inputs, WalkWitness},
         },
-        nested::{PointsWitness, pcs},
+        nested::{
+            self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
+            PointsWitness, pcs,
+        },
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -357,5 +362,126 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_p_poly(poly, p_commitment);
 
         Ok(walk)
+    }
+
+    /// Runs endoscaling over the host-curve commitments that feed
+    /// `PointsStage`, in the order `compute_p` (`_10_p.rs`)
+    /// accumulates them. Writes `nested_endoscalar_rx`,
+    /// `nested_points_rx`, and `nested_endoscaling_step_rxs` onto
+    /// `builder`, and returns the accumulated `p` commitment (last
+    /// `PointsStage` interstitial) together with the points witness the
+    /// nested circuits load.
+    ///
+    /// Shared by `compute_p` (in `fuse/_10_p.rs`) and by
+    /// [`dummy_proof`](Self::dummy_proof), so the nested
+    /// endoscaling setup lives in one place.
+    pub(crate) fn compute_endoscaling<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        beta_endo: Uendo,
+        points: &[C::HostCurve],
+        endoscalar_alpha: Blind<C::ScalarField>,
+        points_alpha: Blind<C::ScalarField>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve, C::Profile>)> {
+        assert_eq!(points.len(), NumPoints::<C::Profile>::len());
+
+        let witness = PointsWitness::<C::HostCurve, C::Profile>::new(beta_endo, points);
+
+        let endoscalar_rx =
+            <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
+        let points_rx = <PointsStage<C::HostCurve, C::Profile> as StageExt<C::ScalarField, R>>::rx(
+            points_alpha,
+            &witness,
+        )?;
+
+        let num_steps = NumSteps::<C::Profile>::len();
+        let mut step_rxs = Vec::with_capacity(num_steps);
+        for step in 0..num_steps {
+            let step_circuit = EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step);
+            let staged = MultiStage::new(step_circuit);
+            let step_trace = staged
+                .trace(EndoscalingStepWitness {
+                    endoscalar: beta_endo,
+                    points: &witness,
+                })?
+                .into_output();
+            let step_rx = self.nested_registry.assemble(
+                &step_trace,
+                nested::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index::<C::Profile>(),
+                rng,
+            )?;
+            step_rxs.push(step_rx);
+        }
+
+        builder.set_nested_endoscaling_step_rxs(step_rxs);
+        builder.set_nested_endoscalar_rx(endoscalar_rx);
+        builder.set_nested_points_rx(points_rx);
+
+        let p_commitment = *witness
+            .interstitials
+            .last()
+            .expect("every walk has at least one interstitial");
+        Ok((p_commitment, witness))
+    }
+
+    /// Runs the native endoscaling over the committed inputs: walks them
+    /// under `beta_endo`, commits the walk stage, traces the steps, and
+    /// writes all of it onto `builder`. Returns $P_n$ (the last
+    /// interstitial) with the walk stage's witness.
+    ///
+    /// Shared by `compute_p` (in `fuse/_10_p.rs`) and
+    /// [`dummy_proof`](Self::dummy_proof), like
+    /// [`compute_endoscaling`](Self::compute_endoscaling) on the nested side.
+    pub(crate) fn compute_native_endoscaling<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        beta_endo: Uendo,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<(
+        C::NestedCurve,
+        native_points::WalkWitness<C::NestedCurve, C::Profile>,
+    )> {
+        use native_points::{WalkStage, WalkWitness};
+
+        let walk = WalkWitness::new(
+            beta_endo,
+            crate::internal::endoscalar::PointsWitness::<
+                C::NestedCurve,
+                native::NumPoints<C::Profile>,
+                native::Endoscalings<C::Profile>,
+            >::new(beta_endo, &inputs.walk()),
+        );
+
+        let walk_rx = <WalkStage<C::NestedCurve, C::Profile> as StageExt<C::CircuitField, R>>::rx(
+            Blind::random(rng),
+            &walk,
+        )?;
+
+        let mut step_rxs = Vec::with_capacity(native::NumSteps::<C::Profile>::len());
+        for step in 0..native::NumSteps::<C::Profile>::len() {
+            let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
+                .trace(native::circuits::endoscaling_step::Witness {
+                    inputs,
+                    walk: &walk,
+                })?
+                .into_output();
+            step_rxs.push(
+                self.native_registry.assemble(
+                    &trace,
+                    native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                        .circuit_index::<C::Profile>(),
+                    &mut *rng,
+                )?,
+            );
+        }
+
+        builder.set_native_points_walk_rx(walk_rx);
+        builder.set_native_endoscaling_step_rxs(step_rxs);
+
+        let p_commitment = walk.p();
+        Ok((p_commitment, walk))
     }
 }

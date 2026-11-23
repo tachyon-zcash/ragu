@@ -59,13 +59,14 @@ use crate::{
     Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{
-        claims, ky,
+        ky,
         native::{self as native_internal, RxComponent, claims as native_claims},
         nested::{
             self as nested_internal, RxComponent as NestedRxComponent,
             challenge as nested_challenge, claims as nested_claims,
             stages::challenges as nested_challenges,
         },
+        revdot,
         transcript::Transcript,
     },
     ipa::IpaCycle,
@@ -200,7 +201,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: pcd.proof() };
         let mut builder =
-            claims::Builder::<_, C::CircuitField, R, Verifier<B>>::new(&self.native_registry, y, z);
+            revdot::Builder::<_, C::CircuitField, R, Verifier<B>>::new(&self.native_registry, y, z);
         native_claims::build::<C::Profile, _, _>(&source, &mut builder)?;
 
         // Check all native revdot claims.
@@ -215,7 +216,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let nested_source = nested::SingleProofSource { proof: pcd.proof() };
             let y_nested = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
             let z_nested = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
-            let mut nested_builder = claims::Builder::<_, C::ScalarField, R, Verifier<B>>::new(
+            let mut nested_builder = revdot::Builder::<_, C::ScalarField, R, Verifier<B>>::new(
                 &self.nested_registry,
                 y_nested,
                 z_nested,
@@ -734,7 +735,7 @@ pub(crate) fn nested_points_match<C: ProfiledCycle, R: Rank>(proof: &Proof<C, R>
 mod native {
     use super::*;
     pub use crate::internal::native::claims::ky_values;
-    use crate::internal::{claims::Source, native::RxComponent};
+    use crate::internal::{native::RxComponent, revdot::Source};
 
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
@@ -768,7 +769,7 @@ mod native {
 mod nested {
     use super::*;
     pub use crate::internal::nested::claims::ky_values;
-    use crate::internal::{claims::Source, nested::RxComponent};
+    use crate::internal::{nested::RxComponent, revdot::Source};
 
     /// Source for nested field polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
@@ -791,5 +792,5 @@ mod nested {
 }
 
 #[cfg(test)]
-#[path = "../tests/verify_uncompressed.rs"]
+#[path = "../../../tests/verify_uncompressed.rs"]
 mod tests;

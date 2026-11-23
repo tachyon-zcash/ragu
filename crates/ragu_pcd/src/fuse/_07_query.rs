@@ -29,11 +29,11 @@ use super::{
 };
 use crate::{
     Application, Proof,
+    fuse::par_join,
     internal::{
         native,
         nested::{self, online as online_fq},
     },
-    multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,
 };
