@@ -31,8 +31,7 @@ use super::{native, native_counts, nested, nested_counts};
 use crate::{
     Application, ApplicationBuilder, CompressedProof,
     decompress::{
-        prover::Decompressed,
-        run::Sides,
+        prover::{Decompressed, Sides},
         stages::num_runs,
         support::{HEADER_SIZE, Setup, TestR},
     },
@@ -252,7 +251,7 @@ fn the_fuse_fits_at_the_aggregator_rank() {
         shape.native_rx,
         standard.native_rx
             + P::NATIVE_EXTENSION
-            + crate::profile::online::extension::RXS
+            + crate::profile::online::stages::RXS
             + shape.native_steps
             - standard.native_steps
     );

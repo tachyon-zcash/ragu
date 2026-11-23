@@ -1,4 +1,5 @@
-//! The compressed verifier assembled from the gadgets, split between the
+//! A test oracle for the chunk circuits: the compressed verifier
+//! assembled from the gadgets, split between the
 //! two fields of the cycle: what the native verifier checks in the circuit
 //! field runs on one side, what it checks in the scalar field on the
 //! other, and what passes between them is what a stage of the
@@ -28,663 +29,759 @@
 //! binding*).
 //!
 //! [`ProofInputs`]: crate::internal::native::stages::preamble::ProofInputs
-//! [`stages`]: super::stages
+//! [`stages`]: crate::decompress::stages
 
 use alloc::{vec, vec::Vec};
-use core::iter::once;
 
-use ragu_backend::Backend;
-use ragu_circuits::{
-    polynomials::Rank,
-    registry::{CircuitIndex, Registry},
-};
-#[cfg(test)]
-use ragu_core::FixedGenerators;
-use ragu_core::{Cycle, Error, Result, drivers::Driver};
-use ragu_primitives::Element;
-#[cfg(test)]
-use ragu_primitives::{Endoscalar, GadgetExt, NonzeroBank, Point};
-#[cfg(test)]
-use udon::curve::Affine as _;
+use ragu_circuits::polynomials::Rank;
+use ragu_core::{Error, FixedGenerators, Result, drivers::Driver};
+use ragu_primitives::{Element, Endoscalar, GadgetExt, NonzeroBank, Point};
 use udon::{
-    curve::{EndomorphismAffine as Affine, Projective},
+    curve::{Affine as _, EndomorphismAffine as Affine},
     field::Field,
 };
 
-#[cfg(test)]
-use super::program::ab_layout;
-use super::stages::num_runs;
-#[cfg(test)]
-use super::{
-    batch, derive,
-    derive::{Digits, Fixed},
-    ipa, revdot, transcript,
-    transcript::{Absorb, Challenge, RawChallenge},
-};
-#[cfg(test)]
-use crate::RAGU_TAG;
+use self::transcript::{Absorb, Challenge, RawChallenge};
 use crate::{
-    Application, CompressedPcd, CompressedProof, SelectableBackend,
+    RAGU_TAG,
     compress::{
-        Lifted, Messages, Sampled,
+        Sampled,
         revdot::{
-            Openings,
-            claims::{self, Kind},
-            fold::Weights,
-            native_position, nested_position,
+            OpeningClaim,
+            fold::{Derived, Weights},
+            native_components, native_position, nested_components, nested_position,
         },
-        transcript as compression_transcript,
     },
-    header::Header,
-    internal::{
-        ky,
-        native::claims::KySource as NativeKySource,
-        nested::{self, claims::KySource as NestedKySource},
+    decompress::{
+        gadgets::{
+            batch,
+            derive::{self, Digits, Fixed},
+            ipa, revdot,
+        },
+        program::AbValue,
+        prover::Witness,
+        side::{NativeTargets, NestedTargets},
     },
-    ipa::{IpaCycle, IpaTranscript, MSM, Params},
-    profile::{ProfiledCycle, Standard},
-};
-#[cfg(test)]
-use crate::{
-    compress::revdot::{OpeningClaim, fold::Derived, native_components, nested_components},
     internal::{
         native::{
             self,
             stages::{eval::generator_index, preamble::ProofInputs},
         },
-        nested::{stages::challenges as challenge_stage, unified as nested_unified},
+        nested::{self, stages::challenges as challenge_stage, unified as nested_unified},
         transcript::Transcript,
     },
+    ipa::IpaCycle,
+    profile::{ProfiledCycle, Standard},
     proof::bridge_alpha_power,
 };
 
-/// One curve's challenges as the compression squeezes them, in order.
-#[derive(Clone)]
-pub(crate) struct Squeezed<F> {
-    pub sampled: Sampled<F>,
-    pub weights: Weights<F>,
-    pub rho: F,
-    pub r: F,
-    pub alpha: F,
-    pub u: F,
-    pub beta: F,
-    pub xi: F,
-    pub ipa_z: F,
-    pub rounds: Vec<F>,
-}
+pub(crate) mod transcript {
+    //! The compression's transcript as a gadget: the schedule of
+    //! [`verify_compressed`](crate::Application::verify_compressed) over an
+    //! allocated instance and allocated messages, squeezing the challenges
+    //! the native verifier squeezes.
+    //!
+    //! The native transcript is a Poseidon sponge over the circuit field. It
+    //! absorbs the host curve's scalars directly and the nested curve's points
+    //! by their coordinates; what lives in the other field, the host curve's
+    //! points and the nested curve's scalars, it commits by the run before
+    //! each challenge and absorbs as the commitment, a nested-curve point (see
+    //! [`CycleTranscript`](crate::ipa::CycleTranscript)). In the circuit over
+    //! the circuit field the same sponge runs over allocated elements and
+    //! points, each run's commitment an allocated point: what the commitment
+    //! covers is bound elsewhere, by the proof's consumer holding the point to
+    //! the run's stage on the other side (see [`stages`](crate::decompress::stages)). Each
+    //! challenge is read as the
+    //! compression reads it: the squeezed element constrained into the
+    //! endoscalar range, its endoscalar, which scales points, and the
+    //! endoscalar's lift into the circuit field, which the field checks over
+    //! this field use. The nested curve's field checks use the same
+    //! endoscalar's lift into the scalar field, which the circuit over that
+    //! field must receive bound to these bits.
 
-impl<F: Field> Squeezed<F> {
-    /// Every challenge in the compression's order.
-    pub(crate) fn in_order(&self) -> Vec<F> {
-        let Sampled { w, y, z, sigma } = self.sampled;
-        let mut all = vec![
-            w,
-            y,
-            z,
-            sigma,
-            self.weights.mu,
-            self.weights.nu,
-            self.weights.mu_prime,
-            self.weights.nu_prime,
-            self.rho,
-            self.r,
-            self.alpha,
-            self.u,
-            self.beta,
-            self.xi,
-            self.ipa_z,
-        ];
-        all.extend(self.rounds.iter().copied());
-        all
+    use alloc::vec::Vec;
+
+    use ragu_core::{PoseidonPermutation, Result, drivers::Driver};
+    use ragu_primitives::{Element, Endoscalar, EndoscalarChallenge, GadgetExt, Point, io::Buffer};
+    use udon::curve::EndomorphismAffine as Affine;
+
+    use crate::{
+        compress::{Sampled, revdot::fold::Weights},
+        internal::transcript::Transcript,
+        ipa::IPA_TAG,
+    };
+
+    /// What the transcript absorbs: an element by value, a point by its
+    /// coordinates.
+    pub(crate) trait Absorb<'dr, D: Driver<'dr>> {
+        fn absorb<P: PoseidonPermutation<D::F>>(
+            &self,
+            dr: &mut D,
+            transcript: &mut Transcript<'dr, D, P>,
+        ) -> Result<()>;
     }
 
-    /// Reads one curve's challenges off `t`, standing where the curve's
-    /// reduction starts, with the curve's `sampled` challenges already
-    /// read.
-    fn read<P: Affine<Scalar = F>>(
-        sampled: Sampled<F>,
-        messages: &Messages<P>,
-        t: &mut impl IpaTranscript<P>,
-    ) -> Result<Self> {
-        let reduction = &messages.reduction;
-        let weights = reduction.fold.replay(t)?;
-        let rho = t.squeeze_challenge()?;
-        t.write_point(reduction.p)?;
-        t.write_point(reduction.q)?;
-        let r = t.squeeze_challenge()?;
-        for &opened in &reduction.openings {
-            t.write_scalar(opened)?;
+    impl<'dr, D: Driver<'dr>> Absorb<'dr, D> for Element<'dr, D> {
+        fn absorb<P: PoseidonPermutation<D::F>>(
+            &self,
+            dr: &mut D,
+            transcript: &mut Transcript<'dr, D, P>,
+        ) -> Result<()> {
+            transcript.write(dr, self)
         }
-        t.write_scalar(reduction.p_at_inverse_r)?;
-        t.write_scalar(reduction.q_at_r)?;
+    }
 
-        let alpha = t.squeeze_challenge()?;
-        t.write_point(messages.batch.f)?;
-        let u = t.squeeze_challenge()?;
-        for &value in &messages.batch.evaluations {
-            t.write_scalar(value)?;
+    impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Absorb<'dr, D> for Point<'dr, D, C> {
+        fn absorb<P: PoseidonPermutation<D::F>>(
+            &self,
+            dr: &mut D,
+            transcript: &mut Transcript<'dr, D, P>,
+        ) -> Result<()> {
+            GadgetExt::write(self, dr, transcript)
         }
-        let beta = t.squeeze_challenge()?;
+    }
 
-        t.write_point(messages.opening.s_commitment)?;
-        let xi = t.squeeze_challenge()?;
-        let ipa_z = t.squeeze_challenge()?;
-        let mut rounds = Vec::with_capacity(messages.opening.rounds.len());
-        for &(l, r) in &messages.opening.rounds {
-            t.write_point(l)?;
-            t.write_point(r)?;
-            rounds.push(t.squeeze_challenge()?);
+    /// A child's values as the preamble stage holds them, allocated.
+    pub(crate) struct Child<'dr, D: Driver<'dr>> {
+        pub x: Element<'dr, D>,
+        pub y: Element<'dr, D>,
+    }
+
+    /// The instance as the transcript absorbs it, with the fields of
+    /// [`Instance`](crate::compress::instance::Instance) that lie in the
+    /// circuit field, as elements, and on the nested curve, as points. Its
+    /// scalar-field values, the host commitments and the nested curve's
+    /// instance values, are the instance's two runs
+    /// ([`Run::Commitments`](crate::decompress::stages::Run::Commitments) and
+    /// [`Run::Scalars`](crate::decompress::stages::Run::Scalars)).
+    pub(crate) struct Instance<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+        /// $\omega^j$ of the circuit id.
+        pub circuit_id: Element<'dr, D>,
+
+        /// The nested commitments, in
+        /// [`nested_components`](crate::compress::revdot::nested_components)
+        /// order.
+        pub nested: Vec<Point<'dr, D, C>>,
+        pub nested_registry_xy: Point<'dr, D, C>,
+        pub nested_p: Point<'dr, D, C>,
+        pub nested_challenges_partial: Point<'dr, D, C>,
+
+        pub c: Element<'dr, D>,
+        pub v: Element<'dr, D>,
+
+        pub left: Child<'dr, D>,
+        pub right: Child<'dr, D>,
+        pub a_at_u: Element<'dr, D>,
+        pub b_at_u: Element<'dr, D>,
+    }
+
+    impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Instance<'dr, D, C> {
+        /// Absorbs the instance in the native verifier's order: the circuit
+        /// id, the host commitments' run, the host curve's scalars, the nested
+        /// commitments, then the run of the scalar field's instance values.
+        fn absorb<P: PoseidonPermutation<D::F>>(
+            &self,
+            dr: &mut D,
+            transcript: &mut Transcript<'dr, D, P>,
+            runs: &mut Runs<'_, 'dr, D, C>,
+        ) -> Result<()> {
+            self.circuit_id.absorb(dr, transcript)?;
+            runs.absorb(dr, transcript)?; // the host commitments
+            let (l, r) = (&self.left, &self.right);
+            for element in [
+                &self.c,
+                &self.v,
+                &l.x,
+                &l.y,
+                &r.x,
+                &r.y,
+                &self.a_at_u,
+                &self.b_at_u,
+            ] {
+                element.absorb(dr, transcript)?;
+            }
+            for point in self.nested.iter().chain([
+                &self.nested_registry_xy,
+                &self.nested_p,
+                &self.nested_challenges_partial,
+            ]) {
+                point.absorb(dr, transcript)?;
+            }
+            runs.absorb(dr, transcript)?; // the scalar field's instance values
+            Ok(())
         }
-        t.write_scalar(messages.opening.c)?;
+    }
 
-        Ok(Squeezed {
+    /// A challenge as the compression uses it: the endoscalar read from the
+    /// squeezed element, which scales points, and its lift, the scalar the
+    /// field checks over this field use.
+    pub(crate) struct Challenge<'dr, D: Driver<'dr>> {
+        pub endoscalar: Endoscalar<'dr, D>,
+        pub lift: Element<'dr, D>,
+    }
+
+    impl<'dr, D: Driver<'dr>> Challenge<'dr, D> {
+        /// Squeezes a challenge, constraining the element into the endoscalar
+        /// range as the native transcript requires of it.
+        fn squeeze<P: PoseidonPermutation<D::F>>(
+            dr: &mut D,
+            transcript: &mut Transcript<'dr, D, P>,
+        ) -> Result<Self> {
+            let element = transcript.challenge(dr)?;
+            let endoscalar =
+                Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), element)?);
+            let lift = endoscalar.lift(dr)?;
+            Ok(Challenge { endoscalar, lift })
+        }
+    }
+
+    /// A challenge of the fuse's transcript as the compressed verifier
+    /// replays it: the squeezed element, which the native side uses as it is,
+    /// and its endoscalar, whose lift the nested side uses and whose bits
+    /// scale the challenge stage's generator.
+    pub(crate) struct RawChallenge<'dr, D: Driver<'dr>> {
+        pub raw: Element<'dr, D>,
+        pub endoscalar: Endoscalar<'dr, D>,
+    }
+
+    impl<'dr, D: Driver<'dr>> RawChallenge<'dr, D> {
+        /// Squeezes a challenge, constraining it into the endoscalar range as
+        /// the fuse's circuits do.
+        pub(crate) fn squeeze<P: PoseidonPermutation<D::F>>(
+            dr: &mut D,
+            transcript: &mut Transcript<'dr, D, P>,
+        ) -> Result<Self> {
+            let raw = transcript.challenge(dr)?;
+            let endoscalar =
+                Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), raw.clone())?);
+            Ok(RawChallenge { raw, endoscalar })
+        }
+    }
+
+    /// The host curve's messages as the transcript absorbs them: its scalars,
+    /// which lie in the circuit field, as elements. Its points are in the
+    /// runs.
+    pub(crate) struct NativeMessages<'dr, D: Driver<'dr>> {
+        pub inner_epsilon: Element<'dr, D>,
+        pub outer_epsilon: Element<'dr, D>,
+        pub openings: Vec<Element<'dr, D>>,
+        pub p_at_inverse_r: Element<'dr, D>,
+        pub q_at_r: Element<'dr, D>,
+        pub evaluations: Vec<Element<'dr, D>>,
+        pub c: Element<'dr, D>,
+    }
+
+    /// The nested curve's messages as the transcript absorbs them: its points.
+    /// Its scalars are in the runs.
+    pub(crate) struct NestedMessages<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+        pub inner: Point<'dr, D, C>,
+        pub outer: Point<'dr, D, C>,
+        pub p: Point<'dr, D, C>,
+        pub q: Point<'dr, D, C>,
+        pub f: Point<'dr, D, C>,
+        pub s_commitment: Point<'dr, D, C>,
+        pub rounds: Vec<(Point<'dr, D, C>, Point<'dr, D, C>)>,
+    }
+
+    /// The challenges the transcript squeezes for one curve, in the order
+    /// the native verifier squeezes them.
+    pub(crate) struct Challenges<'dr, D: Driver<'dr>> {
+        pub sampled: Sampled<Challenge<'dr, D>>,
+        pub weights: Weights<Challenge<'dr, D>>,
+        pub rho: Challenge<'dr, D>,
+        pub r: Challenge<'dr, D>,
+        pub alpha: Challenge<'dr, D>,
+        pub u: Challenge<'dr, D>,
+        pub beta: Challenge<'dr, D>,
+        pub xi: Challenge<'dr, D>,
+        pub z: Challenge<'dr, D>,
+        pub rounds: Vec<Challenge<'dr, D>>,
+    }
+
+    /// The runs' commitments in [`Run`](crate::decompress::stages::Run) order, absorbed
+    /// one per run as the native transcript absorbs them: witness points,
+    /// which the chunk circuits' consumer holds to the run stages.
+    pub(crate) struct Runs<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+        points: core::slice::Iter<'a, Point<'dr, D, C>>,
+    }
+
+    impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Runs<'_, 'dr, D, C> {
+        /// Absorbs the next run's commitment.
+        fn absorb<P: PoseidonPermutation<D::F>>(
+            &mut self,
+            dr: &mut D,
+            transcript: &mut Transcript<'dr, D, P>,
+        ) -> Result<()> {
+            self.points
+                .next()
+                .expect("a commitment per run")
+                .absorb(dr, transcript)
+        }
+    }
+
+    /// Replays the compression's transcript over the allocated statement,
+    /// both curves' messages and `runs`, the commitments of the scalar field's
+    /// runs in [`Run`](crate::decompress::stages::Run) order, returning each curve's
+    /// challenges: the statement is absorbed, both curves' challenges are
+    /// sampled, then the host curve's messages run, then the nested curve's.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `runs` holds one commitment per run.
+    pub(crate) fn replay<'dr, D, P, C>(
+        dr: &mut D,
+        params: &'dr P,
+        instance: &Instance<'dr, D, C>,
+        output_header: &[Element<'dr, D>],
+        native: &NativeMessages<'dr, D>,
+        nested: &NestedMessages<'dr, D, C>,
+        runs: &[Point<'dr, D, C>],
+    ) -> Result<(Challenges<'dr, D>, Challenges<'dr, D>)>
+    where
+        D: Driver<'dr>,
+        P: PoseidonPermutation<D::F>,
+        C: Affine<Base = D::F>,
+    {
+        let mut runs = Runs {
+            points: runs.iter(),
+        };
+        let mut transcript = Transcript::new(dr, params, IPA_TAG)?;
+        instance.absorb(dr, &mut transcript, &mut runs)?;
+        for element in output_header {
+            element.absorb(dr, &mut transcript)?;
+        }
+        let native_sampled = sample(dr, &mut transcript)?;
+        let nested_sampled = sample(dr, &mut transcript)?;
+        let native = native_side(
+            dr,
+            &mut transcript,
+            native_sampled,
+            native,
+            nested.rounds.len(),
+            &mut runs,
+        )?;
+        let nested = nested_side(dr, &mut transcript, nested_sampled, nested, &mut runs)?;
+        assert!(runs.points.next().is_none(), "every run is absorbed");
+        Ok((native, nested))
+    }
+
+    /// The challenges sampled for one curve once the statement is absorbed.
+    fn sample<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>>(
+        dr: &mut D,
+        transcript: &mut Transcript<'dr, D, P>,
+    ) -> Result<Sampled<Challenge<'dr, D>>> {
+        Ok(Sampled {
+            w: Challenge::squeeze(dr, transcript)?,
+            y: Challenge::squeeze(dr, transcript)?,
+            z: Challenge::squeeze(dr, transcript)?,
+            sigma: Challenge::squeeze(dr, transcript)?,
+        })
+    }
+
+    /// The host curve's reduction, batch and IPA of `rounds` rounds on the
+    /// transcript: its points come as runs, one before each challenge a point
+    /// precedes.
+    fn native_side<'dr, D, P, C>(
+        dr: &mut D,
+        transcript: &mut Transcript<'dr, D, P>,
+        sampled: Sampled<Challenge<'dr, D>>,
+        messages: &NativeMessages<'dr, D>,
+        rounds: usize,
+        runs: &mut Runs<'_, 'dr, D, C>,
+    ) -> Result<Challenges<'dr, D>>
+    where
+        D: Driver<'dr>,
+        P: PoseidonPermutation<D::F>,
+        C: Affine<Base = D::F>,
+    {
+        let squeeze = Challenge::squeeze;
+
+        runs.absorb(dr, transcript)?; // the inner error commitment
+        let mu = squeeze(dr, transcript)?;
+        let nu = squeeze(dr, transcript)?;
+        runs.absorb(dr, transcript)?; // the outer error commitment
+        let mu_prime = squeeze(dr, transcript)?;
+        let nu_prime = squeeze(dr, transcript)?;
+        messages.inner_epsilon.absorb(dr, transcript)?;
+        messages.outer_epsilon.absorb(dr, transcript)?;
+        let rho = squeeze(dr, transcript)?;
+        runs.absorb(dr, transcript)?; // p and q
+        let r = squeeze(dr, transcript)?;
+        for opened in &messages.openings {
+            opened.absorb(dr, transcript)?;
+        }
+        messages.p_at_inverse_r.absorb(dr, transcript)?;
+        messages.q_at_r.absorb(dr, transcript)?;
+
+        let alpha = squeeze(dr, transcript)?;
+        runs.absorb(dr, transcript)?; // f
+        let u = squeeze(dr, transcript)?;
+        for evaluation in &messages.evaluations {
+            evaluation.absorb(dr, transcript)?;
+        }
+        let beta = squeeze(dr, transcript)?;
+
+        runs.absorb(dr, transcript)?; // the masking commitment
+        let xi = squeeze(dr, transcript)?;
+        let z = squeeze(dr, transcript)?;
+        let rounds = (0..rounds)
+            .map(|_| {
+                runs.absorb(dr, transcript)?; // the round's L and R
+                squeeze(dr, transcript)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        messages.c.absorb(dr, transcript)?;
+
+        Ok(Challenges {
             sampled,
-            weights,
+            weights: Weights {
+                mu,
+                nu,
+                mu_prime,
+                nu_prime,
+            },
             rho,
             r,
             alpha,
             u,
             beta,
             xi,
-            ipa_z,
+            z,
             rounds,
         })
     }
-}
 
-/// What one curve's side of the verifier needs beyond the proof: the
-/// claims' kinds and public values, the IPA's witness points, and the
-/// challenges raw, for their endoscalars.
-#[derive(Clone)]
-pub(crate) struct SideWitness<P: Affine> {
-    #[cfg(test)]
-    pub kinds: Vec<Kind>,
-    /// Each named circuit's wiring restriction at the lifted $(r, y)$.
-    pub restrictions: Vec<(CircuitIndex, P::Scalar)>,
-    /// The wire bindings' stage polynomials, by component position, and
-    /// their degrees and expected values.
-    pub masked: Vec<(usize, Vec<usize>, Vec<P::Scalar>)>,
-    /// The registry restriction at the compression's $w$, the instance's
-    /// extra opening's value.
-    pub restriction_at_w: P::Scalar,
-    /// The IPA's witness points: each $u_j^{-1} L_j$, and $G'$.
-    pub inverse_scaled: Vec<P>,
-    pub g_prime: P,
-    #[cfg(test)]
-    pub fixed: Fixed<P>,
-    pub raw: Squeezed<P::Scalar>,
-    /// The batched claim's value and the IPA's $c b z$, the full-width
-    /// scalars the other side scales by beside the proof's $c$.
-    pub v: P::Scalar,
-    pub cbz: P::Scalar,
-}
-
-/// A coefficient of the `ab` bridge stage: which of its values it holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AbValue {
-    /// A coordinate of the native $A$ commitment, $x$ then $y$.
-    A(usize),
-    /// A coordinate of the native $B$ commitment.
-    B(usize),
-    /// A coordinate of the native points stage's commitment.
-    PointsAb(usize),
-    /// The `ab` bridge stage's alpha, `bridge_alpha` squared.
-    Alpha,
-}
-
-/// Everything both sides allocate, prepared natively from a compressed
-/// proof as the native verifier reads it.
-pub(crate) struct Witness<C: Cycle> {
-    pub proof: CompressedProof<C>,
-    pub header: Vec<C::CircuitField>,
-    /// The fuse's challenges, raw.
-    pub fuse: nested::Challenges<C::CircuitField>,
-    pub native: SideWitness<C::HostCurve>,
-    pub nested: SideWitness<C::NestedCurve>,
-    /// The `ab` bridge stage's nonzero coefficients, as [`ab_layout`] lays
-    /// the stage out: the generator each lands on and the value it holds.
-    /// The chunk circuits read the layout off the schedule; the whole-side
-    /// circuits the tests run read it here.
-    #[cfg(test)]
-    pub ab_terms: Vec<(usize, AbValue)>,
-    /// The transcript's run commitments, in [`Run`](super::stages::Run)
-    /// order: what the circuit-field side absorbs for the scalar field's
-    /// values and holds to the scalar-field side's run stages.
-    pub runs: Vec<C::NestedCurve>,
-}
-
-impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
-    /// Prepares the witness for `pcd` under `app`, running the native
-    /// verifier's computations.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the native verifier would reject the proof, or on an
-    /// internal error.
-    pub(crate) fn prepare<K: Rank, const HEADER_SIZE: usize, B: SelectableBackend, H>(
-        app: &Application<'_, C, K, HEADER_SIZE, B>,
-        pcd: &CompressedPcd<C, H>,
-    ) -> Result<Self>
+    /// The nested curve's reduction, batch and IPA on the transcript: its
+    /// scalars come as runs, one before each challenge scalars precede; its
+    /// IPA's $c$ precedes none.
+    fn nested_side<'dr, D, P, C>(
+        dr: &mut D,
+        transcript: &mut Transcript<'dr, D, P>,
+        sampled: Sampled<Challenge<'dr, D>>,
+        messages: &NestedMessages<'dr, D, C>,
+        runs: &mut Runs<'_, 'dr, D, C>,
+    ) -> Result<Challenges<'dr, D>>
     where
-        H: Header<C::CircuitField>,
+        D: Driver<'dr>,
+        P: PoseidonPermutation<D::F>,
+        C: Affine<Base = D::F>,
     {
-        type Verifier<B> = <B as SelectableBackend>::Verifier;
-        let proof = pcd.proof().clone();
-        let instance = &proof.instance;
-        let header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
+        let squeeze = Challenge::squeeze;
 
-        // The verifier's admission: the circuit id's domain, the messages'
-        // shape, the fuse's challenges and the two nested stages the
-        // decider recomputes. Nothing below repeats these checks
-        // natively, and the chunk circuits' constraints on the recomputed
-        // stages are not enforced when their traces are prepared, so a proof
-        // the verifier rejects is refused here, before any proving.
-        let fuse = app.admit_compressed(&proof)?;
+        messages.inner.absorb(dr, transcript)?;
+        let mu = squeeze(dr, transcript)?;
+        let nu = squeeze(dr, transcript)?;
+        messages.outer.absorb(dr, transcript)?;
+        let mu_prime = squeeze(dr, transcript)?;
+        let nu_prime = squeeze(dr, transcript)?;
+        runs.absorb(dr, transcript)?; // the two epsilons
+        let rho = squeeze(dr, transcript)?;
+        messages.p.absorb(dr, transcript)?;
+        messages.q.absorb(dr, transcript)?;
+        let r = squeeze(dr, transcript)?;
+        runs.absorb(dr, transcript)?; // the openings, p(1/r) and q(r)
 
-        // The compression's transcript twice over: lifted, as the verifier
-        // reads it, and raw, for the endoscalars.
-        let mut lifted =
-            compression_transcript::<C, Verifier<B>, K>(app.params, instance, &header)?;
-        let mut raw = compression_transcript::<C, Verifier<B>, K>(app.params, instance, &header)?;
-        let native_sampled = Sampled::squeeze(&mut Lifted(lifted.host()))?;
-        let nested_sampled = Sampled::squeeze(&mut Lifted(lifted.nested()))?;
-        let native_raw_sampled = Sampled::squeeze(&mut raw.host())?;
-        let nested_raw_sampled = Sampled::squeeze(&mut raw.nested())?;
-        let (native_targets, nested_targets) =
-            instance.targets::<HEADER_SIZE>(&fuse, &header, native_sampled.y, nested_sampled.y)?;
+        let alpha = squeeze(dr, transcript)?;
+        messages.f.absorb(dr, transcript)?;
+        let u = squeeze(dr, transcript)?;
+        runs.absorb(dr, transcript)?; // the batch's values
+        let beta = squeeze(dr, transcript)?;
 
-        let native = {
-            let registry = &app.native_registry;
-            let masked = instance.native_bindings::<K, Verifier<B>, HEADER_SIZE>(
-                &fuse,
-                registry,
-                native_sampled.sigma,
-            )?;
-            let shapes = claims::native_shapes::<Standard, _>(native_sampled.z, &masked)?;
-            let kinds = shapes.iter().map(|shape| shape.kind).collect();
-            let mut openings = crate::compress::revdot::verify_native::<C, K, Verifier<B>>(
-                |component| instance.native_commitment(component),
-                registry,
-                native_sampled.y,
-                native_sampled.z,
-                &native_targets,
-                &masked,
-                &proof.native.reduction,
-                &mut Lifted(lifted.host()),
-            )?
-            .ok_or_else(|| Error::InvalidWitness("the native reduction fails".into()))?;
-            let (commitments, claims) = instance.native_openings::<K, Verifier<B>>(
-                &fuse,
-                registry,
-                native_sampled.w,
-                openings.commitments.len(),
-            );
-            // The registry restriction at w: the first instance claim's
-            // value.
-            let restriction_at_w = claims[0].value;
-            openings.commitments.extend(commitments);
-            openings.claims.extend(claims);
-            side_witness::<C::HostCurve, K, Verifier<B>>(
-                SideInputs {
-                    sampled: native_sampled,
-                    raw_sampled: native_raw_sampled,
-                    messages: &proof.native,
-                    openings: &openings,
-                    registry,
-                    masked: masked
-                        .iter()
-                        .map(|m| {
-                            (
-                                native_position::<Standard>(m.poly),
-                                m.wires.iter().map(|&(degree, _)| degree).collect(),
-                                m.wires.iter().map(|&(_, value)| value).collect(),
-                            )
-                        })
-                        .collect(),
-                    kinds,
-                    restriction_at_w,
-                    params: Params::with_k(
-                        C::host_generators(app.params),
-                        *C::host_u(app.params),
-                        K::RANK,
-                    ),
-                },
-                &mut Lifted(lifted.host()),
-                &mut raw.host(),
-            )?
-        };
-
-        let nested = {
-            let registry = &app.nested_registry;
-            let masked = instance.nested_bindings::<K, Verifier<B>>(
-                &fuse,
-                registry,
-                nested_sampled.sigma,
-            )?;
-            let shapes = claims::nested_shapes::<Standard, _>(nested_sampled.z, &masked)?;
-            let kinds = shapes.iter().map(|shape| shape.kind).collect();
-            let mut openings = crate::compress::revdot::verify_nested::<C, K, Verifier<B>>(
-                |component| instance.nested_commitment(component),
-                registry,
-                nested_sampled.y,
-                nested_sampled.z,
-                &nested_targets,
-                &masked,
-                &proof.nested.reduction,
-                &mut Lifted(lifted.nested()),
-            )?
-            .ok_or_else(|| Error::InvalidWitness("the nested reduction fails".into()))?;
-            let (commitments, claims) = instance.nested_openings::<K, Verifier<B>>(
-                &fuse,
-                registry,
-                nested_sampled.w,
-                openings.commitments.len(),
-            )?;
-            let restriction_at_w = claims[0].value;
-            openings.commitments.extend(commitments);
-            openings.claims.extend(claims);
-            side_witness::<C::NestedCurve, K, Verifier<B>>(
-                SideInputs {
-                    sampled: nested_sampled,
-                    raw_sampled: nested_raw_sampled,
-                    messages: &proof.nested,
-                    openings: &openings,
-                    registry,
-                    masked: masked
-                        .iter()
-                        .map(|m| {
-                            (
-                                nested_position::<Standard>(m.poly),
-                                m.wires.iter().map(|&(degree, _)| degree).collect(),
-                                m.wires.iter().map(|&(_, value)| value).collect(),
-                            )
-                        })
-                        .collect(),
-                    kinds,
-                    restriction_at_w,
-                    params: Params::with_k(
-                        C::nested_generators(app.params),
-                        *C::nested_u(app.params),
-                        K::RANK,
-                    ),
-                },
-                &mut Lifted(lifted.nested()),
-                &mut raw.nested(),
-            )?
-        };
-
-        #[cfg(test)]
-        let ab_terms = ab_layout::<C, K>()?;
-        let runs = lifted.runs().to_vec();
-        if runs.len() != num_runs::<K>() {
-            return Err(Error::InvalidWitness(
-                "the transcript absorbed other runs than the proof has".into(),
-            ));
+        messages.s_commitment.absorb(dr, transcript)?;
+        let xi = squeeze(dr, transcript)?;
+        let z = squeeze(dr, transcript)?;
+        let mut rounds = Vec::with_capacity(messages.rounds.len());
+        for (l, r) in &messages.rounds {
+            l.absorb(dr, transcript)?;
+            r.absorb(dr, transcript)?;
+            rounds.push(squeeze(dr, transcript)?);
         }
 
-        Ok(Witness {
-            proof,
-            header,
-            fuse,
-            native,
-            nested,
-            #[cfg(test)]
-            ab_terms,
-            runs,
+        Ok(Challenges {
+            sampled,
+            weights: Weights {
+                mu,
+                nu,
+                mu_prime,
+                nu_prime,
+            },
+            rho,
+            r,
+            alpha,
+            u,
+            beta,
+            xi,
+            z,
+            rounds,
         })
     }
-}
 
-/// What [`side_witness`] takes for one curve.
-struct SideInputs<'a, P: Affine, K: Rank> {
-    sampled: Sampled<P::Scalar>,
-    raw_sampled: Sampled<P::Scalar>,
-    messages: &'a Messages<P>,
-    openings: &'a Openings<P>,
-    registry: &'a Registry<'a, P::Scalar, K>,
-    masked: Vec<(usize, Vec<usize>, Vec<P::Scalar>)>,
-    kinds: Vec<Kind>,
-    restriction_at_w: P::Scalar,
-    params: Params<P>,
-}
+    mod tests {
+        //! The transcript gadget against the native transcript on a real
+        //! compressed proof: over the allocated instance, header and messages,
+        //! with the commitments of the scalar field's runs the native transcript
+        //! absorbs allocated as points, it squeezes every challenge the native
+        //! verifier squeezes on both curves, each as the lift of the endoscalar
+        //! the native squeeze yields, and follows a tampered message as the native
+        //! transcript does.
 
-/// One curve's side witness, with `lifted` standing after the curve's
-/// reduction, as the verifier leaves it, and `raw` where the reduction
-/// starts: the batch and the IPA run on the lifted view, the whole side on
-/// the raw one.
-fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
-    inputs: SideInputs<'_, P, K>,
-    lifted: &mut impl IpaTranscript<P>,
-    raw: &mut impl IpaTranscript<P>,
-) -> Result<SideWitness<P>> {
-    let SideInputs {
-        sampled,
-        raw_sampled,
-        messages,
-        openings,
-        registry,
-        masked,
-        kinds,
-        restriction_at_w,
-        params,
-    } = inputs;
-    let raw_squeezed = Squeezed::read(raw_sampled, messages, raw)?;
+        use alloc::vec::Vec;
 
-    let claim = crate::compress::batch::verifier::verify::<_, B, _>(
-        &openings.commitments,
-        &openings.claims,
-        &messages.batch,
-        lifted,
-    )?;
-    let mut msm = MSM::new(&params);
-    msm.append_term(P::Scalar::ONE, claim.commitment);
-    let guard = crate::ipa::verify_proof(
-        &params,
-        msm,
-        lifted,
-        &messages.opening,
-        claim.point,
-        claim.value,
-    )?;
-    let g_prime = guard.compute_g::<B>();
-    if !guard.use_challenges().eval::<B>() {
-        return Err(Error::InvalidWitness("the IPA fails".into()));
-    }
+        use ragu_core::{
+            Cycle, Result,
+            drivers::Driver,
+            maybe::Maybe,
+            pasta::{Fp, Fq, Pasta},
+        };
+        use ragu_primitives::{Point, Simulator, extract_endoscalar, lift_endoscalar};
+        use udon::field::Field;
 
-    // The lifted challenges are the raw ones' lifts.
-    let lift = |raw: P::Scalar| -> Result<P::Scalar> {
-        Ok(ragu_primitives::lift_endoscalar(
-            ragu_primitives::extract_endoscalar(raw)?,
-        ))
-    };
-    let lifted_squeezed = Squeezed {
-        sampled,
-        weights: Weights {
-            mu: lift(raw_squeezed.weights.mu)?,
-            nu: lift(raw_squeezed.weights.nu)?,
-            mu_prime: lift(raw_squeezed.weights.mu_prime)?,
-            nu_prime: lift(raw_squeezed.weights.nu_prime)?,
-        },
-        rho: lift(raw_squeezed.rho)?,
-        r: lift(raw_squeezed.r)?,
-        alpha: lift(raw_squeezed.alpha)?,
-        u: lift(raw_squeezed.u)?,
-        beta: lift(raw_squeezed.beta)?,
-        xi: lift(raw_squeezed.xi)?,
-        ipa_z: lift(raw_squeezed.ipa_z)?,
-        rounds: raw_squeezed
-            .rounds
-            .iter()
-            .map(|&u_j| lift(u_j))
-            .collect::<Result<_>>()?,
-    };
+        use super::{Challenges, Child, Instance, NativeMessages, NestedMessages, replay};
+        use crate::{
+            compress::{self, Sampled},
+            decompress::{
+                stages::num_runs,
+                support::{
+                    EpAffine, EqAffine, Setup, TestR, alloc, alloc_all, replay_batch, replay_ipa,
+                    replay_reduction,
+                },
+            },
+        };
 
-    let mut restrictions: Vec<(CircuitIndex, P::Scalar)> = Vec::new();
-    for kind in &kinds {
-        if let Kind::Circuit(circuit) | Kind::Bonding(circuit) = *kind
-            && !restrictions.iter().any(|(listed, _)| *listed == circuit)
-        {
-            let value = B::registry_wxy(
-                registry,
-                circuit.omega_j(),
-                lifted_squeezed.r,
-                lifted_squeezed.sampled.y,
+        type Dr = Simulator<Fp>;
+
+        fn point(dr: &mut Dr, point: EpAffine) -> Result<Point<'static, Dr, EpAffine>> {
+            Point::alloc(dr, <Dr as Driver>::just(|| point))
+        }
+
+        fn points(
+            dr: &mut Dr,
+            points: impl IntoIterator<Item = EpAffine>,
+        ) -> Result<Vec<Point<'static, Dr, EpAffine>>> {
+            points.into_iter().map(|p| point(dr, p)).collect()
+        }
+
+        /// The instance allocated as the transcript gadget takes it: its circuit
+        /// field's values and nested commitments.
+        fn instance(
+            dr: &mut Dr,
+            instance: &compress::instance::Instance<Pasta>,
+        ) -> Result<Instance<'static, Dr, EpAffine>> {
+            let child = |dr: &mut Dr, child: compress::instance::Child<Fp>| {
+                Ok::<_, ragu_core::Error>(Child {
+                    x: alloc(dr, child.x)?,
+                    y: alloc(dr, child.y)?,
+                })
+            };
+            Ok(Instance {
+                circuit_id: alloc(dr, instance.circuit_id.omega_j())?,
+                nested: points(dr, instance.nested.iter().copied())?,
+                nested_registry_xy: point(dr, instance.nested_registry_xy)?,
+                nested_p: point(dr, instance.nested_p)?,
+                nested_challenges_partial: point(dr, instance.nested_challenges_partial)?,
+                c: alloc(dr, instance.c)?,
+                v: alloc(dr, instance.v)?,
+                left: child(dr, instance.left)?,
+                right: child(dr, instance.right)?,
+                a_at_u: alloc(dr, instance.a_at_u)?,
+                b_at_u: alloc(dr, instance.b_at_u)?,
+            })
+        }
+
+        /// The host curve's messages allocated: its scalars as elements.
+        fn native_messages(
+            dr: &mut Dr,
+            messages: &compress::Messages<EqAffine>,
+        ) -> Result<NativeMessages<'static, Dr>> {
+            let reduction = &messages.reduction;
+            Ok(NativeMessages {
+                inner_epsilon: alloc(dr, reduction.fold.inner_epsilon)?,
+                outer_epsilon: alloc(dr, reduction.fold.outer_epsilon)?,
+                openings: alloc_all(dr, reduction.openings.iter().copied())?,
+                p_at_inverse_r: alloc(dr, reduction.p_at_inverse_r)?,
+                q_at_r: alloc(dr, reduction.q_at_r)?,
+                evaluations: alloc_all(dr, messages.batch.evaluations.iter().copied())?,
+                c: alloc(dr, messages.opening.c)?,
+            })
+        }
+
+        /// The nested curve's messages allocated: its points.
+        fn nested_messages(
+            dr: &mut Dr,
+            messages: &compress::Messages<EpAffine>,
+        ) -> Result<NestedMessages<'static, Dr, EpAffine>> {
+            let reduction = &messages.reduction;
+            let mut rounds = Vec::with_capacity(messages.opening.rounds.len());
+            for &(l, r) in &messages.opening.rounds {
+                rounds.push((point(dr, l)?, point(dr, r)?));
+            }
+            Ok(NestedMessages {
+                inner: point(dr, reduction.fold.inner)?,
+                outer: point(dr, reduction.fold.outer)?,
+                p: point(dr, reduction.p)?,
+                q: point(dr, reduction.q)?,
+                f: point(dr, messages.batch.f)?,
+                s_commitment: point(dr, messages.opening.s_commitment)?,
+                rounds,
+            })
+        }
+
+        /// One curve's native challenges in the gadget's order.
+        struct Native<F> {
+            sampled: Sampled<F>,
+            rest: Vec<F>,
+        }
+
+        impl<F: Field> Native<F> {
+            fn new(
+                sampled: Sampled<F>,
+                (weights, rho, r): (compress::revdot::fold::Weights<F>, F, F),
+                (alpha, u, beta): (F, F, F),
+                (xi, z, rounds): (F, F, Vec<F>),
+            ) -> Self {
+                let mut rest = alloc::vec![
+                    weights.mu,
+                    weights.nu,
+                    weights.mu_prime,
+                    weights.nu_prime,
+                    rho,
+                    r,
+                    alpha,
+                    u,
+                    beta,
+                    xi,
+                    z,
+                ];
+                rest.extend(rounds);
+                Native { sampled, rest }
+            }
+        }
+
+        /// The lift into the circuit field of the endoscalar a raw squeeze yields,
+        /// on either curve: what the gadget's `lift` must be.
+        fn lifted<F: Field>(raw: F) -> Fp {
+            lift_endoscalar(extract_endoscalar(raw).expect("a squeeze is in range"))
+        }
+
+        /// The gadget's challenges' lifts in the same order, by value.
+        fn flatten(challenges: &Challenges<'static, Dr>) -> (Vec<Fp>, Vec<Fp>) {
+            let value = |challenge: &super::Challenge<'static, Dr>| *challenge.lift.value().take();
+            let sampled = [
+                &challenges.sampled.w,
+                &challenges.sampled.y,
+                &challenges.sampled.z,
+                &challenges.sampled.sigma,
+            ]
+            .map(value)
+            .to_vec();
+            let mut rest = [
+                &challenges.weights.mu,
+                &challenges.weights.nu,
+                &challenges.weights.mu_prime,
+                &challenges.weights.nu_prime,
+                &challenges.rho,
+                &challenges.r,
+                &challenges.alpha,
+                &challenges.u,
+                &challenges.beta,
+                &challenges.xi,
+                &challenges.z,
+            ]
+            .map(value)
+            .to_vec();
+            rest.extend(challenges.rounds.iter().map(value));
+            (sampled, rest)
+        }
+
+        /// Replays `proof`'s transcript natively, as raw squeezes, and in the
+        /// gadget, and compares every challenge's lift.
+        fn check(setup: &Setup, proof: &crate::CompressedProof<Pasta>) {
+            let mut t = setup.absorbed();
+            let native_sampled = Sampled::squeeze(&mut t.host()).unwrap();
+            let nested_sampled = Sampled::squeeze(&mut t.nested()).unwrap();
+            let native = Native::new(
+                native_sampled,
+                replay_reduction(&proof.native.reduction, &mut t.host()),
+                replay_batch(&proof.native.batch, &mut t.host()),
+                replay_ipa(&proof.native.opening, &mut t.host()),
             );
-            restrictions.push((circuit, value));
+            let nested = Native::new(
+                nested_sampled,
+                replay_reduction(&proof.nested.reduction, &mut t.nested()),
+                replay_batch(&proof.nested.batch, &mut t.nested()),
+                replay_ipa(&proof.nested.opening, &mut t.nested()),
+            );
+
+            // The commitments the native transcript absorbed, one per run, as the
+            // points the gadget absorbs.
+            let runs: Vec<EpAffine> = t.runs().to_vec();
+            assert_eq!(runs.len(), num_runs::<TestR>(), "one commitment per run");
+            let dr = Simulator::simulate((), |dr, _| {
+                let instance = instance(dr, &proof.instance)?;
+                let header = alloc_all(dr, setup.header.iter().copied())?;
+                let native_messages = native_messages(dr, &proof.native)?;
+                let nested_messages = nested_messages(dr, &proof.nested)?;
+                let runs = points(dr, runs.iter().copied())?;
+                let (host, scalar) = replay(
+                    dr,
+                    Pasta::circuit_poseidon(crate::pasta::baked()),
+                    &instance,
+                    &header,
+                    &native_messages,
+                    &nested_messages,
+                    &runs,
+                )?;
+
+                let (sampled, rest) = flatten(&host);
+                let Sampled { w, y, z, sigma } = native.sampled;
+                assert_eq!(sampled, [w, y, z, sigma].map(lifted).to_vec());
+                assert_eq!(
+                    rest,
+                    native
+                        .rest
+                        .iter()
+                        .map(|&raw| lifted(raw))
+                        .collect::<Vec<_>>()
+                );
+
+                let (sampled, rest) = flatten(&scalar);
+                let Sampled { w, y, z, sigma } = nested.sampled;
+                assert_eq!(sampled, [w, y, z, sigma].map(lifted).to_vec());
+                assert_eq!(
+                    rest,
+                    nested
+                        .rest
+                        .iter()
+                        .map(|&raw| lifted(raw))
+                        .collect::<Vec<_>>()
+                );
+                Ok(())
+            })
+            .unwrap();
+            std::println!(
+                "transcript: {} gates, {} constraints",
+                dr.num_gates(),
+                dr.num_constraints()
+            );
+        }
+
+        #[test]
+        fn squeezes_the_native_challenges() {
+            let setup = Setup::new();
+            check(&setup, &setup.proof);
+        }
+
+        #[test]
+        fn follows_a_tampered_message() {
+            let setup = Setup::new();
+            let mut tampered = setup.proof.clone();
+            tampered.native.reduction.fold.inner_epsilon += Fp::ONE;
+            tampered.nested.batch.evaluations[1] += Fq::ONE;
+            check(&setup, &tampered);
         }
     }
-
-    let mut b = P::Scalar::ONE;
-    let mut cur = claim.point;
-    for u_j in lifted_squeezed.rounds.iter().rev() {
-        b *= P::Scalar::ONE + *u_j * cur;
-        cur = cur.square();
-    }
-    let inverse_scaled = messages
-        .opening
-        .rounds
-        .iter()
-        .zip(&lifted_squeezed.rounds)
-        .map(|(&(l, _), u_j)| {
-            u_j.invert()
-                .map(|inverse| (l * inverse).to_affine())
-                .ok_or_else(|| Error::InvalidWitness("IPA round challenge is zero".into()))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(SideWitness {
-        #[cfg(test)]
-        kinds,
-        restrictions,
-        masked,
-        restriction_at_w,
-        inverse_scaled,
-        g_prime,
-        #[cfg(test)]
-        fixed: Fixed {
-            g_0: params.g[0],
-            u: params.u,
-            offset: params.g[1],
-        },
-        raw: raw_squeezed,
-        cbz: messages.opening.c * b * lifted_squeezed.ipa_z,
-        v: claim.value,
-    })
 }
 
-/// The native targets as elements, for
-/// [`ky_values`](crate::internal::native::claims::ky_values).
-pub(crate) struct NativeTargets<'dr, D: Driver<'dr>> {
-    pub c: Element<'dr, D>,
-    pub unified_bridge: Element<'dr, D>,
-    pub unified: Element<'dr, D>,
-    pub one: Element<'dr, D>,
-    pub zero: Element<'dr, D>,
-}
-
-impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
-    type Ky = Element<'dr, D>;
-
-    fn raw_c(&self) -> impl Iterator<Item = Self::Ky> {
-        once(self.c.clone())
-    }
-
-    fn application_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // A proof folds its own application claim, so its verifier has no
-        // application target.
-        core::iter::empty()
-    }
-
-    fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        once(self.unified_bridge.clone())
-    }
-
-    fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile has no online batch to export for, so the
-        // `compute_v` circuit's instance is the unified one.
-        once(self.unified.clone())
-    }
-
-    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
-        once(self.unified.clone())
-    }
-
-    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile has no online batch, so no online helper.
-        core::iter::empty()
-    }
-
-    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq commitment and has no
-        // online batch, so the circuit's instance is the unified one.
-        once(self.unified.clone())
-    }
-
-    fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone {
-        once(self.one.clone())
-    }
-
-    fn statement_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
-        // The compressed proofs decompressed are the standard profile's,
-        // which has no statement circuit and so no statement value.
-        core::iter::empty()
-    }
-
-    fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
-        // Nor a binding circuit.
-        core::iter::empty()
-    }
-
-    fn zero(&self) -> Self::Ky {
-        self.zero.clone()
-    }
-}
-
-/// The nested targets as elements.
-pub(crate) struct NestedTargets<'dr, D: Driver<'dr>> {
-    pub c: Element<'dr, D>,
-    pub unified: Element<'dr, D>,
-    pub one: Element<'dr, D>,
-    pub zero: Element<'dr, D>,
-}
-
-impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
-    type Ky = Element<'dr, D>;
-
-    fn raw_c(&self) -> impl Iterator<Item = Self::Ky> {
-        once(self.c.clone())
-    }
-
-    fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone {
-        once(self.one.clone())
-    }
-
-    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
-        once(self.unified.clone())
-    }
-
-    fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq opening and has no
-        // online batch, so the circuit's instance is the unified one.
-        once(self.unified.clone())
-    }
-
-    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // Nor an online helper.
-        core::iter::empty()
-    }
-
-    fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
-        // The standard profile's nested extension has no binding circuit.
-        core::iter::empty()
-    }
-
-    fn zero(&self) -> Self::Ky {
-        self.zero.clone()
-    }
-}
-
-#[cfg(test)]
 fn elements<'dr, D: Driver<'dr>>(
     dr: &mut D,
     values: impl IntoIterator<Item = D::F>,
@@ -695,12 +792,10 @@ fn elements<'dr, D: Driver<'dr>>(
         .collect()
 }
 
-#[cfg(test)]
 fn element<'dr, D: Driver<'dr>>(dr: &mut D, value: D::F) -> Result<Element<'dr, D>> {
     Element::alloc(dr, &mut (), D::just(|| value))
 }
 
-#[cfg(test)]
 fn points<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     values: impl IntoIterator<Item = P>,
@@ -711,7 +806,6 @@ fn points<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
         .collect()
 }
 
-#[cfg(test)]
 fn point<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     value: P,
@@ -721,14 +815,12 @@ fn point<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 
 /// The endoscalar of a raw challenge, allocated from its bits on the side
 /// that did not squeeze it.
-#[cfg(test)]
 fn endoscalar<'dr, D: Driver<'dr>, F: Field>(dr: &mut D, raw: F) -> Result<Endoscalar<'dr, D>> {
     let endo = ragu_primitives::extract_endoscalar(raw)?;
     Endoscalar::alloc(dr, D::just(|| endo))
 }
 
 /// A point's coordinates as elements.
-#[cfg(test)]
 fn coordinates<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     point: &Point<'dr, D, P>,
@@ -743,7 +835,6 @@ fn coordinates<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 
 /// The wire bindings as the revdot gadget takes them, from the side
 /// witness's masked lists.
-#[cfg(test)]
 fn bindings<'dr, D: Driver<'dr>>(
     dr: &mut D,
     masked: &[(usize, Vec<usize>, Vec<D::F>)],
@@ -761,7 +852,6 @@ fn bindings<'dr, D: Driver<'dr>>(
 
 /// Binds the elements at `positions` of `binding`'s expected values to
 /// `gadgets`: the values the instance supplies rather than the registry.
-#[cfg(test)]
 fn bind_expected<'dr, D: Driver<'dr>>(
     dr: &mut D,
     binding: &revdot::Binding<'dr, D>,
@@ -778,7 +868,6 @@ fn bind_expected<'dr, D: Driver<'dr>>(
 /// restriction at the compression's $w$, the batch polynomial at the
 /// fuse's $u$ and the accumulator's $a$ and $b$ there, with the values the
 /// side holds.
-#[cfg(test)]
 fn instance_claims<'dr, D: Driver<'dr>>(
     base: usize,
     w: &Element<'dr, D>,
@@ -804,7 +893,6 @@ fn instance_claims<'dr, D: Driver<'dr>>(
 /// What one side's scalar checks leave: the batched claim's value, the
 /// prover's $c$ and the IPA's $c b z$, the full-width scalars the other
 /// side scales by.
-#[cfg(test)]
 struct ScalarChecks<'dr, D: Driver<'dr>> {
     v: Element<'dr, D>,
     c: Element<'dr, D>,
@@ -813,7 +901,6 @@ struct ScalarChecks<'dr, D: Driver<'dr>> {
 
 /// One side's scalar checks: the reduction, the instance's openings, the
 /// batch and the IPA's scalars, over the challenges' lifts.
-#[cfg(test)]
 fn scalar_checks<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     public: &revdot::Public<'dr, D>,
@@ -877,7 +964,6 @@ fn scalar_checks<'dr, D: Driver<'dr>, K: Rank>(
 /// endoscalars, with `reduction` the fold's two error commitments and $p$
 /// and $q$, and `extra` the instance's four opened commitments.
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
 fn point_checks<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     claims: Vec<derive::Claim<'dr, D, P>>,
@@ -905,7 +991,6 @@ fn point_checks<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 }
 
 /// The circuit-field side of the decompressed verifier.
-#[cfg(test)]
 pub(crate) fn circuit_field_side<'dr, D, C, K, const HEADER_SIZE: usize>(
     dr: &mut D,
     params: &'dr C::Params,
@@ -1308,7 +1393,6 @@ where
 }
 
 /// The scalar-field side of the decompressed verifier.
-#[cfg(test)]
 pub(crate) fn scalar_field_side<'dr, D, C, K>(dr: &mut D, witness: &Witness<C>) -> Result<()>
 where
     D: Driver<'dr, F = C::ScalarField>,
@@ -1600,6 +1684,93 @@ where
     Ok(())
 }
 
-#[cfg(test)]
-#[path = "../../tests/decompression/circuit.rs"]
-mod tests;
+mod tests {
+    //! The decompressed verifier end to end on a real compressed proof: both
+    //! sides' circuits accept the honest proof, and a message or statement
+    //! tampered with after the witness is prepared fails one of them. The
+    //! tamperings leave the witness's $G'$ honest: these whole-side circuits
+    //! take $G'$ as a witness point they do not bind, which the chunk circuits
+    //! do through the step binding, so a prover who recomputes $G'$ to fit is
+    //! not covered here.
+
+    use ragu_core::pasta::{Fp, Fq, Pasta};
+    use ragu_primitives::Simulator;
+    use udon::field::Field;
+
+    use super::{circuit_field_side, scalar_field_side};
+    use crate::{
+        CompressedProof,
+        decompress::{
+            prover::Witness,
+            support::{HEADER_SIZE, Setup, TestR},
+        },
+    };
+
+    fn witness(setup: &Setup) -> Witness<Pasta> {
+        let pcd = setup.proof.clone().carry(());
+        Witness::prepare::<TestR, HEADER_SIZE, _, ()>(&setup.app, &pcd).expect("the proof verifies")
+    }
+
+    /// Runs both sides on `witness`; `Ok` with the two sides' gate counts if
+    /// both accept.
+    fn run(witness: &Witness<Pasta>) -> ragu_core::Result<(usize, usize)> {
+        let circuit = Simulator::simulate((), |dr, _| {
+            circuit_field_side::<_, Pasta, TestR, HEADER_SIZE>(
+                dr,
+                crate::pasta::baked_aggregator(),
+                witness,
+            )
+        })?;
+        let scalar = Simulator::simulate((), |dr, _| {
+            scalar_field_side::<_, Pasta, TestR>(dr, witness)
+        })?;
+        Ok((circuit.num_gates(), scalar.num_gates()))
+    }
+
+    #[test]
+    fn accepts_the_honest_proof() {
+        let setup = Setup::new();
+        let witness = witness(&setup);
+        let (circuit, scalar) = run(&witness).expect("both sides accept");
+        std::println!("circuit-field side: {circuit} gates; scalar-field side: {scalar} gates");
+    }
+
+    #[test]
+    fn rejects_tampering() {
+        let setup = Setup::new();
+        let honest = witness(&setup);
+        let tamperings: [fn(&mut CompressedProof<Pasta>); 6] = [
+            |proof| proof.native.reduction.openings[0] += Fp::ONE,
+            |proof| proof.native.opening.c += Fp::ONE,
+            |proof| proof.nested.reduction.fold.inner_epsilon += Fq::ONE,
+            |proof| proof.nested.batch.evaluations[3] += Fq::ONE,
+            |proof| proof.instance.c += Fp::ONE,
+            |proof| proof.instance.left.x += Fp::ONE,
+        ];
+        for tamper in tamperings {
+            let mut tampered = Witness {
+                proof: honest.proof.clone(),
+                header: honest.header.clone(),
+                fuse: honest.fuse,
+                native: honest.native.clone(),
+                nested: honest.nested.clone(),
+                ab_terms: honest.ab_terms.clone(),
+                runs: honest.runs.clone(),
+            };
+            tamper(&mut tampered.proof);
+            assert!(run(&tampered).is_err(), "a tampered proof fails a side");
+        }
+
+        let mut tampered = Witness {
+            proof: honest.proof.clone(),
+            header: honest.header.clone(),
+            fuse: honest.fuse,
+            native: honest.native.clone(),
+            nested: honest.nested.clone(),
+            ab_terms: honest.ab_terms.clone(),
+            runs: honest.runs.clone(),
+        };
+        tampered.header[0] += Fp::ONE;
+        assert!(run(&tampered).is_err(), "a tampered statement fails a side");
+    }
+}

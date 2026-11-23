@@ -90,9 +90,9 @@ use ragu_primitives::{
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::{
-    derive::digit_width,
+    circuits::{Prepared, View},
+    gadgets::derive::digit_width,
     program::challenges_per_curve,
-    run::{Prepared, View},
     side::{Native, Nested, Side},
 };
 pub(crate) use crate::compress::runs::{

@@ -5,13 +5,18 @@
 //! registry $m(W, X, Y)$ itself. Every evaluation it takes is a value of
 //! one of nine restrictions $m(W, a, b)$ at some $W$, on each field:
 //!
-//! | Restriction | Opened at | The verifier's use |
-//! |---|---|---|
-//! | $(r, y_c)$ | each internal circuit's $\omega_j$ | the claims' wiring restrictions |
-//! | $(x, y)$ | each internal circuit's $\omega_j$, $w$, the proof's own circuit's, $u$, $w_c$ | the query stage's fixed registry, $m(w, x, y)$, the proof's own circuit's selector, the eval stage's, the instance's opening |
-//! | $(x_l, y_l)$, $(x_r, y_r)$ | $w$ | the children's registries at the proof's $w$ |
-//! | $(x_l, y)$, $(x_r, y)$ | $w$ | the proof's registry at the children's $x$ |
-//! | $(x_l, u)$, $(x_r, u)$, $(u, y)$ | $w$ | the eval stage's registry values |
+//! - $(r, y_c)$, opened at each internal circuit's $\omega_j$: the claims'
+//!   wiring restrictions.
+//! - $(x, y)$, opened at each internal circuit's $\omega_j$ for the query
+//!   stage's fixed registry, at $w$ for $m(w, x, y)$, at the proof's own
+//!   circuit's for its selector, at $u$ for the eval stage's $m(u, x, y)$
+//!   and at $w_c$ for the instance's opening.
+//! - $(x_l, y_l)$ and $(x_r, y_r)$, opened at $w$: the children's
+//!   registries at the proof's $w$.
+//! - $(x_l, y)$ and $(x_r, y)$, opened at $w$: the proof's registry at the
+//!   children's $x$.
+//! - $(x_l, u)$, $(x_r, u)$ and $(u, y)$, opened at $w$: the eval stage's
+//!   registry values.
 //!
 //! Here $w$, $x$, $y$ and $u$ are the decompressed proof's fuse
 //! challenges, $x_l$, $y_l$, $x_r$ and $y_r$ its children's, and $r$,
@@ -30,11 +35,8 @@
 
 use alloc::vec::Vec;
 
-use ragu_core::{Cycle, Result};
-use ragu_primitives::{extract_endoscalar, lift_endoscalar};
-use udon::{curve::EndomorphismAffine as Affine, field::Field};
+use udon::field::Field;
 
-use super::circuit::{SideWitness, Witness as Prepared};
 use crate::{
     internal::{native, nested},
     profile::{
@@ -354,38 +356,6 @@ impl Values {
         self.input_stage().div_ceil(2) + self.query_stage().div_ceil(2)
     }
 
-    /// The query stage's values a side's chunks read, as the native
-    /// verifier computed them for the proof `own` was prepared from: the
-    /// claims' restrictions, the instance's opening and the wire bindings'
-    /// registry values. The step's challenges and the mesh's
-    /// intersections, which only its fuse knows, are left zero.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `own` does not hold the verifier's bindings in its order,
-    /// the preamble's, the query's, then the eval's, or if a claim names
-    /// another circuit than an internal one.
-    pub(crate) fn evaluations<P: Affine>(self, own: &SideWitness<P>) -> Vec<P::Scalar> {
-        let mut stage = alloc::vec![P::Scalar::ZERO; self.query_stage()];
-        for &(circuit, value) in &own.restrictions {
-            stage[Self::value_at(self.claim(usize::from(circuit)))] = value;
-        }
-        stage[Self::value_at(self.at_w_c())] = own.restriction_at_w;
-        let (query, eval) = (&own.masked[1].2, &own.masked[2].2);
-        let wires = self.query_binding();
-        assert_eq!(query.len(), wires.len(), "the query binding's values");
-        for (wire, &value) in wires.into_iter().zip(query) {
-            stage[Self::value_at(wire)] = value;
-        }
-        assert_eq!(eval.len(), 6, "the eval binding's values");
-        for (wire, &value) in self.eval_binding().into_iter().zip(eval) {
-            if let Some(wire) = wire {
-                stage[Self::value_at(wire)] = value;
-            }
-        }
-        stage
-    }
-
     /// The openings: both ends of each intersection, then one per
     /// evaluation.
     const fn openings(self) -> usize {
@@ -603,94 +573,16 @@ pub(crate) fn stages<F: Field, P: Profile, S: Side>(
     (input, query)
 }
 
-/// A raw compression challenge's lift, as the verifier's transcript
-/// squeezes it.
-fn lift<F: Field>(raw: F) -> Result<F> {
-    Ok(lift_endoscalar(extract_endoscalar(raw)?))
-}
-
-/// The coordinates and points both sides share, after the inherited
-/// wires, which the fuse fills: the compression's $r$ and $y$ of this
-/// side's curve, the fuse's $x$ and $y$, the children's, the fuse's $u$
-/// and $w$ and the compression's $w$.
-fn shared<P: Affine>(
-    own: &SideWitness<P>,
-    [w, x, y, u]: [P::Scalar; 4],
-    children: [[P::Scalar; 2]; 2],
-) -> Result<Vec<P::Scalar>> {
-    let mut inputs = alloc::vec![P::Scalar::ZERO; input::NESTED];
-    inputs[input::R] = lift(own.raw.r)?;
-    inputs[input::Y_C] = lift(own.raw.sampled.y)?;
-    inputs[input::X] = x;
-    inputs[input::Y] = y;
-    [inputs[input::LEFT_X], inputs[input::LEFT_Y]] = children[0];
-    [inputs[input::RIGHT_X], inputs[input::RIGHT_Y]] = children[1];
-    inputs[input::U] = u;
-    inputs[input::W] = w;
-    inputs[input::W_C] = lift(own.raw.sampled.w)?;
-    Ok(inputs)
-}
-
-/// The input stage's values as a side's chunks view them outside a fuse:
-/// `inputs` at their wires, the tag, the inherited coordinates and the
-/// other side's commitments, which only the step's fuse knows, left zero.
-pub(crate) fn input_stage<F: Field>(values: Values, inputs: &[F]) -> Vec<F> {
-    let mut stage = alloc::vec![F::ZERO; values.input_stage()];
-    stage[Values::input_at(0)..Values::input_at(inputs.len())].copy_from_slice(inputs);
-    stage
-}
-
-/// The native input stage's values for the compressed proof `witness`
-/// was prepared from, the inherited coordinates left for the fuse.
-///
-/// # Errors
-///
-/// Fails if a compression challenge is outside the endoscalar range,
-/// which the proof's preparation has already refused.
-pub(crate) fn native_inputs<C: Cycle>(witness: &Prepared<C>) -> Result<Vec<C::CircuitField>> {
-    let instance = &witness.proof.instance;
-    let fuse = &witness.fuse;
-    let (left, right) = (instance.left, instance.right);
-    let mut inputs = shared(
-        &witness.native,
-        [fuse.w, fuse.x, fuse.y, fuse.u],
-        [[left.x, left.y], [right.x, right.y]],
-    )?;
-    inputs.push(instance.circuit_id.omega_j());
-    debug_assert_eq!(inputs.len(), input::NATIVE);
-    Ok(inputs)
-}
-
-/// The nested input stage's values, as [`native_inputs`], at the nested
-/// counterparts of the fuse's challenges.
-///
-/// # Errors
-///
-/// As [`native_inputs`], and if a fuse challenge has no nested
-/// counterpart, which the preparation has refused too.
-pub(crate) fn nested_inputs<C: Cycle>(witness: &Prepared<C>) -> Result<Vec<C::ScalarField>> {
-    let instance = &witness.proof.instance;
-    let fuse = &witness.fuse;
-    let (left, right) = (instance.nested_left, instance.nested_right);
-    shared(
-        &witness.nested,
-        [
-            nested::challenge::<C>(fuse.w)?,
-            nested::challenge::<C>(fuse.x)?,
-            nested::challenge::<C>(fuse.y)?,
-            nested::challenge::<C>(fuse.u)?,
-        ],
-        [[left.x, left.y], [right.x, right.y]],
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use ragu_circuits::{
         polynomials::AggregatorRank,
         staging::{Stage, StageExt},
     };
-    use ragu_core::pasta::{Fp, Fq, Pasta};
+    use ragu_core::{
+        Result,
+        pasta::{Fp, Fq, Pasta},
+    };
 
     use super::*;
     use crate::{

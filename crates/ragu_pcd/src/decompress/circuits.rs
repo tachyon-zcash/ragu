@@ -1,30 +1,65 @@
-//! Running the chunk program: each [`Chunk`] descriptor executed over the
-//! loaded stages, as a circuit that holds its results to the stages or as
-//! the prover's native run that fills them.
+//! The chunk circuits: one circuit per group of chunks of a side's
+//! schedule ([`Schedule::circuits`]), loading the side's stages and
+//! holding the chunks' results to their wires.
 //!
-//! [`execute`] runs one chunk of a side and returns what it writes; a
-//! chunk circuit enforces those writes equal to the work, lifts,
-//! transcript and digits stages' wires, and [`Prepared::run`] stores them.
-//! The chunk kinds are the same on both sides; what differs, the targets
-//! and their order, goes through the [`Side`].
+//! Every chunk circuit of a side has the same shape: the stages loaded
+//! unenforced, as the fuse's endoscaling steps load theirs, then its
+//! chunks' own gates, in order. A [`Circuit`] loads the aggregator's two
+//! online stages ([`OnlineInputStage`] and [`OnlineQueryStage`]), then the
+//! side's front stages (see [`Front`]), the lifts stage and the work stage;
+//! a [`TranscriptCircuit`], for transcript chunks, loads the transcript
+//! stage after them as well, so that only those chunks pay for the sponge
+//! states; a [`DigitsCircuit`], for the digits chunks, loads the digits
+//! stage after the work stage instead. Which chunks a circuit runs is
+//! fixed by its index into the schedule, so the family of chunk circuits
+//! is as fixed as the schedule, and the stages' masks bind the layout the
+//! chunks read.
+//!
+//! A chunk circuit at rank `R` verifies a compressed proof at rank `K`:
+//! its schedule is cut for `R`'s gate budget, and what it loads and checks
+//! is sized by `K`. An aggregator runs the chunks at
+//! [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) over
+//! wallets' proofs at the wallet rank.
+//!
+//! Beside the chunks, a [`StatementCircuit`] loads the online stages and
+//! the instance stage, and no other, and exposes the output header the
+//! chunks verified, then the step binding, as its public output, the one
+//! place the decompressed statement reaches a claim; and a
+//! [`BindingCircuit`] loads the stages a [`Circuit`] does and exposes, off
+//! the work stage, the other side's stage commitments the side absorbed or
+//! recomputed and what it took of the step's own online polynomials
+//! ([`Regions::exposed`](super::program::Regions::exposed) and
+//! [`Regions::exposed_elements`](super::program::Regions::exposed_elements))
+//! as its public output, which the proof's consumer holds to those
+//! commitments and openings through the circuit's claim (see
+//! [`Binding`](crate::profile::Binding)).
+//!
+//! Every chunk circuit runs its chunks through [`execute`], over the
+//! loaded stages, and holds what each writes to the work, lifts,
+//! transcript and digits stages' wires ([`enforce`]). The prover's
+//! native run of the same chunks ([`Prepared::run`]) stores those writes
+//! instead. The chunk kinds are the same on both sides; what differs, the
+//! targets and their order, goes through the [`Side`].
 
 use alloc::{sync::Arc, vec::Vec};
+use core::marker::PhantomData;
 
-use ragu_circuits::polynomials::Rank;
+use ragu_circuits::{
+    WithAux,
+    polynomials::Rank,
+    staging::{MultiStage, MultiStageCircuit, StageBuilder},
+};
 use ragu_core::{
     Coeff, Cycle, Error, Result,
-    drivers::{
-        Driver, DriverValue,
-        emulator::{Emulator, Wireless},
-    },
-    maybe::{Always, Maybe},
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
 };
 use ragu_primitives::{
     Boolean, Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
     consistent::Consistent,
-    extract_endoscalar,
     poseidon::{Sponge, SpongeState},
-    vec::{FixedVec, Len},
+    vec::{ConstLen, FixedVec, Len},
 };
 use udon::{
     curve::{EndomorphismAffine as Affine, Projective},
@@ -32,32 +67,509 @@ use udon::{
 };
 
 use super::{
-    batch,
-    circuit::{SideWitness, Witness},
-    derive::{self, Digits},
-    ipa, online,
+    gadgets::{
+        batch,
+        derive::{self, Digits},
+        ipa, revdot,
+    },
+    online,
     program::{
-        Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, FixedPointSrc, Op, PointSrc, ScalarRef,
-        Schedule, Step, squeezed,
+        Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, FixedPointSrc, Last, Op, PointSrc,
+        ScalarRef, Schedule, Step, squeezed,
     },
-    revdot,
-    side::{Native, Nested, Side},
-    stages::{self, MessageScalars, Values},
-};
-use crate::{
-    Application, CompressedPcd, SelectableBackend,
-    compress::{
-        instance::OPENED,
-        revdot::{
-            OpeningClaim,
-            claims::Kind,
-            fold::{Derived, Weights},
-        },
+    side::Side,
+    stages::{
+        self, DigitsStage, Front, InstanceStage, LiftsStage, MessageScalars, OnlineInputStage,
+        OnlineQueryStage, TranscriptStage, Values, WorkStage, step,
     },
-    header::Header,
-    ipa::IpaCycle,
-    profile::{ProfiledCycle, Standard},
 };
+use crate::compress::{
+    instance::OPENED,
+    revdot::{
+        OpeningClaim,
+        claims::Kind,
+        fold::{Derived, Weights},
+    },
+};
+
+/// The last stage circuit `index` of `schedule` loads, which says whether
+/// it is a [`Circuit`], a [`TranscriptCircuit`] or a [`DigitsCircuit`].
+pub(crate) fn last(schedule: &Schedule, index: usize) -> Last {
+    schedule.circuits[index].last
+}
+
+/// What the chunk circuit types hold.
+struct Inner<'p, C: Cycle> {
+    index: usize,
+    schedule: Arc<Schedule>,
+    params: &'p C::Params,
+}
+
+impl<C: Cycle> Clone for Inner<'_, C> {
+    fn clone(&self) -> Self {
+        Inner {
+            index: self.index,
+            schedule: self.schedule.clone(),
+            params: self.params,
+        }
+    }
+}
+
+impl<'p, C: Cycle> Inner<'p, C> {
+    fn new(index: usize, schedule: Arc<Schedule>, params: &'p C::Params, last: Last) -> Self {
+        assert!(
+            index < schedule.circuits.len(),
+            "circuit {index} is within the schedule's {}",
+            schedule.circuits.len()
+        );
+        assert_eq!(
+            schedule.circuits[index].last, last,
+            "circuit {index} loads the stages of its kind"
+        );
+        Inner {
+            index,
+            schedule,
+            params,
+        }
+    }
+
+    /// Runs the circuit's chunks over the loaded stages, in order, and
+    /// holds their writes.
+    fn synthesize<'dr, D, S, K, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        loaded: Loaded<'_, 'dr, D, S::P>,
+        witness: DriverValue<D, &Prepared<C, S>>,
+    ) -> Result<()>
+    where
+        'p: 'dr,
+        D: Driver<'dr, F = S::F>,
+        S: Side<C>,
+        K: Rank,
+    {
+        let ctx = Ctx {
+            loaded,
+            schedule: &self.schedule,
+            generators: S::generators(self.params),
+            u: S::u(self.params),
+            poseidon: S::poseidon(self.params),
+            witness,
+        };
+        let plan = &self.schedule.circuits[self.index];
+        for &index in &plan.chunks {
+            let chunk = &self.schedule.chunks[index];
+            let writes = execute::<_, C, S, K, HEADER_SIZE>(dr, chunk, &ctx)?;
+            enforce(dr, loaded, writes)?;
+        }
+        Ok(())
+    }
+}
+
+/// Defines a chunk circuit type whose last stage is `$Last`, loaded after
+/// the common four as `$extra`, with `$kind` its [`Last`].
+macro_rules! chunk_circuit {
+    (
+        $(#[$meta:meta])*
+        $Circuit:ident, $kind:expr, $Last:ident, $extra:ident,
+        |$loaded:ident| $view:expr
+    ) => {
+        $(#[$meta])*
+        pub(crate) struct $Circuit<'p, C: Cycle, S, K, R, const HEADER_SIZE: usize> {
+            inner: Inner<'p, C>,
+            _marker: PhantomData<fn() -> (S, K, R)>,
+        }
+
+        impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
+            for $Circuit<'_, C, S, K, R, HEADER_SIZE>
+        {
+            fn clone(&self) -> Self {
+                $Circuit {
+                    inner: self.inner.clone(),
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'p, C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+            $Circuit<'p, C, S, K, R, HEADER_SIZE>
+        {
+            /// The circuit at `index` of `schedule`.
+            ///
+            /// # Panics
+            ///
+            /// Panics if `index` is not a circuit of the schedule, or runs
+            /// chunks of another kind.
+            pub(crate) fn new(
+                index: usize,
+                schedule: Arc<Schedule>,
+                params: &'p C::Params,
+            ) -> MultiStage<S::F, R, Self> {
+                MultiStage::new($Circuit {
+                    inner: Inner::new(index, schedule, params, $kind),
+                    _marker: PhantomData,
+                })
+            }
+        }
+
+        impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+            MultiStageCircuit<S::F, R> for $Circuit<'_, C, S, K, R, HEADER_SIZE>
+        {
+            type Last = $Last<C, S, K, R, HEADER_SIZE>;
+            type Instance<'source> = ();
+            type Witness<'source> = &'source Prepared<C, S>;
+            type Output = S::Output;
+            type Aux<'source> = ();
+
+            fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+                &self,
+                dr: &mut D,
+                _: DriverValue<D, ()>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Ok(S::output(dr))
+            }
+
+            fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+                &self,
+                dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+                witness: DriverValue<D, Self::Witness<'source>>,
+            ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+            where
+                Self: 'dr,
+            {
+                let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, S, R>>()?;
+                let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, S, R>>()?;
+                let (front, dr) = <S as Front<C, K, R, HEADER_SIZE>>::add(dr)?;
+                let (lifts, dr) = dr.add_stage::<LiftsStage<C, S, K, R, HEADER_SIZE>>()?;
+                let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
+                let ($extra, dr) = chunk_circuit!(@extra dr, $Last, $extra, C, S, K, R, HEADER_SIZE);
+                let dr = dr.finish();
+                let online_input =
+                    online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+                let online_query =
+                    online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
+                let front = <S as Front<C, K, R, HEADER_SIZE>>::load(front, dr, &witness)?;
+                let lifts = lifts.unenforced(dr, witness.as_ref().map(|w| &w.lifts))?;
+                let work = work.unenforced(dr, witness.as_ref().map(|w| &w.work))?;
+                let $extra = chunk_circuit!(@load dr, witness, $extra, $extra);
+                let $loaded = (&front, &lifts, &work, &$extra);
+                let mut loaded = $view;
+                loaded.online_input = View::new(&online_input);
+                loaded.online_query = View::new(&online_query);
+                self.inner
+                    .synthesize::<_, S, K, HEADER_SIZE>(dr, loaded, witness)?;
+                Ok(WithAux::new(S::output(dr), D::unit()))
+            }
+        }
+    };
+    (@extra $dr:ident, WorkStage, $extra:ident, $C:ty, $S:ty, $K:ty, $R:ty, $H:expr) => {
+        ((), $dr)
+    };
+    (@extra $dr:ident, $Last:ident, $extra:ident, $C:ty, $S:ty, $K:ty, $R:ty, $H:expr) => {
+        $dr.add_stage::<$Last<$C, $S, $K, $R, $H>>()?
+    };
+    (@load $dr:ident, $witness:ident, $extra:ident, transcript) => {
+        $extra.unenforced($dr, $witness.as_ref().map(|w| &w.transcript))?
+    };
+    (@load $dr:ident, $witness:ident, $extra:ident, digits) => {
+        $extra.unenforced($dr, $witness.as_ref().map(|w| &w.digits))?
+    };
+    (@load $dr:ident, $witness:ident, $extra:ident, none) => {{
+        let _ = &$extra;
+    }};
+}
+
+chunk_circuit!(
+    /// The chunk circuit at an index of side `S`'s schedule, for chunks
+    /// that need no stage past the work stage.
+    Circuit, Last::Work, WorkStage, none,
+    |loaded| {
+        let (front, lifts, work, ()) = loaded;
+        Loaded {
+            instance: front.instance(),
+            messages: front.messages(),
+            lifts: View::new(lifts),
+            work: View::new(work),
+            transcript: View::empty(),
+            digits: View::empty(),
+            online_input: View::empty(),
+            online_query: View::empty(),
+        }
+    }
+);
+
+chunk_circuit!(
+    /// The chunk circuit at an index of side `S`'s schedule, for transcript
+    /// chunks: loads the transcript stage as well.
+    TranscriptCircuit, Last::Transcript, TranscriptStage, transcript,
+    |loaded| {
+        let (front, lifts, work, transcript) = loaded;
+        Loaded {
+            instance: front.instance(),
+            messages: front.messages(),
+            lifts: View::new(lifts),
+            work: View::new(work),
+            transcript: View::new(transcript),
+            digits: View::empty(),
+            online_input: View::empty(),
+            online_query: View::empty(),
+        }
+    }
+);
+
+chunk_circuit!(
+    /// The chunk circuit at an index of side `S`'s schedule, for digits
+    /// chunks: loads the digits stage as well.
+    DigitsCircuit, Last::Digits, DigitsStage, digits,
+    |loaded| {
+        let (front, lifts, work, digits) = loaded;
+        Loaded {
+            instance: front.instance(),
+            messages: front.messages(),
+            lifts: View::new(lifts),
+            work: View::new(work),
+            transcript: View::empty(),
+            digits: View::new(digits),
+            online_input: View::empty(),
+            online_query: View::empty(),
+        }
+    }
+);
+
+/// The statement circuit of side `S`: the circuit whose public output is
+/// the output header of the compressed proof the chunks verified, then the
+/// step binding ([`step`]), both read off the instance stage. The chunks
+/// bind the header to the proof they verify, so a claim on this circuit's
+/// output is a claim on the decompressed proof's statement, which the
+/// decompression step's verifier makes through the circuit's $k(y)$ (see
+/// [`statement_ky`](crate::internal::native::stages::preamble::ProofInputs::statement_ky)).
+/// The same claim sets the step binding: the flag to whether the proof is
+/// the decompression step's, and the opening to that step's own, which the
+/// chunks check the IPA's $s(X)$ against.
+pub(crate) struct StatementCircuit<C: Cycle, S, K, R, const HEADER_SIZE: usize> {
+    schedule: Arc<Schedule>,
+    _marker: PhantomData<fn() -> (C, S, K, R)>,
+}
+
+impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
+    for StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    fn clone(&self) -> Self {
+        StatementCircuit {
+            schedule: self.schedule.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    /// The statement circuit over `schedule`'s instance stage.
+    pub(crate) fn new(schedule: Arc<Schedule>) -> MultiStage<S::F, R, Self> {
+        MultiStage::new(StatementCircuit {
+            schedule,
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
+    for StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    type Last = InstanceStage<C, S, K, R, HEADER_SIZE>;
+    /// The output header and the step binding the instance stage holds.
+    type Instance<'source> = (
+        FixedVec<S::F, ConstLen<HEADER_SIZE>>,
+        FixedVec<S::F, ConstLen<{ step::LEN }>>,
+    );
+    type Witness<'source> = &'source Prepared<C, S>;
+    type Output = Kind![S::F; (
+        FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>,
+        FixedVec<Element<'_, _>, ConstLen<{ step::LEN }>>,
+    )];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let header = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|(header, _)| header[i]))
+        })?;
+        let step = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|(_, step)| step[i]))
+        })?;
+        Ok((header, step))
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+    where
+        Self: 'dr,
+    {
+        let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, S, R>>()?;
+        let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, S, R>>()?;
+        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
+        let dr = dr.finish();
+        // The online stages come first in every circuit of the side; this
+        // one reads nothing off them.
+        online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+        online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
+        let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
+        let layout = self.schedule.layout.instance;
+        let read = |span: super::stages::Span| {
+            span.positions()
+                .map(|position| instance.elements[position].clone())
+                .collect::<alloc::vec::Vec<_>>()
+        };
+        let header = FixedVec::try_from(read(layout.output_header))?;
+        let step = FixedVec::try_from(read(layout.step))?;
+        Ok(WithAux::new((header, step), D::unit()))
+    }
+}
+
+/// Length type for the elements side `S`'s binding circuit exposes after
+/// its points: [`Side::EXPOSED_ELEMENTS`].
+pub(crate) struct ExposedElements<C, S>(PhantomData<fn() -> (C, S)>);
+
+impl<C: Cycle, S: Side<C>> Len for ExposedElements<C, S> {
+    fn len() -> usize {
+        S::EXPOSED_ELEMENTS
+    }
+}
+
+/// Length type for the points side `S`'s binding circuit exposes for a
+/// proof at rank `K`: [`Side::exposed`].
+pub(crate) struct Exposed<C, S, K>(PhantomData<fn() -> (C, S, K)>);
+
+impl<C: Cycle, S: Side<C>, K: Rank> Len for Exposed<C, S, K> {
+    fn len() -> usize {
+        S::exposed::<K>()
+    }
+}
+
+/// The binding circuit of side `S`: the circuit whose public output is the
+/// other side's stage commitments the side absorbed or recomputed and what
+/// it took of the step's own online polynomials, points then elements,
+/// read off the work stage where the chunks left them
+/// ([`Regions::exposed`](super::program::Regions::exposed) and
+/// [`Regions::exposed_elements`](super::program::Regions::exposed_elements)). The chunks
+/// bind those slots to the values the side took from the other side, so a
+/// claim on this circuit's output at the $k(y)$ of the other side's actual
+/// stage commitments, which the proof's consumer computes, holds only if
+/// the two sides agree (see [`Binding`](crate::profile::Binding) and
+/// [`binding_ky`](crate::internal::ky::binding_ky)).
+pub(crate) struct BindingCircuit<C: Cycle, S, K, R, const HEADER_SIZE: usize> {
+    schedule: Arc<Schedule>,
+    _marker: PhantomData<fn() -> (C, S, K, R)>,
+}
+
+impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
+    for BindingCircuit<C, S, K, R, HEADER_SIZE>
+{
+    fn clone(&self) -> Self {
+        BindingCircuit {
+            schedule: self.schedule.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    BindingCircuit<C, S, K, R, HEADER_SIZE>
+{
+    /// The binding circuit over `schedule`'s stages.
+    pub(crate) fn new(schedule: Arc<Schedule>) -> MultiStage<S::F, R, Self> {
+        assert_eq!(
+            schedule.regions.exposed.len(),
+            S::exposed::<K>(),
+            "the schedule exposes the side's points"
+        );
+        MultiStage::new(BindingCircuit {
+            schedule,
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    MultiStageCircuit<S::F, R> for BindingCircuit<C, S, K, R, HEADER_SIZE>
+{
+    type Last = WorkStage<C, S, K, R, HEADER_SIZE>;
+    /// The exposed points, then the exposed elements.
+    type Instance<'source> = (
+        FixedVec<S::P, Exposed<C, S, K>>,
+        FixedVec<S::F, ExposedElements<C, S>>,
+    );
+    type Witness<'source> = &'source Prepared<C, S>;
+    type Output = Kind![S::F; (
+        FixedVec<Point<'_, _, S::P>, Exposed<C, S, K>>,
+        FixedVec<Element<'_, _>, ExposedElements<C, S>>,
+    )];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let points = FixedVec::try_from_fn(|i| {
+            Point::alloc(dr, instance.as_ref().map(|(points, _)| points[i]))
+        })?;
+        let elements = FixedVec::try_from_fn(|i| {
+            Element::alloc(
+                dr,
+                &mut (),
+                instance.as_ref().map(|(_, elements)| elements[i]),
+            )
+        })?;
+        Ok((points, elements))
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+    where
+        Self: 'dr,
+    {
+        let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, S, R>>()?;
+        let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, S, R>>()?;
+        let (front, dr) = <S as Front<C, K, R, HEADER_SIZE>>::add(dr)?;
+        let (lifts, dr) = dr.add_stage::<LiftsStage<C, S, K, R, HEADER_SIZE>>()?;
+        let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
+        let dr = dr.finish();
+        online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+        online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
+        let front = <S as Front<C, K, R, HEADER_SIZE>>::load(front, dr, &witness)?;
+        let lifts = lifts.unenforced(dr, witness.as_ref().map(|w| &w.lifts))?;
+        let work = work.unenforced(dr, witness.as_ref().map(|w| &w.work))?;
+        let _ = (front, lifts);
+        let exposed = self
+            .schedule
+            .regions
+            .exposed
+            .iter()
+            .map(|&slot| work.points[slot].clone())
+            .collect::<alloc::vec::Vec<_>>();
+        let elements = self
+            .schedule
+            .regions
+            .exposed_elements
+            .iter()
+            .map(|&slot| work.elements[slot].clone())
+            .collect::<alloc::vec::Vec<_>>();
+        Ok(WithAux::new(
+            (FixedVec::try_from(exposed)?, FixedVec::try_from(elements)?),
+            D::unit(),
+        ))
+    }
+}
 
 /// A chunk's result: the value a slot of the work stage, of the lifts
 /// stage for a lift, of the transcript stage for a sponge state, or of the
@@ -135,7 +647,7 @@ pub(crate) struct Aux<G> {
     pub challenge_bits: Vec<Uendo>,
     /// The other field's values, in [`ScalarRef::Bits`] order: $v$, $c$
     /// and $c b z$ of the reduction whose points the side checks, then
-    /// what the side's [`Side::foreign`] adds.
+    /// what the side's [`Prepare::foreign`](super::prover::Prepare::foreign) adds.
     pub foreign: Vec<G>,
     /// The other side's flags, by [`Chunk::EqualIf`]'s index: unset until
     /// the step that proves the chunks sets them.
@@ -876,362 +1388,6 @@ pub(crate) fn enforce<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     Ok(())
 }
 
-/// The stages allocated as witnesses under a driver, for the prover's
-/// native run.
-struct Allocated<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
-    stages: [(Vec<Point<'dr, D, P>>, Vec<Element<'dr, D>>); 8],
-}
-
-impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
-    fn alloc(dr: &mut D, values: [&Values<D::F, P>; 8]) -> Result<Self> {
-        let mut stages = Vec::with_capacity(8);
-        for values in values {
-            let points = values
-                .points
-                .iter()
-                .map(|&point| Point::alloc(dr, D::just(|| point)))
-                .collect::<Result<Vec<_>>>()?;
-            let elements = values
-                .elements
-                .iter()
-                .map(|&value| Element::alloc(dr, &mut (), D::just(|| value)))
-                .collect::<Result<Vec<_>>>()?;
-            stages.push((points, elements));
-        }
-        Ok(Allocated {
-            stages: stages
-                .try_into()
-                .map_err(|_| Error::InvalidWitness("eight stages".into()))?,
-        })
-    }
-
-    fn view(&self) -> Loaded<'_, 'dr, D, P> {
-        let view = |i: usize| View {
-            points: &self.stages[i].0[..],
-            elements: &self.stages[i].1[..],
-        };
-        Loaded {
-            instance: view(0),
-            messages: view(1),
-            lifts: view(2),
-            work: view(3),
-            transcript: view(4),
-            digits: view(5),
-            online_input: view(6),
-            online_query: view(7),
-        }
-    }
-}
-
-/// Stores the prover-supplied slots of a side's work stage: the registry
-/// values, the restrictions, the IPA's witness points and the transcript's
-/// run commitments, `runs`.
-fn supply<F: Field, P, Q>(
-    schedule: &Schedule,
-    own: &SideWitness<Q>,
-    other: &SideWitness<P>,
-    runs: &[P],
-    work: &mut Values<F, P>,
-) where
-    P: Affine,
-    Q: Affine<Scalar = F>,
-{
-    let regions = &schedule.regions;
-    assert_eq!(
-        regions.runs.len(),
-        runs.len(),
-        "one commitment per run the schedule absorbs"
-    );
-    for (slot, run) in regions.runs.iter().zip(runs) {
-        work.points[*slot] = *run;
-    }
-    for (claim, slot) in schedule.claims.iter().zip(&regions.restrictions) {
-        if let (Kind::Circuit(circuit) | Kind::Bonding(circuit), Some(slot)) = (claim.kind, slot) {
-            let value = own
-                .restrictions
-                .iter()
-                .find(|(listed, _)| *listed == circuit)
-                .expect("every named circuit's restriction")
-                .1;
-            work.elements[*slot] = value;
-        }
-    }
-    work.elements[regions.restriction_at_w] = own.restriction_at_w;
-    for (plan, (_, _, values)) in schedule.bindings.iter().zip(&own.masked) {
-        for (src, value) in plan.expected.iter().zip(values) {
-            if let ElementSrc::Work(slot) = src {
-                work.elements[*slot] = *value;
-            }
-        }
-    }
-    for (slot, point) in regions.inverse_scaled.iter().zip(&other.inverse_scaled) {
-        work.points[*slot] = *point;
-    }
-    work.points[regions.g_prime] = other.g_prime;
-    // Outside a step the opening is of s(X) at zero, which is one.
-    if let Some([_, y]) = regions.fq_opening {
-        work.elements[y] = F::ONE;
-    }
-}
-
-type Executor<F> = Emulator<Wireless<Always<()>, F>>;
-
-/// The endoscalars of raw challenges, as their bits.
-fn bits<F: Field>(raw: &[F]) -> Result<Vec<Uendo>> {
-    raw.iter().map(|&raw| extract_endoscalar(raw)).collect()
-}
-
-impl<C: Cycle, S: Side<C>> Prepared<C, S> {
-    /// Prepares side `S` from the prepared `witness` for chunk circuits at
-    /// rank `R` and runs its chunks natively to fill the work and
-    /// transcript stages.
-    pub(crate) fn new<K: Rank, R: Rank, const HEADER_SIZE: usize>(
-        params: &C::Params,
-        witness: &Witness<C>,
-    ) -> Result<Self> {
-        let instance = &witness.proof.instance;
-        let schedule = super::program::schedule::<C, S, K, R, HEADER_SIZE>()?;
-        let placeholder = S::generators(params)[0];
-        let mut work = Values::blank(schedule.points, schedule.elements, placeholder);
-        supply(
-            &schedule,
-            S::own(witness),
-            S::other(witness),
-            &S::runs(witness),
-            &mut work,
-        );
-        let lifts = Values::blank(0, schedule.layout.lifts, placeholder);
-        let digits = Values::blank(0, schedule.layout.digits, placeholder);
-        let mut transcript = S::transcript();
-        transcript.elements = alloc::vec![S::F::ZERO; schedule.states];
-        let mut challenge_bits = bits(&S::own(witness).raw.in_order())?;
-        // In `fuse::LIFTED` order.
-        challenge_bits.extend(bits(&[
-            witness.fuse.x,
-            witness.fuse.y,
-            witness.fuse.u,
-            witness.fuse.w,
-        ])?);
-        challenge_bits.extend(bits(&S::other(witness).raw.in_order())?);
-        let aux = Aux {
-            challenge_bits,
-            foreign: S::foreign(witness, &schedule)?,
-            flags: alloc::vec![false; S::FLAGS],
-        };
-        let mut prepared = Prepared {
-            instance: S::instance(params, instance, &witness.header),
-            messages: S::messages(params, &witness.proof),
-            online_input: Values {
-                points: Vec::new(),
-                elements: online::input_stage(S::ONLINE, &S::online_inputs(witness)?),
-            },
-            online_query: Values {
-                points: Vec::new(),
-                elements: S::ONLINE.evaluations(S::own(witness)),
-            },
-            extra: Arc::new(S::extra(witness)?),
-            schedule,
-            lifts,
-            work,
-            transcript,
-            digits,
-            aux,
-        };
-        prepared.run::<K, HEADER_SIZE>(params)?;
-        Ok(prepared)
-    }
-
-    /// Runs every chunk natively, storing what each writes.
-    pub(crate) fn run<K: Rank, const HEADER_SIZE: usize>(
-        &mut self,
-        params: &C::Params,
-    ) -> Result<()> {
-        self.rerun::<K, HEADER_SIZE>(params, |_| true)
-    }
-
-    /// Runs natively the chunks `select` picks, in schedule order, storing
-    /// what each writes: every chunk for a fresh side, or the chunks that
-    /// read what the step proving them set afterwards.
-    fn rerun<K: Rank, const HEADER_SIZE: usize>(
-        &mut self,
-        params: &C::Params,
-        select: impl Fn(&Chunk) -> bool,
-    ) -> Result<()> {
-        for k in 0..self.schedule.chunks.len() {
-            if !select(&self.schedule.chunks[k]) {
-                continue;
-            }
-            let mut dr = Executor::<S::F>::execute();
-            let allocated = Allocated::alloc(
-                &mut dr,
-                [
-                    &self.instance,
-                    &self.messages,
-                    &self.lifts,
-                    &self.work,
-                    &self.transcript,
-                    &self.digits,
-                    &self.online_input,
-                    &self.online_query,
-                ],
-            )?;
-            let writes = {
-                let ctx = Ctx {
-                    loaded: allocated.view(),
-                    schedule: &self.schedule,
-                    generators: S::generators(params),
-                    u: S::u(params),
-                    poseidon: S::poseidon(params),
-                    witness: Executor::<S::F>::just(|| &*self),
-                };
-                execute::<_, C, S, K, HEADER_SIZE>(&mut dr, &self.schedule.chunks[k], &ctx)?
-            };
-            for write in writes {
-                match write {
-                    Write::Element(slot, element) => {
-                        self.work.elements[slot] = *element.value().take();
-                    }
-                    Write::Point(slot, point) => {
-                        self.work.points[slot] = point.value().take();
-                    }
-                    Write::Lift(slot, element) => {
-                        self.lifts.elements[slot] = *element.value().take();
-                    }
-                    Write::State(slot, element) => {
-                        self.transcript.elements[slot] = *element.value().take();
-                    }
-                    Write::Digit(slot, element) => {
-                        self.digits.elements[slot] = *element.value().take();
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<C: Cycle, S: Side<C>> Prepared<C, S> {
-    /// The proof's online inputs: the coordinates of the wallet registry's
-    /// restrictions its verification reads and the points it reads them
-    /// at, which the step that proves the chunks commits in its online
-    /// input stage before its challenge.
-    pub(crate) fn online_inputs(&self) -> &[S::F] {
-        &self.online_input.elements[online::Values::input_at(0)..][..S::ONLINE.inputs()]
-    }
-
-    /// The side as the step proves it, with the online stages its fuse
-    /// committed, `input` and `query`, each stage's values in order. The
-    /// chunks hold the proof's inputs and the evaluations they read to
-    /// these stages' wires, so a stage that does not hold what the side was
-    /// prepared with leaves a chunk unsatisfied.
-    ///
-    /// # Errors
-    ///
-    /// Fails if a stage is not the side's size.
-    pub(crate) fn with_online(mut self, input: Vec<S::F>, query: Vec<S::F>) -> Result<Self> {
-        if input.len() != S::ONLINE.input_stage() || query.len() != S::ONLINE.query_stage() {
-            return Err(Error::InvalidWitness(
-                "the step's online stages are not the side's size".into(),
-            ));
-        }
-        self.online_input.elements = input;
-        self.online_query.elements = query;
-        Ok(self)
-    }
-}
-
-impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
-    /// The side as the decompression step proves it: the flag set and the
-    /// step binding the step's own, `opening`, the point and value at
-    /// which it opened the output slot holding $s(X)$, and `digest`, the
-    /// transcript digest it staged. Any other step proves the side as
-    /// prepared, the binding all zero.
-    pub(crate) fn for_decompression<K: Rank, const HEADER_SIZE: usize>(
-        &self,
-        params: &C::Params,
-        opening: [C::CircuitField; 2],
-        digest: C::CircuitField,
-    ) -> Result<Self> {
-        let mut prepared = self.clone();
-        let step = prepared.schedule.layout.instance.step;
-        prepared.instance.elements[step.at(stages::step::FLAG)] = C::CircuitField::ONE;
-        prepared.instance.elements[step.at(stages::step::X)] = opening[0];
-        prepared.instance.elements[step.at(stages::step::Y)] = opening[1];
-        prepared.instance.elements[step.at(stages::step::DIGEST)] = digest;
-        prepared.rerun::<K, HEADER_SIZE>(
-            params,
-            |chunk| matches!(chunk, Chunk::Digits { flags, .. } if !flags.is_empty()),
-        )?;
-        Ok(prepared)
-    }
-}
-
-impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Nested> {
-    /// The side as a step proves it: the commitment of the step's output
-    /// slot the binding circuit exposes, `slot_commitment`, the flag, set
-    /// in the decompression step, under which that commitment is the
-    /// host IPA's $G'$, and `fq_opening`, the point and value at which the
-    /// step opened its online Fq polynomial.
-    pub(crate) fn for_step<K: Rank, const HEADER_SIZE: usize>(
-        &self,
-        params: &C::Params,
-        decompression: bool,
-        slot_commitment: C::HostCurve,
-        fq_opening: [C::ScalarField; 2],
-    ) -> Result<Self> {
-        let mut prepared = self.clone();
-        let [x, y] = prepared
-            .schedule
-            .regions
-            .fq_opening
-            .expect("the scalar-field side holds the online Fq opening");
-        prepared.work.elements[x] = fq_opening[0];
-        prepared.work.elements[y] = fq_opening[1];
-        let (slot, digits_sum) = {
-            let regions = &prepared.schedule.regions;
-            (
-                regions
-                    .slot_commitment
-                    .expect("the scalar-field side exposes the slot commitment"),
-                regions.digits_sum,
-            )
-        };
-        prepared.aux.flags[0] = decompression;
-        prepared.work.points[slot] = slot_commitment;
-        prepared.rerun::<K, HEADER_SIZE>(params, |chunk| match chunk {
-            Chunk::EqualIf { .. } => true,
-            Chunk::Sums { sums } => sums.iter().any(|(out, _)| *out == digits_sum),
-            _ => false,
-        })?;
-        Ok(prepared)
-    }
-}
-
-/// Both sides prepared for one compressed proof.
-pub(crate) struct Sides<C: IpaCycle + ProfiledCycle<Profile = Standard>> {
-    pub native: Prepared<C, Native>,
-    pub nested: Prepared<C, Nested>,
-}
-
-impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Sides<C> {
-    /// Prepares both sides for `pcd` under `app`, for chunk circuits at
-    /// rank `R`.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the native verifier would reject the proof, or on an
-    /// internal error.
-    pub(crate) fn prepare<K: Rank, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend, H>(
-        app: &Application<'_, C, K, HEADER_SIZE, B>,
-        pcd: &CompressedPcd<C, H>,
-    ) -> Result<Self>
-    where
-        H: Header<C::CircuitField>,
-    {
-        let witness = Witness::prepare(app, pcd)?;
-        Ok(Sides {
-            native: Prepared::new::<K, R, HEADER_SIZE>(app.params, &witness)?,
-            nested: Prepared::new::<K, R, HEADER_SIZE>(app.params, &witness)?,
-        })
-    }
-}
+#[cfg(test)]
+#[path = "../../tests/decompression/circuits.rs"]
+mod tests;
