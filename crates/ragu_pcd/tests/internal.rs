@@ -55,7 +55,8 @@ where
 // the preamble, query and eval stages, and with the step's own output header
 // and online openings in the preamble beside the children's bridge hashes
 // the last binder fills the gate budget here.
-pub const HEADER_SIZE: usize = 195;
+pub const HEADER_SIZE: usize = 194;
+const AGGREGATOR_HEADER_SIZE: usize = 195;
 
 // Number of trivial application circuits to register before testing internal
 // circuits. Internal circuit construction depends on the resulting registry
@@ -233,9 +234,9 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1787, lin = 3023);
+    check_constraints!(Hashes1Circuit,              mul = 1785, lin = 3018);
     check_constraints!(Hashes2Circuit,              mul = 1873, lin = 2991);
-    check_constraints!(CollapseCircuit,             mul = 1603, lin = 2567);
+    check_constraints!(CollapseCircuit,             mul = 1599, lin = 2560);
     check_constraints!(ComputeVCircuit,             mul = 1981, lin = 2986);
     check_constraints!(BindChallengesCircuit(0),    mul = 2031, lin = 3061);
     check_constraints!(BindChallengesCircuit(1),    mul = 2036, lin = 3071);
@@ -1536,13 +1537,13 @@ fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
     let params = crate::pasta::baked();
-    let standard = ApplicationBuilder::<Pasta, R, 195>::new().finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 194>::new().finalize(params);
     assert!(
         standard.is_ok(),
-        "195 fields must fit: {:?}",
+        "194 fields must fit: {:?}",
         standard.err()
     );
-    let oversized = ApplicationBuilder::<Pasta, R, 196>::new().finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 195>::new().finalize(params);
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2047 })
@@ -1717,8 +1718,8 @@ fn report_fuse_gates(
 }
 
 /// Every fuse circuit of the aggregator profile fits the aggregator rank's
-/// budget with the decompression extension's polynomials, for the test
-/// header size and for this module's.
+/// budget with the decompression extension's polynomials, for a small
+/// header and the aggregator's pinned 195-element header.
 #[test]
 fn test_aggregator_fuse_fits_the_budget() {
     use ragu_circuits::polynomials::AggregatorRank;
@@ -1734,15 +1735,20 @@ fn test_aggregator_fuse_fits_the_budget() {
         over.extend(report_fuse_gates("nested, header size 4", &nested, budget));
     }
     {
-        type C = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
-        let (native, nested) = fuse_gates!(C, AggregatorRank, HEADER_SIZE, Aggregator<HEADER_SIZE>);
+        type C = Profiled<Pasta, Aggregator<AGGREGATOR_HEADER_SIZE>>;
+        let (native, nested) = fuse_gates!(
+            C,
+            AggregatorRank,
+            AGGREGATOR_HEADER_SIZE,
+            Aggregator<AGGREGATOR_HEADER_SIZE>
+        );
         over.extend(report_fuse_gates(
-            &alloc::format!("native, header size {HEADER_SIZE}"),
+            &alloc::format!("native, header size {AGGREGATOR_HEADER_SIZE}"),
             &native,
             budget,
         ));
         over.extend(report_fuse_gates(
-            &alloc::format!("nested, header size {HEADER_SIZE}"),
+            &alloc::format!("nested, header size {AGGREGATOR_HEADER_SIZE}"),
             &nested,
             budget,
         ));

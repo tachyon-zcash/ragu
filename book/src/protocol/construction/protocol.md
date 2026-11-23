@@ -57,9 +57,10 @@ enter the transcript with the objects that they are folded or batched with: the
 fold randomizers in round 2, and the batch randomizers in round 7.
 
 Round 2 is where the step's circuit runs. Its challenge $\zeta$ is $w$, so its
-polynomial and the `preamble` stage, which holds its output header and its
-openings, cannot be fixed in round 1. They are fixed before $y$ and $z$, the
-challenges at which the claim of the step circuit is folded. The `preamble`
+polynomial and the `preamble` stage, which holds its output header, openings
+and `BridgeHash` commitment coordinates, cannot be fixed in round 1. They are
+fixed before $y$ and $z$, the challenges at which the claim of the step circuit
+is folded. The `preamble`
 stage also holds the children's instances, which
 [$w$ already fixes](stage_contents.md#native-preamble) through the children's
 commitments.

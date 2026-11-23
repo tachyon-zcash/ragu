@@ -216,12 +216,6 @@ user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-04-09"
 end = "2027-04-07"
 
-[[trusted.ragu_gadgets]]
-criteria = "safe-to-deploy"
-user-id = 1244 # Sean Bowe (ebfull)
-start = "2025-07-29"
-end = "2027-04-07"
-
 [[trusted.ragu_testing]]
 criteria = "safe-to-deploy"
 user-id = 1244 # Sean Bowe (ebfull)

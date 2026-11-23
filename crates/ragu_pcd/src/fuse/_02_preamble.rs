@@ -57,9 +57,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     }
 
     /// Commits the native preamble stage from the children's output headers
-    /// and the step's own output header, circuit id and online openings,
-    /// all on the builder by now, returning its witness for the native
-    /// circuits.
+    /// and the step's own output header, circuit id, online openings and
+    /// bridge-hash commitment, all on the builder by now. The stage's
+    /// commitment is carried by `BridgeSPrime` before the step's $y$.
     pub(super) fn compute_native_preamble<'a, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -75,6 +75,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             builder.output_header(),
             builder.circuit_id(),
             *builder.online_openings(),
+            builder.bridge_hash_commitment(),
         )?;
 
         let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(

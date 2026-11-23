@@ -355,6 +355,8 @@ The honest prover constructs the digest before $\zeta$; `w` absorbs `O1` through
 The ordinary mask permits other encodings of the same `O1`, so an accepted digest need not equal the native recomputation and can be chosen after $\zeta$.
 It cannot be treated as a fixed input to a check at $\zeta$ without an additional binding to a value fixed beforehand.
 (Absorbing the digest would cost `hashes_1` one more Poseidon permutation, beyond its gate budget.)
+The native `Preamble` holds the resulting digest, and `BridgeSPrime` binds its commitment before the step's $y$.
+The step's `collapse` circuit enforces that this copy equals the digest in its unified instance, so the step's own application claim uses a point fixed before $y$.
 The digest joins the `unified` instance next to `bridge_preamble_commitment`, and the parent binds it to the `BridgeHash` stage it folds, as it binds the other bridge commitments.
 The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the step's own `collapse` fills from its `unified` value.
 

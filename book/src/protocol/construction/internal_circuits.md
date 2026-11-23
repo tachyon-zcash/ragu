@@ -104,9 +104,11 @@ $c^{(i)}$ of the `preamble` stage, the value of item 1 and the target wires of
 the `outer_error` stage, with ones at the endoscaling positions and zeros at
 the bonding and padding positions.
 
-1. Compute [$k_{\text{app}}(y)$](claims.md#native-targets) from the `preamble`
-   stage, with $w$ and $R_q[\texttt{BridgeHash}]$ read from the unified
-   instance. This is $\text{tgt}_2$, and no stage holds it.
+1. Equate the two coordinates of $R_q[\texttt{BridgeHash}]$ in the unified
+   instance with their copy in the `preamble` stage, which `BridgeSPrime`
+   fixed before $y$. Compute [$k_{\text{app}}(y)$](claims.md#native-targets)
+   from that point, $w$ and the other `preamble` values. This is
+   $\text{tgt}_2$, and no stage holds it.
 2. For each child, the `compute_v_bridge` target of the `outer_error` stage
    equals the `unified` target, since
    [$k_{\text{cv}} = k_{\text{uni}}$](proof.md#native-unified).
