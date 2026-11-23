@@ -153,7 +153,7 @@ fn check(schedule: &Schedule) {
                     lifts[*out] = true;
                 }
             }
-            Chunk::Targets { out } => {
+            Chunk::Targets { out, .. } => {
                 for &slot in out {
                     write_element(slot, &mut elements);
                 }

@@ -33,7 +33,7 @@ use crate::{
     decompress::{
         prover::{Decompressed, Sides},
         stages::num_runs,
-        support::{HEADER_SIZE, Setup, TestR},
+        support::{HEADER_SIZE, TestR},
     },
     header::{Dummy, Header, Suffix},
     profile::{
@@ -45,7 +45,7 @@ use crate::{
 type P = Aggregator<HEADER_SIZE>;
 
 /// The pinned layouts are the schedules' at the aggregator rank, for the
-/// test header size and for the internal tests', and lay out as the
+/// test headers and the width boundaries, and lay out as the
 /// module says: transcript chunks first and digits chunks last, over six
 /// native stages and, on the nested side, a stage per run, the trailing
 /// stage and the lifts, work and digits stages, with the statement and
@@ -54,15 +54,20 @@ type P = Aggregator<HEADER_SIZE>;
 fn pinned_layout_is_the_schedules() {
     /// The internal tests' header size.
     const CENSUS: usize = crate::internal::tests::HEADER_SIZE;
-    std::println!(
-        "native counts at census header: {:?}",
-        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap()
-    );
-    assert_eq!(
-        P::native_circuits(HEADER_SIZE),
-        native_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
-        "the native pins for the test header size"
-    );
+    fn check_native_counts<const H: usize>() {
+        assert_eq!(
+            Aggregator::<H>::native_circuits(H),
+            native_counts::<Pasta, WalletRank, AggregatorRank, H>().unwrap(),
+            "native circuit counts at header size {H}"
+        );
+    }
+    check_native_counts::<1>();
+    check_native_counts::<HEADER_SIZE>();
+    check_native_counts::<57>();
+    check_native_counts::<58>();
+    check_native_counts::<153>();
+    check_native_counts::<154>();
+    check_native_counts::<195>();
     assert_eq!(
         P::NESTED_CIRCUITS,
         nested_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
@@ -161,15 +166,18 @@ fn pinned_layout_is_the_schedules() {
 }
 
 /// Every chunk and bonding of both sides registers through the hooks at
-/// the aggregator rank, one past the last fails, and the wallet rank
-/// is refused.
+/// the aggregator rank at the maximum profile width. One past the last
+/// fails, and the wallet rank is refused.
 #[test]
 fn hooks_register_every_chunk_and_stage() {
+    const H: usize = 195;
+    type Wide = Aggregator<H>;
+
     let params = crate::pasta::baked_aggregator();
-    let native = P::native_extension();
+    let native = Wide::native_extension();
     let mut registry = RegistryBuilder::<Fp, AggregatorRank>::new();
     for circuit in 0..native.circuits.len() {
-        registry = P::register_native_circuit::<Pasta, AggregatorRank, HEADER_SIZE>(
+        registry = Wide::register_native_circuit::<Pasta, AggregatorRank, H>(
             circuit,
             CircuitSlot::new(registry),
             params,
@@ -178,7 +186,7 @@ fn hooks_register_every_chunk_and_stage() {
         .into_registry();
     }
     for bonding in 0..native.bondings() {
-        registry = P::register_native_bonding::<Pasta, AggregatorRank, HEADER_SIZE>(
+        registry = Wide::register_native_bonding::<Pasta, AggregatorRank, H>(
             bonding,
             BondingSlot::new(registry),
             params,
@@ -188,7 +196,7 @@ fn hooks_register_every_chunk_and_stage() {
     }
     assert_eq!(registry.num_internal_circuits(), native.internal());
     assert!(matches!(
-        P::register_native_bonding::<Pasta, AggregatorRank, HEADER_SIZE>(
+        Wide::register_native_bonding::<Pasta, AggregatorRank, H>(
             native.bondings(),
             BondingSlot::new(registry),
             params
@@ -196,7 +204,7 @@ fn hooks_register_every_chunk_and_stage() {
         Err(Error::Initialization(_))
     ));
     assert!(matches!(
-        P::register_native_circuit::<Pasta, TestR, HEADER_SIZE>(
+        Wide::register_native_circuit::<Pasta, TestR, H>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params
@@ -204,10 +212,10 @@ fn hooks_register_every_chunk_and_stage() {
         Err(Error::Initialization(_))
     ));
 
-    let nested = P::nested_extension();
+    let nested = Wide::nested_extension();
     let mut registry = RegistryBuilder::<Fq, AggregatorRank>::new();
     for circuit in 0..nested.circuits.len() {
-        registry = P::register_nested_circuit::<Pasta, AggregatorRank>(
+        registry = Wide::register_nested_circuit::<Pasta, AggregatorRank>(
             circuit,
             CircuitSlot::new(registry),
             params,
@@ -216,7 +224,7 @@ fn hooks_register_every_chunk_and_stage() {
         .into_registry();
     }
     for bonding in 0..nested.bondings() {
-        registry = P::register_nested_bonding::<Pasta, AggregatorRank>(
+        registry = Wide::register_nested_bonding::<Pasta, AggregatorRank>(
             bonding,
             BondingSlot::new(registry),
             params,
@@ -226,7 +234,7 @@ fn hooks_register_every_chunk_and_stage() {
     }
     assert_eq!(registry.num_internal_circuits(), nested.internal());
     assert!(matches!(
-        P::register_nested_circuit::<Pasta, TestR>(
+        Wide::register_nested_circuit::<Pasta, TestR>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params
@@ -240,17 +248,20 @@ fn hooks_register_every_chunk_and_stage() {
 /// budget with the extension's polynomials, every chunk circuit registers
 /// beside them and none can stand in for an application circuit, and the
 /// bootstrap proof, with the chunks run over the wallet application's
-/// canonical compressed proof, verifies.
+/// canonical compressed proof, verifies at the wallet's maximum header width.
 #[test]
 fn the_fuse_fits_at_the_aggregator_rank() {
+    const H: usize = crate::internal::tests::HEADER_SIZE;
+    type Wide = Aggregator<H>;
+
     let standard = Shape::of::<Standard>();
-    let shape = Shape::of::<P>();
+    let shape = Shape::of::<Wide>();
     // The extension's polynomials, the online batch's three stages and its
     // helper's, and the walk's.
     assert_eq!(
         shape.native_rx,
         standard.native_rx
-            + P::NATIVE_EXTENSION
+            + Wide::NATIVE_EXTENSION
             + crate::profile::online::stages::RXS
             + shape.native_steps
             - standard.native_steps
@@ -260,11 +271,14 @@ fn the_fuse_fits_at_the_aggregator_rank() {
     assert!(shape.nested_points > standard.nested_points);
     assert!(shape.nested_steps < standard.nested_steps);
 
-    let setup = Setup::new();
+    let params = crate::pasta::baked_aggregator();
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, H>::new()
+        .finalize(params)
+        .unwrap();
     let mut rng = StdRng::seed_from_u64(5);
-    let decompression = Decompression::new(setup.app, &mut rng).unwrap();
-    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
-        .finalize_with(crate::pasta::baked_aggregator(), decompression)
+    let decompression = Decompression::new(wallet, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, Wide>, AggregatorRank, H>::new()
+        .finalize_with(params, decompression)
         .unwrap();
     crate::internal::tests::assert_only_steps_satisfy_application_instances(&app);
     let bootstrap = app.bootstrap.clone().expect("finalized").carry::<()>(());
@@ -969,19 +983,27 @@ fn a_wallet_whose_headers_name_a_polynomial_is_refused() {
 
 /// Decompressed wallet proofs recurse: two fuse under a step of the
 /// aggregator's own, and the result fuses with a third, each level
-/// verifying uncompressed and the last compressed too.
+/// verifying uncompressed and the last compressed too. Use Tachyon's
+/// nine-element header width.
 #[test]
 fn decompressed_proofs_recurse() {
+    const H: usize = 9;
+    type Aggregate = Aggregator<H>;
+
     let pasta = crate::pasta::baked_aggregator();
     let mut rng = StdRng::seed_from_u64(43);
-    let wallet = wallet();
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, H>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
     let mut compressed = |value: u64| {
         let (leaf, _) = wallet.seed(&mut rng, Leaf, Fp::from(value)).unwrap();
         wallet.compress(&leaf, &mut rng).unwrap()
     };
     let (a, b, c) = (compressed(41), compressed(42), compressed(43));
     let decompression = Decompression::new(wallet, &mut rng).unwrap();
-    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Profiled<Pasta, Aggregate>, AggregatorRank, H>::new()
         .register(Leaf)
         .unwrap()
         .register(Join)

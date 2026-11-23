@@ -1151,7 +1151,7 @@ where
                 writes.push(Write::Lift(out, endoscalar.lift(dr)?));
             }
         }
-        Chunk::Targets { out } => {
+        Chunk::Targets { out, .. } => {
             let targets = S::targets::<D, K, HEADER_SIZE>(dr, ctx)?;
             assert_eq!(targets.len(), out.len(), "one target per slot");
             for (&slot, target) in out.iter().zip(targets) {
