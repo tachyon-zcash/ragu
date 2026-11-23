@@ -145,8 +145,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 native_mask: randomizer.mask_commitment,
             },
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_f_rx(bridge_rx, bridge_commitment);
         Ok(())
     }

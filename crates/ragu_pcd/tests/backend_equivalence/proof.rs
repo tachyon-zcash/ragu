@@ -43,6 +43,7 @@ static TRACKING_IFFT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TRACKING_WORK_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TRACKING_MSM_PAIRS: AtomicUsize = AtomicUsize::new(0);
 static TRACKING_MSM_TRIPLES: AtomicUsize = AtomicUsize::new(0);
+static TRACKING_AFFINE_COMMITS: AtomicUsize = AtomicUsize::new(0);
 
 /// Test backend that records MSM, transform and independent-work dispatch,
 /// including worker threads.
@@ -57,6 +58,7 @@ impl TrackingBackend {
         TRACKING_WORK_CALLS.store(0, Ordering::Relaxed);
         TRACKING_MSM_PAIRS.store(0, Ordering::Relaxed);
         TRACKING_MSM_TRIPLES.store(0, Ordering::Relaxed);
+        TRACKING_AFFINE_COMMITS.store(0, Ordering::Relaxed);
     }
 
     fn calls() -> [usize; 4] {
@@ -70,6 +72,14 @@ impl TrackingBackend {
 }
 
 impl Backend for TrackingBackend {
+    fn sparse_commit_to_affine<F: Field, C: Affine<Scalar = F>, R: Rank, G: FixedGenerators<C>>(
+        poly: &sparse::Polynomial<F, R>,
+        generators: &G,
+    ) -> C {
+        TRACKING_AFFINE_COMMITS.fetch_add(1, Ordering::Relaxed);
+        Self::sparse_commit(poly, generators).into()
+    }
+
     fn map<I: IntoIterator, T: Send>(
         inputs: I,
         work: impl Fn(I::Item) -> T + Sync,
@@ -948,6 +958,45 @@ fn backend_join_runs_each_job_once_and_keeps_their_order() {
     }
 }
 
+/// Commitment tables change how the prover computes its commitments, never
+/// what they are: an application with them proves exactly what one without
+/// them does, and each accepts the other's proofs.
+#[test]
+fn commitment_tables_leave_proofs_unchanged() {
+    fn build<B: SelectableBackend>(tables: bool) -> TestApplication<'static, B> {
+        let builder = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<B>()
+            .register(UnitStep)
+            .unwrap();
+        let builder = if tables {
+            builder.with_commitment_tables()
+        } else {
+            builder
+        };
+        builder
+            .finalize(ragu_pcd::pasta::baked_aggregator())
+            .unwrap()
+    }
+    fn prove<B: SelectableBackend>(app: &TestApplication<'static, B>) -> TestPcd {
+        let mut rng = StdRng::seed_from_u64(41);
+        let (left, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+        let (right, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+        app.fuse(&mut rng, UnitStep, (), left, right).unwrap().0
+    }
+    fn check<B: SelectableBackend>() {
+        let (plain, tabled) = (build::<B>(false), build::<B>(true));
+        let (expected, proved) = (prove(&plain), prove(&tabled));
+        assert!(expected.proof().test_mismatch(proved.proof()).is_none());
+        let mut rng = StdRng::seed_from_u64(42);
+        assert!(plain.verify_uncompressed(&proved, &mut rng).unwrap());
+        assert!(tabled.verify_uncompressed(&expected, &mut rng).unwrap());
+    }
+    // The reference backend prepares no table, so the request changes nothing.
+    check::<ReferenceBackend>();
+    check::<AcceleratedBackend>();
+    check::<AcceleratedProver>();
+}
+
 /// The default iterator must not prepare a parallel work buffer in Fuse.
 #[derive(Clone, Copy, Debug, Default)]
 struct SerialFuseBackend;
@@ -1002,6 +1051,14 @@ fn selected_backend_dispatch_reaches_protocol_phases() {
 
     // Reset after setup and between phases: earlier calls must not satisfy
     // an assertion about a later phase. Only this test uses TrackingBackend.
+    TrackingBackend::reset_calls();
+    app.commit(&[Fp::ONE]).unwrap();
+    assert_eq!(
+        TRACKING_AFFINE_COMMITS.load(Ordering::Relaxed),
+        1,
+        "an untabled affine commitment uses its selected backend hook"
+    );
+
     TrackingBackend::reset_calls();
     let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right).unwrap();
     // Fuse interpolates registry restrictions with IFFT; it needs no FFT.

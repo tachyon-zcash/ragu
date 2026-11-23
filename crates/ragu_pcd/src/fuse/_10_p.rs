@@ -354,7 +354,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // A child can carry a polynomial inconsistent with its cached point.
         // Keep the debug consistency check fallible for such witnesses.
         #[cfg(debug_assertions)]
-        if B::sparse_commit_to_affine(&poly, C::nested_generators(self.params)) != p_commitment {
+        if self.nested().commit::<R>(&poly) != p_commitment {
             return Err(ragu_core::Error::InvalidWitness(
                 "nested P does not match its accumulated polynomial".into(),
             ));

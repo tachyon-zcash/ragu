@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verifying with the reference kernels. `ragu_backend::ReferenceBackend`
   uses the reference kernels for both.
 - Added the default `asm` feature for Udon's AArch64 field assembly.
+- Added `ApplicationBuilder::with_commitment_tables`. Accelerated prover
+  backends prepare the tables during finalization and reuse them for polynomial
+  commitments over the application's lifetime.
 - Added `Application::verify_differential` under `test-utils`: checks a proof
   with both verifiers and asserts they agree, returning the uncompressed
   verdict. The adversarial test suites and the fuzz harness check every proof

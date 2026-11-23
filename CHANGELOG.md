@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Its `asm`, `baked`, `std`, `multicore` and `test-utils` features forward
   to the member crates. `asm` is enabled by default and selects Udon's
   AArch64 field assembly.
+- `ApplicationBuilder::with_commitment_tables` opts into fixed-base tables
+  for repeated polynomial commitments with accelerated proving backends.
 - `ragu_pcd::bridge_hash`, with `digest` and `rx`: the bridge hash of a
   host-curve point computed outside the circuit, without an `Application`.
 - Proof compression: `Application::compress`, `Application::verify_compressed`,

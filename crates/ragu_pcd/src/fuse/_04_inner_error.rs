@@ -261,8 +261,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Blind::random(rng),
             &nested_inner_error_witness,
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_inner_error_rx(bridge_rx, bridge_commitment);
 
         Ok(nested_inner_error_witness)

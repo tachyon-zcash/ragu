@@ -15,6 +15,7 @@ use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 
 use crate::{
     Pcd, Proof, SelectableBackend,
+    committer::Committer,
     header::Header,
     profile::{Profile, ProfiledCycle},
     step::{Step, internal::adapter::Adapter},
@@ -68,6 +69,9 @@ pub struct ApplicationBuilder<
     /// padding: what a profile's context is checked against (see
     /// [`Profile::check_context`]).
     pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
+    /// Whether [`Self::finalize`] prepares tables of the commitment
+    /// generators (see [`Self::with_commitment_tables`]).
+    commitment_tables: bool,
     pub(crate) _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -95,8 +99,25 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: BTreeMap::new(),
             bootstrap: None,
             output_headers: BTreeMap::new(),
+            commitment_tables: false,
             _marker: PhantomData,
         }
+    }
+
+    /// Prepares tables of the commitment generators at [`Self::finalize`],
+    /// for the selected backend's prover.
+    ///
+    /// A backend that supports them, as the accelerated backends do, then
+    /// commits to polynomials with fewer point additions, which makes every
+    /// proof faster. The proofs themselves are unchanged. The tables are
+    /// prepared once and held for the application's life: on each curve, 16
+    /// points of 96 bytes for every coefficient of the rank, about 12.6 MB at
+    /// 8192 coefficients. An application that proves repeatedly recovers the
+    /// preparation within a few proofs; one that proves once, or only
+    /// verifies, should leave them out. Other backends ignore the request.
+    pub fn with_commitment_tables(mut self) -> Self {
+        self.commitment_tables = true;
+        self
     }
 
     /// Supplies source registries for meshes whose profile context supplies
@@ -202,6 +223,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: self.header_map,
             bootstrap: self.bootstrap,
             output_headers: self.output_headers,
+            commitment_tables: self.commitment_tables,
             _marker: PhantomData,
         }
     }
@@ -519,6 +541,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
+            host_committer: Committer::new::<R>(
+                host_generators,
+                self.commitment_tables,
+                native_ipa_generators.as_ref(),
+            ),
+            nested_committer: Committer::new::<R>(
+                nested_generators,
+                self.commitment_tables,
+                nested_ipa_generators.as_ref(),
+            ),
             native_ipa_generators,
             nested_ipa_generators,
             context,
@@ -666,6 +698,8 @@ pub struct Application<
     /// Fixed IPA bases prepared once during application startup.
     pub(crate) native_ipa_generators: Option<Arc<PreparedMsm<C::HostCurve>>>,
     pub(crate) nested_ipa_generators: Option<Arc<PreparedMsm<C::NestedCurve>>>,
+    host_committer: Committer<'params, C::HostCurve, C::HostGenerators, B>,
+    nested_committer: Committer<'params, C::NestedCurve, C::NestedGenerators, B>,
     pub(crate) _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -882,10 +916,17 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
         let poly =
             ragu_circuits::polynomials::sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec());
-        Ok(B::sparse_commit_to_affine(
-            &poly,
-            C::host_generators(self.params),
-        ))
+        Ok(self.host().commit(&poly))
+    }
+
+    /// What the prover commits to host-curve polynomials with.
+    pub(crate) fn host(&self) -> &Committer<'params, C::HostCurve, C::HostGenerators, B> {
+        &self.host_committer
+    }
+
+    /// What the prover commits to nested-curve polynomials with.
+    pub(crate) fn nested(&self) -> &Committer<'params, C::NestedCurve, C::NestedGenerators, B> {
+        &self.nested_committer
     }
 
     /// The native source registry the profile's mesh certifies: the builder's

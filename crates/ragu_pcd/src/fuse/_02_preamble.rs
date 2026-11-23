@@ -111,8 +111,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             Blind::random(rng),
             &bridge_witness,
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_preamble_rx(bridge_rx, bridge_commitment);
 
         // The bridge-hash stage: the own last online commitment, with a
@@ -120,8 +119,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // carries.
         let o1 = builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1];
         let hash_rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)?;
-        let hash_commitment =
-            B::sparse_commit_to_affine(&hash_rx, C::nested_generators(self.params));
+        let hash_commitment = self.nested().commit(&hash_rx);
         builder.set_bridge_hash_rx(hash_rx, hash_commitment);
         Ok(bridge_witness)
     }

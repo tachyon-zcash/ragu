@@ -72,6 +72,7 @@ extern crate std;
 
 mod application;
 mod backend;
+mod committer;
 mod compress;
 #[cfg(feature = "unstable-aggregator")]
 mod decompress;
