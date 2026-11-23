@@ -261,14 +261,9 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     /// application's, so the two must be the same parameters. A
     /// decompressed statement is the wallet's output header, which this
     /// application reads through the header type it registers at the
-    /// statement's suffix: it must be the wallet's own type, so that the
-    /// two assign the statement the same encoding and meaning, field order
-    /// and padding included. The unit header is the crate's. A decompressed
-    /// proof's slots hold the host IPA's $s(X)$ and padding, not the
-    /// polynomials the wallet's proof carried, so every header the wallet's
-    /// steps output must leave its slots to padding, which no step can
-    /// open: a step of this application could otherwise open one as the
-    /// polynomial its header names.
+    /// statement's suffix. Each padding-only wallet output must have its
+    /// exact header type registered in the aggregator. Outputs that name
+    /// an application polynomial are excluded by the decompression step.
     fn check_context<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
         params: &Base::Params,
@@ -286,17 +281,8 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
             ));
         }
         for (suffix, &(wallet, carries_polynomial)) in context.wallet().output_headers() {
-            if suffix.get() < u64::from(NUM_INTERNAL_SUFFIXES) {
+            if suffix.get() < u64::from(NUM_INTERNAL_SUFFIXES) || carries_polynomial {
                 continue;
-            }
-            if carries_polynomial {
-                return Err(Error::Initialization(
-                    alloc::format!(
-                        "the wallet application outputs a header at suffix {} whose proofs carry an online polynomial: a decompressed proof's slots hold the host IPA's challenge polynomial and padding, so a header a decompressed statement can carry must leave its slots to padding",
-                        suffix.get()
-                    )
-                    .into(),
-                ));
             }
             match headers.get(suffix) {
                 Some(ours) if *ours == wallet => {}

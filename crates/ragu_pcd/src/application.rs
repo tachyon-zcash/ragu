@@ -486,7 +486,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // proof's statement (see `step::internal::decompress`).
         if decompresses {
             self = self.register_internal_step(
-                crate::step::internal::decompress::Decompress::<()>::new(),
+                crate::step::internal::decompress::Decompress::<()>::with_excluded_suffixes(
+                    crate::profile::ProverContext::excluded_decompression_suffixes(&context),
+                ),
             )?;
         }
 

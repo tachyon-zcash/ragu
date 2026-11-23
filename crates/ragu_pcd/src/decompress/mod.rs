@@ -237,9 +237,10 @@
 //! establish that proof's $G'$; nothing rests on it, since that proof's
 //! statement binds nothing.
 //!
-//! A decompressed proof's first output slot therefore holds $s(X)$, not
-//! the constant one; the header types a decompressed statement can carry
-//! leave their slots to padding, which `finalize_with` checks ([`Decompress`]).
+//! A decompressed proof's first output slot holds $s(X)$. The
+//! [decompression step](`Decompress`) rejects wallet output suffixes
+//! that name application polynomials, so downstream steps cannot
+//! query that slot as an application polynomial.
 //!
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
 //! [`Decompress`]: crate::step::internal::decompress

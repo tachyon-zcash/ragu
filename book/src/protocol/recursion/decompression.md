@@ -16,12 +16,13 @@ used as a child.
   [gate budget](../../guide/configuration.md#header-size-trade-offs)
   limits a wallet and aggregator pair to at most 194. On each curve the
   wallet's generators are a prefix of the aggregator's.
-- For each application-defined output suffix a wallet step uses, the
-  aggregator must register the wallet's own header type. That type must
-  leave both output slots to padding. The decompression step uses the first
-  slot for the host IPA's challenge polynomial and the second for padding.
-  `finalize_with` checks the header types, slot declarations and shared
-  parameters.
+- The aggregator registers the wallet's exact header type for each
+  padding-only output. Wallet steps can produce application polynomials
+  before the handoff. The proof supplied for decompression must have an
+  output header with both slots declared as padding. The decompression
+  circuit enforces this through the wallet header's suffix. Its own
+  first slot carries the host IPA's challenge polynomial and its second
+  slot carries padding.
 - The aggregator divides the wallet verifier's arithmetic into *chunks* and
   packs them into internal circuits at the aggregator rank. Native chunks run
   over the

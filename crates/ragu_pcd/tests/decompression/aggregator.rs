@@ -402,7 +402,7 @@ impl crate::header::OnlinePoly for Carried {}
 struct Carrying;
 
 impl Header<Fp> for Carrying {
-    const SUFFIX: Suffix = Suffix::new(7);
+    const SUFFIX: Suffix = Suffix::new(8);
     type OnlinePolyCommit = (Carried, crate::header::Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
@@ -954,31 +954,94 @@ fn another_applications_registry_is_rejected_in_either_stage() {
     );
 }
 
-/// A decompressed proof's slots hold the host IPA's $s(X)$ and padding,
-/// not the polynomials the wallet's proof carried, so the aggregator
-/// refuses a wallet application whose steps output a header naming a
-/// polynomial: a step of its own could open the slot as that polynomial.
+/// A wallet step that drops the polynomial slots while preserving the data.
+struct PadCarrying;
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for PadCarrying {
+    const INDEX: Index = Index::new(1);
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = Carrying;
+    type Right = ();
+    type Output = Value;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
+        &self,
+        dr: &mut D,
+        _: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
+        _: DriverValue<D, ()>,
+        left: DriverValue<D, Fp>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Carrying, H>,
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, Value, H>,
+        ),
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
+        let value = Element::alloc(dr, allocator, left.clone())?;
+        Ok((
+            (
+                Encoded::from_gadget(value.clone()),
+                Encoded::new(dr, allocator, right)?,
+                Encoded::from_gadget(value),
+            ),
+            left,
+            D::unit(),
+        ))
+    }
+}
+
 #[test]
-fn a_wallet_whose_headers_name_a_polynomial_is_refused() {
+fn decompression_accepts_a_padded_output_from_a_wallet_with_online_polynomials() {
     let pasta = crate::pasta::baked_aggregator();
     let mut rng = StdRng::seed_from_u64(42);
     let wallet = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
         .register(CarryingLeaf)
         .unwrap()
+        .register(PadCarrying)
+        .unwrap()
         .finalize(pasta)
         .unwrap();
-    let refused = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
-        .register(CarryingLeaf)
-        .unwrap()
-        .finalize_with(pasta, Decompression::new(wallet, &mut rng).unwrap());
-    assert!(
-        matches!(
-            refused,
-            Err(Error::Initialization(ref reason))
-                if reason.to_string().contains("online polynomial")
-        ),
-        "a wallet header naming a polynomial"
+
+    let (carrying, _) = wallet.seed(&mut rng, CarryingLeaf, Fp::from(42)).unwrap();
+    let carrying_proof = wallet.compress(&carrying, &mut rng).unwrap();
+    let (padded, _) = wallet
+        .fuse(
+            &mut rng,
+            PadCarrying,
+            (),
+            carrying,
+            wallet.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    let padded_proof = wallet.compress(&padded, &mut rng).unwrap();
+    assert!(wallet.verify_compressed(&carrying_proof).unwrap());
+    assert!(wallet.verify_compressed(&padded_proof).unwrap());
+    // The carrying header declares a polynomial even when its commitment
+    // happens to equal the padding commitment.
+    assert_eq!(
+        carrying_proof.online_commitments(),
+        padded_proof.online_commitments(),
     );
+
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(pasta, Decompression::new(wallet, &mut rng).unwrap())
+        .unwrap();
+    assert!(matches!(
+        app.decompress(&mut rng, &carrying_proof),
+        Err(Error::InvalidWitness(ref reason)) if reason.to_string().contains("padding slots")
+    ));
+    let decompressed = app.decompress(&mut rng, &padded_proof).unwrap();
+    assert_eq!(*decompressed.data(), Fp::from(42));
+    let parent = app.rerandomize(decompressed, &mut rng).unwrap();
+    let compressed = app.compress(&parent, &mut rng).unwrap();
+    assert!(app.verify_compressed(&compressed).unwrap());
 }
 
 /// Decompressed wallet proofs recurse: two fuse under a step of the

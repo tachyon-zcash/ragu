@@ -47,29 +47,14 @@
 //! claim, as a proof with relabelled application headers does.
 //!
 //! The statement circuit exposes the compressed proof's padded output header,
-//! suffix included, so the suffix is what selects which of this application's
-//! header types a decompressed statement is taken as. The application must
-//! register, at each suffix a decompressed header can carry, a header type
-//! with the inner application's encoding and meaning: the wallet's own
-//! header type, which [`finalize_with`] checks is registered at every
-//! suffix the wallet's steps output ([`Profile::check_context`]), so that
-//! the two read the statement alike, field order and padding included.
-//!
-//! A decompressed proof's header fields still describe the polynomials the
-//! statement left behind while the proof's slots hold $s(X)$ and padding,
-//! and a step that consumes it cannot tell it from one a registered step
-//! produced. A step that opened such a slot as the polynomial its header
-//! names would read $s(X)$ in the first, and in the last a non-membership
-//! check against the constant one holds at every point and a product
-//! $O = L \cdot R$ computes with $L = 1$. The header types registered at
-//! those suffixes must therefore leave their slots to padding, which no
-//! step can open. The aggregator profile enforces it: [`finalize_with`]
-//! refuses a wallet application whose steps output a header naming a
-//! polynomial ([`Profile::check_context`]). Binding the output slots to
-//! the polynomials the statement stood for, by having the statement
-//! extension expose the compressed proof's own online commitments and this
-//! circuit hold its output slots to them, would change the extension's
-//! contract and is not done here.
+//! including its suffix. At setup, the aggregator registers the wallet's
+//! exact header type for each padding-only output. The decompression step
+//! constrains its output suffix to differ from every wallet output suffix
+//! that names an application polynomial. A wallet can use those headers in
+//! earlier steps and finish with a padding-only header for decompression.
+//! The application fixes the excluded suffixes when registering this
+//! circuit. The statement claim binds the checked suffix to the wallet
+//! proof, and a consuming fuse or the terminal verifier checks that claim.
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its
@@ -78,8 +63,6 @@
 //! binding both ways.
 //!
 //! [`Rerandomize`]: super::rerandomize::Rerandomize
-//! [`finalize_with`]: crate::ApplicationBuilder::finalize_with
-//! [`Profile::check_context`]: crate::profile::Profile::check_context
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 //! [`Dummy`]: crate::header::Dummy
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
@@ -98,7 +81,7 @@ use udon::field::Field;
 
 use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
-use crate::{Header, ipa::challenge_polynomial};
+use crate::{Header, header::Suffix, ipa::challenge_polynomial};
 
 /// The output slot that holds the host IPA's $s(X)$: the first, which the
 /// nested extension's binding circuit holds the IPA's $G'$ to.
@@ -111,12 +94,19 @@ pub(crate) const S_SLOT: usize = 0;
 pub(crate) const DIGEST_SLOT: usize = 0;
 
 pub(crate) struct Decompress<H> {
+    excluded_suffixes: Vec<Suffix>,
     _marker: PhantomData<H>,
 }
 
 impl<H> Decompress<H> {
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::with_excluded_suffixes(&[])
+    }
+
+    pub(crate) fn with_excluded_suffixes(excluded_suffixes: &[Suffix]) -> Self {
         Decompress {
+            excluded_suffixes: excluded_suffixes.to_vec(),
             _marker: PhantomData,
         }
     }
@@ -183,7 +173,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         // registered circuit; the suffix is a witness wire constrained away
         // from `Dummy` and from zero (see `Encoded::new_uniform`).
         let (data, _, _) = witness.cast();
-        let output = Encoded::new_uniform(dr, allocator, data.clone())?;
+        let output =
+            Encoded::new_uniform_excluding(dr, allocator, data.clone(), &self.excluded_suffixes)?;
         // The staged digest, made public as the point of an opening: the
         // left input's first slot, the bootstrap proof's padding, opened
         // there and its value left unread. The native extension's chunks

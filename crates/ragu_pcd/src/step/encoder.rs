@@ -164,6 +164,16 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>
         allocator: &mut A,
         witness: DriverValue<D, H::Data>,
     ) -> Result<Self> {
+        Self::new_uniform_excluding(dr, allocator, witness, &[])
+    }
+
+    /// Uniformly encodes a header and rejects the given suffixes in circuit.
+    pub(crate) fn new_uniform_excluding<A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, H::Data>,
+        excluded_suffixes: &[Suffix],
+    ) -> Result<Self> {
         let mut emulator: Emulator<Wireless<D::MaybeKind, _>> = Emulator::wireless();
         let gadget = H::encode(&mut emulator, &mut (), witness)?;
         let gadget = padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
@@ -182,7 +192,12 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>
         // zero linear coefficient, while an application instance's is its
         // output header's suffix, so a zero suffix would let such a circuit
         // satisfy the claim of a child whose output this step consumes.
-        raw[HEADER_SIZE - 1].clone().enforce_nonzero(dr)?;
+        let suffix = &raw[HEADER_SIZE - 1];
+        suffix.clone().enforce_nonzero(dr)?;
+        for excluded in excluded_suffixes {
+            let excluded = Element::constant(dr, D::F::from(excluded.get()));
+            suffix.sub(dr, &excluded).enforce_nonzero(dr)?;
+        }
 
         Ok(Encoded(EncodedInner::Uniform(raw)))
     }
@@ -293,6 +308,30 @@ mod tests {
         assert!(
             forged.is_err(),
             "a uniform-encoded header must not be able to carry the Dummy suffix"
+        );
+    }
+
+    #[test]
+    fn uniform_encoding_enforces_excluded_suffixes() {
+        let dr = &mut Emulator::execute();
+        let value = || Always::maybe_just(|| Fp::from(7u64));
+        assert!(
+            Encoded::<_, SingleHeader, HEADER_SIZE>::new_uniform_excluding(
+                dr,
+                &mut (),
+                value(),
+                &[PairHeader::SUFFIX],
+            )
+            .is_ok()
+        );
+        assert!(
+            Encoded::<_, SingleHeader, HEADER_SIZE>::new_uniform_excluding(
+                dr,
+                &mut (),
+                value(),
+                &[SingleHeader::SUFFIX],
+            )
+            .is_err()
         );
     }
 

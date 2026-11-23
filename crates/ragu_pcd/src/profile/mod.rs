@@ -1463,6 +1463,13 @@ pub trait ProverContext {
     /// decompresses. Uninhabited for a context no step supplies anything
     /// to.
     type Source;
+
+    /// The wallet output suffixes its decompression step must reject.
+    /// The application fixes these in the step's circuit at finalization.
+    #[doc(hidden)]
+    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix] {
+        &[]
+    }
 }
 
 /// No context, and nothing a step supplies.

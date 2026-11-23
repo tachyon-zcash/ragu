@@ -71,7 +71,7 @@ use crate::{
         },
         transcript as compression_transcript,
     },
-    header::{Header, NUM_ONLINE_FP_POLYS},
+    header::{Header, NUM_ONLINE_FP_POLYS, OnlinePolyCommit, Suffix},
     internal::{ky, native, nested},
     ipa::{IpaCycle, IpaTranscript, MSM, Params},
     profile::{
@@ -129,6 +129,7 @@ where
 {
     wallet: Application<'params, C, WalletRank, HEADER_SIZE, B>,
     canonical: Sides<C>,
+    excluded_suffixes: Vec<Suffix>,
     _marker: PhantomData<fn() -> R>,
 }
 
@@ -139,6 +140,10 @@ where
     B: SelectableBackend,
 {
     type Source = Decompressed<C>;
+
+    fn excluded_decompression_suffixes(&self) -> &[Suffix] {
+        &self.excluded_suffixes
+    }
 }
 
 impl<'params, C, R, const HEADER_SIZE: usize, B> Decompression<'params, C, R, HEADER_SIZE, B>
@@ -186,9 +191,15 @@ where
             .carry::<()>(());
         let compressed = wallet.compress(&bootstrap, rng)?;
         let canonical = Sides::prepare::<WalletRank, R, HEADER_SIZE, B, ()>(&wallet, &compressed)?;
+        let excluded_suffixes = wallet
+            .output_headers()
+            .iter()
+            .filter_map(|(&suffix, &(_, carries_polynomial))| carries_polynomial.then_some(suffix))
+            .collect();
         Ok(Decompression {
             wallet,
             canonical,
+            excluded_suffixes,
             _marker: PhantomData,
         })
     }
@@ -520,8 +531,8 @@ where
     ///
     /// # Errors
     ///
-    /// Fails if the wallet application's verifier would reject `pcd`,
-    /// before any proving, or if proving fails.
+    /// Fails if the output header names an application polynomial, if the
+    /// wallet application's verifier rejects `pcd`, or if proving fails.
     ///
     /// # Soundness
     ///
@@ -532,10 +543,16 @@ where
         rng: &mut RNG,
         pcd: &CompressedPcd<C, H>,
     ) -> Result<Pcd<Profiled<C, Aggregator<HEADER_SIZE>>, R, H>> {
+        let excluded = self.context.excluded_decompression_suffixes();
+        if !H::OnlinePolyCommit::is_padding() || excluded.contains(&H::SUFFIX) {
+            return Err(Error::InvalidWitness(
+                "decompression requires a wallet output header with two padding slots".into(),
+            ));
+        }
         let decompressed = self.context.prepare(pcd)?;
         let (pcd, ()) = self.fuse_with_source(
             rng,
-            Decompress::<H>::new(),
+            Decompress::<H>::with_excluded_suffixes(excluded),
             (
                 pcd.data().clone(),
                 decompressed.host_rounds(),
