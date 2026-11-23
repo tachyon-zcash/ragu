@@ -1487,6 +1487,68 @@ fn native_preamble_swapped_after_y_is_rejected() {
     });
 }
 
+/// The preamble's bridge-hash coordinates are fixed before y by
+/// BridgeSPrime. The native collapse circuit must hold each coordinate to
+/// the unified point used in the step's application claim. Change one
+/// preamble coefficient in an otherwise honest trace: with the equality
+/// removed, these stage wires are unused and the forged trace would satisfy
+/// this circuit.
+#[test]
+fn preamble_bridge_hash_must_match_unified_bridge_hash() -> Result<()> {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9470);
+        let unit = app.bootstrap_pcd();
+        let (honest, ()) = app
+            .fuse(&mut rng, Seed::new(), Fp::from(8), unit.clone(), unit)
+            .expect("the honest seed assembles a proof");
+
+        let mut constraints = TraceConstraints {
+            gates: 1,
+            linear: Vec::new(),
+        };
+        let circuit = native::circuits::collapse::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            native::RevdotParameters<crate::profile::Standard>,
+        >::new();
+        circuit.witness(&mut constraints, Empty)?;
+
+        let proof = honest.proof();
+        let mut trace = proof.native_collapse_rx.clone();
+        trace.add_assign(&proof.native_preamble_rx);
+        trace.add_assign(&proof.native_outer_error_rx);
+        trace.add_assign(&proof.native_inner_error_rx);
+        let coefficients: Vec<_> = trace.iter_coeffs().collect();
+        assert!(constraints.hold(&coefficients), "honest collapse trace");
+
+        let point_wires =
+            stage_wire_indices::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
+                |stage| wires_of(&stage.bridge_hash_commitment),
+            )?;
+        assert_eq!(point_wires.len(), 2);
+        for (coordinate, wire) in point_wires.into_iter().enumerate() {
+            let degree = wire_degree::<R>(wire);
+            assert_eq!(
+                constraints
+                    .linear
+                    .iter()
+                    .filter(|(_, equation)| equation.coefficient(degree) != Fp::ZERO)
+                    .count(),
+                1,
+                "only the bridge-hash equality must constrain coordinate {coordinate}"
+            );
+            let mut forged = coefficients.clone();
+            forged[degree] += Fp::ONE;
+            assert!(
+                !constraints.hold(&forged),
+                "collapse must reject changed bridge-hash coordinate {coordinate}"
+            );
+        }
+        Ok(())
+    })
+}
+
 /// A step's input headers are its children's exported ones. A prover that
 /// lies about a child's data runs its own circuit on the lie, so its own
 /// application claim holds over the header its preamble witnesses, and the

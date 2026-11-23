@@ -273,7 +273,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
 
         // Expose the bridge-hash commitment without absorbing it into the
         // transcript. The parent binds it to the bridge-hash stage it folds
-        // (see `bind_beta`).
+        // (see `bind_beta`), or the terminal verifier binds it at the root.
         unified_output
             .bridge_hash_commitment
             .receive(dr, allocator)?;

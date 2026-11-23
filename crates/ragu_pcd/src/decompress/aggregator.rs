@@ -165,7 +165,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     ///
     /// Panics, in constant evaluation, for a header size without a pin,
     /// so that an aggregator over an unpinned header size does not compile.
-    /// The internal tests' header size is pinned in the tests alone.
+    /// The aggregator capacity test's 195-element header is pinned in tests alone.
     pub const fn native_circuits(header_size: usize) -> Counts {
         match header_size {
             4 => Counts {

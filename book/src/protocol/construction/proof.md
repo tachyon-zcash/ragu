@@ -101,9 +101,11 @@ native and $31$ nested `EndoscalingStep` polynomials, with as many commitments.
 
 The native internal circuits share one public instance, the native **unified
 instance**, of $25$ **slots** and $39$ wires $U_1, \dots, U_{39}$. A point takes
-two wires. Each slot is constrained by exactly one circuit.
+two wires. Each slot is covered by exactly one circuit, which computes or
+receives it. Coverage alone does not constrain a received value to the
+commitment it names.
 
-| Slot | Wires | Value | Constrained By |
+| Slot | Wires | Value | Covered By |
 |---|---|---|---|
 | `bridge_preamble_commitment` | 1, 2 | $R_q[\texttt{BridgePreamble}]$ | `hashes_1` |
 | `bridge_hash_commitment` | 3, 4 | $R_q[\texttt{BridgeHash}]$ | `hashes_1` |
@@ -129,6 +131,12 @@ two wires. Each slot is constrained by exactly one circuit.
 | `nested_a_commitment` | 34, 35 | $[A_q]$ | `bind_endoscalar` |
 | `nested_b_commitment` | 36, 37 | $[B_q]$ | `bind_endoscalar` |
 | `nested_registry_xy_commitment` | 38, 39 | $[m_q(W, x_q, y_q)]$ | `bind_endoscalar` |
+
+In particular, `hashes_1` exposes `bridge_hash_commitment` without absorbing
+it. Before $y$, `BridgeSPrime` fixes the native preamble's copy of its
+coordinates. Native `collapse` equates that copy with the unified point. A
+parent's `bind_beta`, or the terminal verifier for a root, binds that point to
+the `BridgeHash` stage commitment.
 
 The instance polynomial of a circuit whose public output is this instance alone
 is

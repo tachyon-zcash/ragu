@@ -56,8 +56,8 @@ curves, see the [detailed Fuse PIOP](../iop.md).
    trace and record $\text{hdr}_O$ and the six openings. Reject if the circuit
    encodes input headers other than $\text{hdr}_L$ and $\text{hdr}_R$.
 9. Set $r[\texttt{Preamble}]$ to the [stage](stage_contents.md#native-preamble)
-   of the two children and of the fuse's own $\text{hdr}_O$, `circuit_id` and
-   openings.
+   of the two children and of the fuse's own $\text{hdr}_O$, `circuit_id`,
+   openings and `BridgeHash` commitment coordinates.
 10. Compute $m(w, x^{(i)}, Y)$ and $m_q(w_q, x_q^{(i)}, Y)$ for both children,
     with their commitments.
 11. Set $r[\texttt{PointsRegistryWx}]$ to the stage of the two nested
@@ -191,6 +191,8 @@ The bridge hash is the commitment of a stage that holds $O_1$. Item 6 fixes
 $O_1$, but the transcript does not absorb the commitment of that stage, so the
 [free coefficients of the stage](stage_contents.md#bridge-hash), and with them
 the bridge hash, are not fixed before $w$. The honest prover sets them to zero.
+The native `preamble` then carries the bridge-hash point into `BridgeSPrime`,
+which the transcript absorbs before the step's $y$.
 
 The input headers are committed only in item 9, with the `preamble` stage, but
 [$w$ already fixes them](stage_contents.md#native-preamble): each is the output

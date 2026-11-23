@@ -85,7 +85,8 @@ pub(crate) struct OnlineWitness<F, R: Rank> {
     pub(crate) zeta: F,
     pub(crate) polys: [sparse::Polynomial<F, R>; online::NUM_ONLINE_FP_QUERIES],
     /// The bridge-hash stage's commitment coordinates. They bind `O1` but
-    /// need not be its canonical digest or be fixed before $\zeta$.
+    /// need not be its canonical digest or be fixed before $\zeta$. The
+    /// native preamble fixes the point before the step's $y$.
     pub(crate) bridge_hash: [F; 2],
 }
 

@@ -18,7 +18,7 @@ the role of each.
 
 The native stages form a tree rooted at `points::BindingStage`, with three
 chains from the root to a leaf. On the gate axis the chains are as follows,
-where $h = \lceil (3H + 93) / 2 \rceil$ is the number of gates of the
+where $h = \lceil (3H + 95) / 2 \rceil$ is the number of gates of the
 `preamble` stage. Under each stage is the [round](protocol.md#rounds) in which
 the fuse commits it.
 
@@ -48,7 +48,7 @@ message, after $\text{pre\_beta}$ is drawn.
 | Stage | Parent Stage | Values | First Gate |
 |---|---|---|---|
 | `points::BindingStage` | none | 56 | 1 |
-| `preamble` | `points::BindingStage` | $3H + 93$ | 29 |
+| `preamble` | `points::BindingStage` | $3H + 95$ | 29 |
 | `outer_error` | `preamble` | 40 | $29 + h$ |
 | `inner_error` | `outer_error` | 106 | $49 + h$ |
 | `query` | `preamble` | 165 | $29 + h$ |
@@ -93,18 +93,22 @@ child $0$ and then for child $1$.
 | `circuit_id` | element | 1 | $\omega^{(i)}_{\text{id}}$, the domain point of the child's `circuit_id` |
 | `unified` | 14 points, 11 elements | 39 values | $U^{(i)}$ |
 
-It then holds three values of the fuse's own step, in the field `own`.
+It then holds the fuse's own step values in the field `own`, followed by its
+bridge-hash commitment.
 
 | Field | Type | Count | Value |
 |---|---|---|---|
 | `output_header` | element | $H$ | $\text{hdr}_O$ |
 | `circuit_id` | element | 1 | $\omega_{\text{id}}$, the domain point of the fuse's `circuit_id` |
 | `online` | element | 12 | the fuse's six openings $(\xi_s, \eta_s)$ |
+| `bridge_hash_commitment` | element | 2 | coordinates of $R_q[\texttt{BridgeHash}]$, the application's public digest |
 
 The stage is committed after $w$, because the output header and the openings
 are what the step circuit produces at $\zeta = w$. The `BridgeSPrime` stage
-carries its commitment, so the stage is fixed before $y$. That is early enough
-for the fuse's own values, which enter a claim that is folded at $y$.
+carries its commitment, so the stage is fixed before $y$. The step's own
+application claim is folded at $y$ and uses the bridge-hash point as public
+coefficients. `collapse` enforces that the point in this stage equals the
+unified point that the parent binds to `BridgeHash`.
 
 The children's values are needed sooner: the
 [registry chain](batch.md#registry-chain) at $w$ reads a child's $x^{(i)}$ and
@@ -221,6 +225,8 @@ The nested stages form one chain.
 The parent of each stage is the stage above it in the table. The nine stages
 named `Bridge...` are the **bridge stages**. They hold native commitments, and
 the transcript absorbs the commitment of each of them except `BridgeHash`.
+The native `preamble` carries a copy of the `BridgeHash` point, so the
+`BridgeSPrime` absorption fixes that point before the step's $y$.
 
 Here too the gates do not follow the order of commitment. The two stages of the
 nested walk have the first gates of the chain and are committed last, with the
