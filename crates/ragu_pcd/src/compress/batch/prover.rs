@@ -9,7 +9,7 @@ use udon::curve::Affine;
 
 use super::{Batch, check_claims};
 use crate::{
-    committer::Committer, compress::revdot::OpeningClaim, ipa::IpaTranscript,
+    backend::committer::Committer, compress::revdot::OpeningClaim, ipa::IpaTranscript,
     profile::online::prover::alpha_batched_quotients,
 };
 

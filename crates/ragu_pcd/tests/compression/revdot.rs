@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
-    committer::Committer,
+    backend::committer::Committer,
     internal::{
         ky::{self, NativeKy, NestedKy},
         nested,

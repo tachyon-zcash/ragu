@@ -20,7 +20,7 @@ type EqAffine = <Pasta as Cycle>::HostCurve;
 use super::{Batch, Batched, prover::batch, verifier::verify};
 use crate::{
     Application, ApplicationBuilder, Proof,
-    committer::Committer,
+    backend::committer::Committer,
     compress::revdot::{self, OpeningClaim, Openings, Reduction},
     internal::{
         ky::{self, NativeKy, NestedKy},

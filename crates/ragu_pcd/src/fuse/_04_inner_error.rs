@@ -30,7 +30,7 @@ use super::{
 };
 use crate::{
     Application,
-    committer::Committer,
+    backend::committer::Committer,
     internal::{
         native, nested,
         revdot::{self, NumErrorTerms, Parameters},

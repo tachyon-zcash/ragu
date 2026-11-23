@@ -46,8 +46,9 @@
 // Prover and verifier code.
 //
 // The prover is `fuse/`, every `prover.rs` (compression with its batch,
-// revdot and IPA arguments, decompression, and the online polynomials), and
-// the uncompressed proof's builder and dummy proof in `proof/uncompressed/`.
+// revdot and IPA arguments, decompression, and the online polynomials), the
+// uncompressed proof's builder and dummy proof in `proof/uncompressed/`, and
+// the committer in `backend/`.
 // `tests/prover_isolation.rs` fails if any other code reaches into it.
 //
 // The verifier takes three forms:
@@ -79,7 +80,6 @@ extern crate std;
 
 mod application;
 mod backend;
-mod committer;
 mod compress;
 #[cfg(feature = "unstable-aggregator")]
 mod decompress;

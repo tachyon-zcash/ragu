@@ -8,6 +8,8 @@
 
 use ragu_backend::Backend;
 
+pub(crate) mod committer;
+
 mod sealed {
     use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
     use ragu_backend::ReferenceBackend;

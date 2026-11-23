@@ -15,7 +15,7 @@ use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 
 use crate::{
     Pcd, Proof, SelectableBackend,
-    committer::Committer,
+    backend::committer::Committer,
     header::Header,
     profile::{Profile, ProfiledCycle},
     step::{Step, internal::adapter::Adapter},

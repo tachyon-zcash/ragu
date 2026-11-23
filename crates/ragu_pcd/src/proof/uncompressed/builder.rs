@@ -21,7 +21,7 @@ use udon::{curve::Affine, field::Field};
 
 use super::{Cached, Proof};
 use crate::{
-    committer::Committer,
+    backend::committer::Committer,
     header::NUM_ONLINE_FP_POLYS,
     internal::{native::online, nested},
     profile::{

@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     Application, CompressedPcd, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
-    committer::Committer,
+    backend::committer::Committer,
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},

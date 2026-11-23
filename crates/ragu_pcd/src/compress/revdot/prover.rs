@@ -18,7 +18,7 @@ use super::{
 };
 use crate::{
     Proof,
-    committer::Committer,
+    backend::committer::Committer,
     compress::revdot::claims::{self, Kind, Masked, Shape},
     internal::{
         native, nested,
