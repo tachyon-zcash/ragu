@@ -37,7 +37,11 @@ use udon::{curve::Affine as _, field::Field};
 
 use crate::{
     Application, Header, Proof,
-    internal::{ky, native::online},
+    internal::{
+        ky,
+        native::online,
+        transcript::{Challenge, ChallengeW},
+    },
     profile::ProfiledCycle,
     proof::ProofBuilder,
     step::{HeaderInput, Prepared, Step, internal::adapter::Adapter, oracles::OnlineWitness},
@@ -161,7 +165,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         witness: S::Witness<'source>,
         left: (&Proof<C, R>, <S::Left as Header<C::CircuitField>>::Data),
         right: (&Proof<C, R>, <S::Right as Header<C::CircuitField>>::Data),
-        zeta: C::CircuitField,
+        zeta: Challenge<C::CircuitField, ChallengeW>,
         prepared: Prepared<C::CircuitField, S::Output>,
         stage: NativeApplicationStage<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
@@ -173,7 +177,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The slots' polynomials, cloned for the circuit's witness, whose
         // lifetime the step's own witness fixes.
         let online = OnlineWitness {
-            zeta,
+            zeta: *zeta,
             polys: online::polys(left.0, right.0, builder.online_polynomials()).map(Clone::clone),
             bridge_hash: {
                 let (x, y) = builder

@@ -157,9 +157,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             if let Some(mesh) = C::Profile::NATIVE_MESH {
                 let source = &self.native_source().expect("source captured at setup");
                 let coordinates = Coordinates {
-                    w: challenges.w,
-                    x: challenges.x,
-                    y: challenges.y,
+                    w: *challenges.w,
+                    x: *challenges.x,
+                    y: *challenges.y,
                 };
                 openings.claims.extend(proof_check!(mesh.terminal_claims(
                     C::Profile::NATIVE_ONLINE,
@@ -222,9 +222,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             if let Some(mesh) = C::Profile::NESTED_MESH {
                 let source = &self.nested_source().expect("source captured at setup");
                 let coordinates = Coordinates {
-                    w: crate::internal::nested::challenge::<C>(challenges.w)?,
-                    x: crate::internal::nested::challenge::<C>(challenges.x)?,
-                    y: crate::internal::nested::challenge::<C>(challenges.y)?,
+                    w: crate::internal::nested::challenge::<C>(*challenges.w)?,
+                    x: crate::internal::nested::challenge::<C>(*challenges.x)?,
+                    y: crate::internal::nested::challenge::<C>(*challenges.y)?,
                 };
                 openings.claims.extend(proof_check!(mesh.terminal_claims(
                     C::Profile::NESTED_ONLINE,

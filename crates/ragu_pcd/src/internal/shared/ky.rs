@@ -566,9 +566,9 @@ pub fn nested_online_values<C: ProfiledCycle>(
         ));
     }
     Ok(alloc::vec![
-        nested::challenge::<C>(challenges.w)?,
-        nested::challenge::<C>(challenges.alpha)?,
-        nested::challenge::<C>(challenges.pre_beta)?,
+        nested::challenge::<C>(*challenges.w)?,
+        nested::challenge::<C>(*challenges.alpha)?,
+        nested::challenge::<C>(*challenges.pre_beta)?,
         sums[0],
         sums[1],
     ])

@@ -39,7 +39,14 @@ pub mod circuits {
 }
 
 use crate::{
-    internal::{endoscalar, revdot::Parameters},
+    internal::{
+        endoscalar,
+        revdot::Parameters,
+        transcript::{
+            Challenge, ChallengeAlpha, ChallengeMu, ChallengeMuPrime, ChallengePreBeta, ChallengeU,
+            ChallengeW, ChallengeX, ChallengeY, ChallengeZ,
+        },
+    },
     profile::{BondingSlot, CircuitSlot, Profile, ProfiledCycle, Shape},
 };
 
@@ -262,33 +269,33 @@ pub fn challenge<C: Cycle>(native: C::CircuitField) -> Result<C::ScalarField> {
 
 /// The native challenges the nested side consumes, in the order the
 /// challenge stage holds their lifts (see [`stages::challenges`]), with
-/// `pre_beta` last.
+/// `pre_beta` last. Each is tagged with its role (see [`Challenge`]).
 #[derive(Clone, Copy)]
 pub struct Challenges<F> {
-    pub w: F,
-    pub y: F,
-    pub z: F,
-    pub mu: F,
-    pub mu_prime: F,
-    pub x: F,
-    pub alpha: F,
-    pub u: F,
-    pub pre_beta: F,
+    pub w: Challenge<F, ChallengeW>,
+    pub y: Challenge<F, ChallengeY>,
+    pub z: Challenge<F, ChallengeZ>,
+    pub mu: Challenge<F, ChallengeMu>,
+    pub mu_prime: Challenge<F, ChallengeMuPrime>,
+    pub x: Challenge<F, ChallengeX>,
+    pub alpha: Challenge<F, ChallengeAlpha>,
+    pub u: Challenge<F, ChallengeU>,
+    pub pre_beta: Challenge<F, ChallengePreBeta>,
 }
 
 impl<F: Copy> Challenges<F> {
-    /// The challenges in stage order, `pre_beta` last.
+    /// The challenges' values in stage order, `pre_beta` last.
     pub fn in_order(&self) -> [F; stages::challenges::NUM + 1] {
         [
-            self.w,
-            self.y,
-            self.z,
-            self.mu,
-            self.mu_prime,
-            self.x,
-            self.alpha,
-            self.u,
-            self.pre_beta,
+            *self.w,
+            *self.y,
+            *self.z,
+            *self.mu,
+            *self.mu_prime,
+            *self.x,
+            *self.alpha,
+            *self.u,
+            *self.pre_beta,
         ]
     }
 }

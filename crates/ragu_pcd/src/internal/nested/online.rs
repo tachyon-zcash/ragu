@@ -50,6 +50,7 @@ use udon::field::Field;
 use super::challenge;
 use crate::{
     Application, Proof, SelectableBackend,
+    internal::transcript::{Challenge, ChallengeU},
     profile::{
         Profile, ProfiledCycle, Source,
         online::{Phase, PreparationChallenges, prover::State},
@@ -285,12 +286,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// `pre_beta`.
     pub(crate) fn commit_nested_online_eval<RNG: CryptoRng>(
         &self,
-        u: C::CircuitField,
+        u: Challenge<C::CircuitField, ChallengeU>,
         rng: &mut RNG,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         builder.nested_online_mut().commit_eval::<B, _, _>(
-            challenge::<C>(u)?,
+            challenge::<C>(*u)?,
             C::nested_generators(self.params),
             rng,
         )

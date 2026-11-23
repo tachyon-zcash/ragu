@@ -105,7 +105,10 @@ use super::super::{
 };
 use crate::{
     RAGU_TAG,
-    internal::{revdot, transcript::Transcript},
+    internal::{
+        revdot,
+        transcript::{ChallengeW, ChallengeY, ChallengeZ, Transcript},
+    },
     profile::ProfiledCycle,
 };
 
@@ -267,7 +270,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
                 .bridge_preamble_commitment
                 .receive(dr, allocator)?;
             bridge_preamble_commitment.write(dr, &mut transcript)?;
-            transcript.challenge(dr)?
+            transcript.challenge::<ChallengeW>(dr)?.into_inner()
         };
         unified_output.w.provide(w.clone());
 
@@ -284,8 +287,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
                 .bridge_s_prime_commitment
                 .receive(dr, allocator)?;
             bridge_s_prime_commitment.write(dr, &mut transcript)?;
-            let y = transcript.challenge(dr)?;
-            let z = transcript.challenge(dr)?;
+            let y = transcript.challenge::<ChallengeY>(dr)?.into_inner();
+            let z = transcript.challenge::<ChallengeZ>(dr)?.into_inner();
             (y, z)
         };
         unified_output.y.provide(y.clone());

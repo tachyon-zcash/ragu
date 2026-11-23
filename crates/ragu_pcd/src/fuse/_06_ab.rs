@@ -61,6 +61,7 @@ use crate::{
     internal::{
         native::{self, stages::points as native_points},
         nested, revdot,
+        transcript::{Challenge, ChallengeMuPrime},
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -85,7 +86,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         native_source: &NativeFuseProofSource<'_, C, R>,
-        mu_prime: &Element<'dr, D>,
+        mu_prime: &Challenge<Element<'dr, D>, ChallengeMuPrime>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
@@ -113,7 +114,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
-        native_mu_prime: &Element<'dr, D>,
+        native_mu_prime: &Challenge<Element<'dr, D>, ChallengeMuPrime>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
@@ -137,7 +138,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         native_source: &NativeFuseProofSource<'_, C, R>,
-        mu_prime: &Element<'dr, D>,
+        mu_prime: &Challenge<Element<'dr, D>, ChallengeMuPrime>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where

@@ -62,6 +62,7 @@ use udon::field::Field;
 pub(crate) use crate::header::NUM_ONLINE_FP_POLYS;
 use crate::{
     Application, Proof, SelectableBackend,
+    internal::transcript::{Challenge, ChallengeU},
     profile::{
         Profile, ProfiledCycle, Source,
         online::{Phase, PreparationChallenges, prover::State},
@@ -327,13 +328,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Commits the native evaluation stage at `u`, before `pre_beta`.
     pub(crate) fn commit_native_online_eval<RNG: CryptoRng>(
         &self,
-        u: C::CircuitField,
+        u: Challenge<C::CircuitField, ChallengeU>,
         rng: &mut RNG,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         builder
             .native_online_mut()
-            .commit_eval::<B, _, _>(u, C::host_generators(self.params), rng)
+            .commit_eval::<B, _, _>(*u, C::host_generators(self.params), rng)
     }
 }
 

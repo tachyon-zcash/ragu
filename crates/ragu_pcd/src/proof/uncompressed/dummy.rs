@@ -24,6 +24,7 @@ use crate::{
             stages::points::{self as native_points, Inputs},
         },
         nested::{self, NumPoints, online as online_fq},
+        transcript::Challenge,
     },
     profile::{Profile, ProfiledCycle},
     proof::ProofBuilder,
@@ -81,16 +82,17 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // challenges selects claim 1 alone. That is harmless: a dummy is never
         // verified on its own, and the bootstrap step that consumes it leaves
         // its c unconstrained.
+        let one = C::CircuitField::ONE;
         let challenges = nested::Challenges {
-            w: C::CircuitField::ONE,
-            y: C::CircuitField::ONE,
-            z: C::CircuitField::ONE,
-            mu: C::CircuitField::ONE,
-            mu_prime: C::CircuitField::ONE,
-            x: C::CircuitField::ONE,
-            alpha: C::CircuitField::ONE,
-            u: C::CircuitField::ONE,
-            pre_beta: C::CircuitField::ONE,
+            w: Challenge::new(one),
+            y: Challenge::new(one),
+            z: Challenge::new(one),
+            mu: Challenge::new(one),
+            mu_prime: Challenge::new(one),
+            x: Challenge::new(one),
+            alpha: Challenge::new(one),
+            u: Challenge::new(one),
+            pre_beta: Challenge::new(one),
         };
         let lifts = challenges
             .lifts::<C>()
@@ -573,16 +575,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             builder.set_bridge_hash_rx(rx, commitment);
         }
 
-        // Challenges (all ones for trivial)
-        builder.set_w(C::CircuitField::ONE);
-        builder.set_y(C::CircuitField::ONE);
-        builder.set_z(C::CircuitField::ONE);
-        builder.set_mu(C::CircuitField::ONE);
-        builder.set_mu_prime(C::CircuitField::ONE);
-        builder.set_x(C::CircuitField::ONE);
-        builder.set_alpha(C::CircuitField::ONE);
-        builder.set_u(C::CircuitField::ONE);
-        builder.set_pre_beta(C::CircuitField::ONE);
+        // The all-one challenges above.
+        builder.set_w(challenges.w);
+        builder.set_y(challenges.y);
+        builder.set_z(challenges.z);
+        builder.set_mu(challenges.mu);
+        builder.set_mu_prime(challenges.mu_prime);
+        builder.set_x(challenges.x);
+        builder.set_alpha(challenges.alpha);
+        builder.set_u(challenges.u);
+        builder.set_pre_beta(challenges.pre_beta);
 
         // Commitments are computed lazily by the builder from the polynomials.
         builder.build().expect("dummy proof construction failed")
