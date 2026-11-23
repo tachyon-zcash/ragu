@@ -426,8 +426,10 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
     /// Allocates a value from witness input and marks it covered.
     ///
     /// Use when this circuit receives a value determined outside the circuit
-    /// (e.g., a commitment) and takes responsibility for constraining its
-    /// correctness via a separate constraint on the returned value.
+    /// (e.g., a commitment). The caller may constrain it here, or another
+    /// circuit or the terminal verifier may bind it to its claimed source.
+    /// Coverage only records that this circuit exposed the slot; it does not
+    /// prove that binding.
     ///
     /// See [`provide`](Self::provide) for the internally-computed
     /// counterpart.

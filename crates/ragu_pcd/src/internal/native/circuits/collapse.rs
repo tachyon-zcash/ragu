@@ -70,6 +70,7 @@
 //! [`preamble`]: super::super::stages::preamble
 //! [`points::BindingStage`]: super::super::stages::points::BindingStage
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::{
@@ -200,13 +201,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
-        // Compute the step's own application k(y), over the preamble's
-        // headers and openings and the unified instance's w and bridge-hash
-        // commitment. The y challenge is derived in hashes_1 and read (not
-        // received) here, since hashes_1 owns coverage.
+        // Compute the step's own application k(y) over values fixed by
+        // BridgeSPrime before y. The unified bridge-hash commitment must
+        // equal the preamble's copy. The parent binds that unified point to
+        // the BridgeHash stage it folds, or the terminal verifier does at
+        // the root. The y challenge is
+        // derived in hashes_1 and read here, since hashes_1 owns coverage.
         let y = unified_output.y.read(dr, allocator)?;
         let zeta = unified_output.w.read(dr, allocator)?;
         let bridge_hash = unified_output.bridge_hash_commitment.read(dr, allocator)?;
+        let mut bridge_hash_coordinates = Vec::with_capacity(2);
+        bridge_hash.write(dr, &mut bridge_hash_coordinates)?;
+        for (staged, unified) in preamble
+            .bridge_hash_commitment
+            .iter()
+            .zip(&bridge_hash_coordinates)
+        {
+            staged.enforce_equal(dr, unified)?;
+        }
         let application_ky = preamble.application_ky(dr, &y, &zeta, &bridge_hash)?;
 
         // The compute_v bridge k(y) values: the children's unified

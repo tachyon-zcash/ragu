@@ -13,7 +13,9 @@
 //! the preamble, which $w$ absorbs. The unified instance carries the
 //! bridge-hash commitment without absorbing it into the transcript, the
 //! parent binds it to the stage it folds, and the step's application
-//! instance carries it too (see [`digest`]).
+//! instance carries it too (see [`digest`]). The native preamble holds a
+//! copy of the point; `BridgeSPrime` fixes that copy before the step's $y$,
+//! and the native collapse circuit equates it to the unified point.
 //!
 //! Binding to `O1` does not make the digest unique or fixed before $w$.
 //! Only the honest prover's encoding is recomputed by [`digest`]; anchor

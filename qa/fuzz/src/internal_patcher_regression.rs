@@ -365,67 +365,65 @@ fn expected(name: &str, point: &str) -> Census {
     let (stage_wires, wires, instance, outputs, demoted, strongly_forced, cheatable) = match name {
         // The instance is the unified one plus the step's own output header
         // and circuit id.
-        "hashes_1" => (202, 5470, 45, 12, 0, 12, 114),
-        "hashes_2" => (202, 8073, 40, 5, 1, 5, 104),
+        "hashes_1" => (204, 5474, 45, 12, 0, 12, 115),
+        "hashes_2" => (204, 8077, 40, 5, 1, 5, 105),
         // At the base case the step's own output header, circuit id and
         // output openings, pinned to the bootstrap step's, replace c among
         // the outputs.
-        "collapse" if point == "bootstrap" => (308, 2200, 40, 26, 0, 26, 170),
-        "collapse" if point == "leaves" || point == "nodes" => (308, 2200, 40, 18, 0, 18, 169),
-        "compute_v" => (456, 7544, 40, 1, 0, 1, 482),
-        "bind_challenges_0" => (456, 7848, 40, 2, 0, 2, 736),
-        "bind_challenges_1" => (456, 7869, 40, 2, 0, 2, 736),
-        "bind_challenges_2" => (456, 7869, 40, 2, 0, 2, 736),
-        "bind_challenges_3" if point == "bootstrap" => (456, 7918, 40, 2, 0, 2, 737),
+        "collapse" if point == "bootstrap" => (310, 2204, 40, 26, 0, 26, 171),
+        "collapse" if point == "leaves" || point == "nodes" => (310, 2204, 40, 18, 0, 18, 170),
+        "compute_v" => (458, 7548, 40, 1, 0, 1, 483),
+        "bind_challenges_0" => (458, 7852, 40, 2, 0, 2, 737),
+        "bind_challenges_1" => (458, 7873, 40, 2, 0, 2, 737),
+        "bind_challenges_2" => (458, 7873, 40, 2, 0, 2, 737),
+        "bind_challenges_3" if point == "bootstrap" => (458, 7922, 40, 2, 0, 2, 738),
         "bind_challenges_3" if point == "leaves" || point == "nodes" => {
-            (456, 7918, 40, 2, 0, 2, 735)
+            (458, 7922, 40, 2, 0, 2, 736)
         }
-        "bind_beta" => (162, 7279, 40, 56, 0, 56, 615),
-        "bind_endoscalar" => (508, 3174, 40, 245, 0, 245, 508),
-        "native_endoscaling_step_0" if point == "bootstrap" || point == "nodes" => {
-            (508, 10641, 1, 2, 0, 2, 254)
-        }
+        "bind_beta" => (164, 7283, 40, 56, 0, 56, 616),
+        "bind_endoscalar" if point == "bootstrap" => (508, 3174, 40, 245, 0, 245, 504),
+        "bind_endoscalar" if point == "leaves" => (508, 3174, 40, 245, 0, 245, 507),
+        "bind_endoscalar" if point == "nodes" => (508, 3174, 40, 245, 0, 245, 508),
+        "native_endoscaling_step_0" if point == "bootstrap" => (508, 10641, 1, 2, 0, 2, 254),
         // The last step of either walk takes the points the others leave.
         "native_endoscaling_step_26" => (508, 8236, 1, 2, 0, 2, 253),
         step if step.starts_with("native_endoscaling_step_") => (508, 10641, 1, 2, 0, 2, 253),
         "endoscaling_step_30" => (546, 3501, 0, 2, 0, 2, 272),
         step if step.starts_with("endoscaling_step_") => (546, 10716, 0, 2, 0, 2, 272),
-        "nested_collapse" if point == "bootstrap" => (1220, 6134, 37, 47, 0, 47, 622),
-        "nested_collapse" if point == "leaves" || point == "nodes" => {
-            (1220, 6134, 37, 48, 0, 48, 620)
-        }
+        "nested_collapse" if point == "bootstrap" => (1220, 6134, 37, 47, 0, 47, 618),
+        "nested_collapse" if point == "leaves" => (1220, 6134, 37, 48, 0, 48, 619),
+        "nested_collapse" if point == "nodes" => (1220, 6134, 37, 48, 0, 48, 620),
         "nested_compute_v" => (1220, 7219, 37, 1, 0, 1, 612),
         other => panic!("no census pinned for {other}"),
     };
     let (pinned, rejected) = match (name, point) {
-        ("hashes_1", _) => (8, 106),
-        ("hashes_2", _) => (9, 95),
-        ("collapse", "bootstrap") => (14, 156),
-        ("collapse", "leaves" | "nodes") => (12, 157),
-        ("compute_v", _) => (10, 472),
-        ("bind_challenges_0", _) => (10, 726),
-        ("bind_challenges_1", _) => (10, 726),
-        ("bind_challenges_2", _) => (10, 726),
-        ("bind_challenges_3", "bootstrap") => (12, 725),
-        ("bind_challenges_3", "leaves" | "nodes") => (10, 725),
-        ("bind_beta", _) => (7, 608),
-        ("bind_endoscalar", "bootstrap") => (111, 397),
-        ("bind_endoscalar", "leaves") => (103, 405),
-        ("bind_endoscalar", "nodes") => (106, 402),
-        ("native_endoscaling_step_0", "bootstrap") => (110, 144),
-        ("native_endoscaling_step_0", "nodes") => (105, 149),
-        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (110, 143),
-        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (102, 151),
-        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (105, 148),
-        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (109, 163),
-        (step, "leaves") if step.starts_with("endoscaling_step_") => (102, 170),
-        (step, "nodes") if step.starts_with("endoscaling_step_") => (104, 168),
-        ("nested_collapse", "bootstrap") => (128, 494),
-        ("nested_collapse", "leaves") => (120, 500),
-        ("nested_collapse", "nodes") => (122, 498),
-        ("nested_compute_v", "bootstrap") => (127, 485),
-        ("nested_compute_v", "leaves") => (120, 492),
-        ("nested_compute_v", "nodes") => (122, 490),
+        ("hashes_1", _) => (8, 107),
+        ("hashes_2", _) => (9, 96),
+        ("collapse", "bootstrap") => (14, 157),
+        ("collapse", "leaves" | "nodes") => (12, 158),
+        ("compute_v", _) => (10, 473),
+        ("bind_challenges_0", _) => (10, 727),
+        ("bind_challenges_1", _) => (10, 727),
+        ("bind_challenges_2", _) => (10, 727),
+        ("bind_challenges_3", "bootstrap") => (12, 726),
+        ("bind_challenges_3", "leaves" | "nodes") => (10, 726),
+        ("bind_beta", _) => (7, 609),
+        ("bind_endoscalar", "bootstrap") => (98, 406),
+        ("bind_endoscalar", "leaves") => (100, 407),
+        ("bind_endoscalar", "nodes") => (108, 400),
+        ("native_endoscaling_step_0", "bootstrap") => (97, 157),
+        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (97, 156),
+        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (99, 154),
+        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (107, 146),
+        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (96, 176),
+        (step, "leaves") if step.starts_with("endoscaling_step_") => (99, 173),
+        (step, "nodes") if step.starts_with("endoscaling_step_") => (107, 165),
+        ("nested_collapse", "bootstrap") => (115, 503),
+        ("nested_collapse", "leaves") => (117, 502),
+        ("nested_collapse", "nodes") => (125, 495),
+        ("nested_compute_v", "bootstrap") => (114, 498),
+        ("nested_compute_v", "leaves") => (117, 495),
+        ("nested_compute_v", "nodes") => (125, 487),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {

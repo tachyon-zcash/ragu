@@ -200,16 +200,19 @@ $c_{q,\star} = \revdot{a_{q,\star}}{b_{q,\star}}$.
    $[b_{q,\star}]$.
    In the compiled protocol, the
    [`Preamble` stage](construction/stage_contents.md#native-preamble)
-   records the step's domain point, output header and openings, and each
-   child's native instance, output header and domain point. The proof stores
+   records the step's domain point, output header, openings and bridge-hash
+   commitment, plus each child's native instance, output header and domain
+   point. The proof stores
    the step's integer index $\text{id}$.
 3. **Challenge.** Absorb $R_q[\texttt{BridgeSPrime}]$ and squeeze $y$, then $z$.
 
 The [bridge hash](construction/stage_contents.md#bridge-hash) is the point
 $R_q[\texttt{BridgeHash}]$ with coordinates $(h_x,h_y)$. Round 1 fixes the
 stage's input $[o_1]$. The stage's free coefficients are still free when $w$
-is drawn, although the honest prover uses zero. `BridgeSPrime` then binds both
-coordinates through the application trace before $y$ and $z$.
+is drawn, although the honest prover uses zero. The native `Preamble` records
+the resulting point, and `BridgeSPrime` binds that stage before $y$ and $z$.
+`collapse` enforces equality between this copy and the point in the unified
+instance that the parent binds to `BridgeHash`.
 
 ### Round 3. Commit the group quotients {#iop-round-3}
 

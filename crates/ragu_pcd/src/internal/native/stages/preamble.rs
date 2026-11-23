@@ -4,15 +4,17 @@
 //! (its output header, its circuit id, its unified instance, in a profile
 //! with a statement circuit the step binding's openings and, in a profile
 //! with online batches, what its batches export), and the step's own output
-//! header, circuit id and online openings, from which the step's own
-//! application $k(y)$ is computed.
+//! header, circuit id, online openings and bridge-hash commitment, from
+//! which the step's own application $k(y)$ is computed.
 //!
 //! ## Commitment after $w$
 //!
 //! The stage is committed after the step's circuit ran, in the fuse's
 //! `s_prime` phase, because the output header and the openings are what the
-//! circuit fixes at $\zeta = w$ (see [`online`]). The `s_prime` bridge
-//! carries the commitment, so the stage is fixed before $y$ is squeezed.
+//! circuit fixes at $\zeta = w$ (see [`online`]). It also holds the
+//! bridge-hash commitment used in the application instance. The `s_prime`
+//! bridge carries this stage's commitment, fixing that point before $y$
+//! is squeezed. `collapse` holds the point to the unified instance.
 //!
 //! The step's own values need nothing earlier: the application claim that
 //! holds them is folded at $y$.
@@ -62,6 +64,7 @@ use ragu_primitives::{
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
+use udon::curve::Affine as _;
 
 use crate::{
     Proof,
@@ -99,7 +102,7 @@ pub struct OwnWitness<F, const HEADER_SIZE: usize> {
 ///
 /// Contains references to the left and right proofs, their output headers
 /// computed outside the circuit, and the step's own output header, circuit
-/// id and online openings.
+/// id, online openings and bridge-hash commitment.
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Left child proof witness.
     pub left: ChildWitness<'a, C, R, HEADER_SIZE>,
@@ -107,12 +110,14 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub right: ChildWitness<'a, C, R, HEADER_SIZE>,
     /// The step's own application data.
     pub own: OwnWitness<C::CircuitField, HEADER_SIZE>,
+    /// Coordinates of the step's bridge-hash commitment, fixed here before $y$.
+    pub bridge_hash_commitment: [C::CircuitField; 2],
 }
 
 impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
     /// Create a witness from child proof references, the children's
     /// pre-computed output headers and the step's own output header,
-    /// circuit id and online openings.
+    /// circuit id, online openings and bridge-hash commitment.
     pub fn new(
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
@@ -121,7 +126,12 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
         output_header: &[C::CircuitField],
         circuit_id: CircuitIndex,
         online: online::Queries<C::CircuitField>,
+        bridge_hash_commitment: C::NestedCurve,
     ) -> Result<Self> {
+        let (bridge_hash_x, bridge_hash_y) =
+            bridge_hash_commitment.coordinates().ok_or_else(|| {
+                Error::InvalidWitness("bridge-hash commitment is the identity".into())
+            })?;
         Ok(Witness {
             left: ChildWitness {
                 output_header: FixedVec::try_from(left_output_header.to_vec())?,
@@ -136,6 +146,7 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
                 circuit_id,
                 online,
             },
+            bridge_hash_commitment: [bridge_hash_x, bridge_hash_y],
         })
     }
 }
@@ -585,6 +596,10 @@ pub struct Output<
     pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
     #[ragu(gadget)]
     pub own: OwnInputs<'dr, D, HEADER_SIZE>,
+    /// The bridge-hash commitment's coordinates. `collapse` equates these
+    /// to the unified point, which supplies the curve-membership check.
+    #[ragu(gadget)]
+    pub bridge_hash_commitment: FixedVec<Element<'dr, D>, ConstLen<2>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, const HEADER_SIZE: usize>
@@ -721,6 +736,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             + HEADER_SIZE
             + 1
             + 2 * online::NUM_ONLINE_FP_QUERIES
+            + 2
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -759,7 +775,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             online: online::alloc_queries(dr, &mut (), witness.as_ref().map(|w| &w.own.online))?,
         };
 
-        Ok(Output { left, right, own })
+        let bridge_hash_commitment = FixedVec::try_from_fn(|i| {
+            Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|w| w.bridge_hash_commitment[i]),
+            )
+        })?;
+
+        Ok(Output {
+            left,
+            right,
+            own,
+            bridge_hash_commitment,
+        })
     }
 }
 

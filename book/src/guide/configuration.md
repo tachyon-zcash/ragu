@@ -198,10 +198,10 @@ ApplicationBuilder::<Pasta, R<13>, 9>::new()
 over-allocate.
 
 **Upper bound**: for the Standard profile at the wallet rank `R<13>`,
-the largest header size is 195 elements. Ragu's challenge binder circuits
+the largest header size is 194 elements. Ragu's challenge binder circuits
 load the headers of both children and the step's own beside the online
-openings, and at 195 the largest binder uses all 2047 gates that a circuit
-may hold. A larger header fails `finalize` with
+openings and the bridge-hash point. At 194, the largest binder uses all
+2047 gates that a circuit may hold. A larger header fails `finalize` with
 `Error: exceeded the maximum number of gates (2047)`.
 Profiles with extensions can have a lower limit because their additional
 claims and commitments also consume gates. Check capacity with `finalize`
