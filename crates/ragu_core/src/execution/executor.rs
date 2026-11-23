@@ -27,21 +27,38 @@ pub fn for_each_mut<T: Send>(values: &mut [T], work: impl Fn(usize, &mut T) + Sy
     );
 }
 
-// Match maybe-rayon's serial fallback on WebAssembly without atomics.
-#[cfg(all(
-    feature = "multicore",
-    not(all(target_arch = "wasm32", not(target_feature = "atomics")))
-))]
-fn worker_count() -> usize {
-    maybe_rayon::current_num_threads()
+/// Runs two independent jobs and returns both results.
+///
+/// The jobs may run concurrently on the current pool; builds without
+/// `multicore` run `left` and then `right`. Neither job may depend on the
+/// other having run. This does not allocate or create a new thread pool.
+///
+/// If either job panics, the panic propagates once both have finished or
+/// unwound.
+pub fn join<A: Send, B: Send>(
+    left: impl FnOnce() -> A + Send,
+    right: impl FnOnce() -> B + Send,
+) -> (A, B) {
+    PoolExecutor.join(left, right)
 }
 
-#[cfg(not(all(
-    feature = "multicore",
-    not(all(target_arch = "wasm32", not(target_feature = "atomics")))
-)))]
-fn worker_count() -> usize {
-    1
+/// Returns the current worker pool's size, or one for serial execution.
+pub fn worker_count() -> usize {
+    // Match maybe-rayon's serial fallback on WebAssembly without atomics.
+    #[cfg(all(
+        feature = "multicore",
+        not(all(target_arch = "wasm32", not(target_feature = "atomics")))
+    ))]
+    {
+        maybe_rayon::current_num_threads()
+    }
+    #[cfg(not(all(
+        feature = "multicore",
+        not(all(target_arch = "wasm32", not(target_feature = "atomics")))
+    )))]
+    {
+        1
+    }
 }
 
 pub(crate) struct PoolExecutor;

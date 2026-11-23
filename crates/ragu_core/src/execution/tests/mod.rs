@@ -36,3 +36,9 @@ fn executor_completes_right_job_after_left_panic() {
     assert!(result.is_err());
     assert!(completed.load(Ordering::Relaxed));
 }
+
+#[test]
+fn join_returns_both_results_in_order() {
+    let (left, right) = crate::join(|| 7, || "right");
+    assert_eq!((left, right), (7, "right"));
+}

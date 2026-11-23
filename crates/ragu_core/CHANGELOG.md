@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `msm_batch` for independent MSMs sharing a worker budget and `for_each_mut`
   for scoped work with original item indices.
+- Added `msm_many` for a runtime-sized batch of independent MSMs and `join`
+  for a pair of independent jobs.
+- Added `PreparedMsm` for reusable Pasta bases, `MsmWorkspace` for explicitly
+  scoped MSM scratch, and `BaseTable` for precomputed fixed-base multiples.
 
 ## [0.0.0] - 2025-07-29
 
