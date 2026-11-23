@@ -201,13 +201,6 @@ user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
-[[publisher.ragu_gadgets]]
-version = "0.0.0"
-when = "2025-07-29"
-user-id = 1244
-user-login = "ebfull"
-user-name = "Sean Bowe"
-
 [[publisher.ragu_testing]]
 version = "0.0.0"
 when = "2026-02-17"
