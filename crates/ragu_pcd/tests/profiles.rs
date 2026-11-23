@@ -184,7 +184,7 @@ fn an_aggregator_over_another_wallet_is_another_application() -> Result<()> {
 #[test]
 fn an_aggregator_refuses_source_registry_overrides() -> Result<()> {
     use ragu_backend::ReferenceBackend;
-    use ragu_pcd::profile::online::source::SourceRegistry;
+    use ragu_pcd::profile::online::SourceRegistry;
 
     type Agg = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
     let pasta = ragu_pcd::pasta::baked_aggregator();

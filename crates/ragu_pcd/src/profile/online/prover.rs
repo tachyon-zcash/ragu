@@ -4,8 +4,12 @@
 //! is decided on this side of the calls: a side without a batch supplies
 //! nothing, commits no stage and traces no helper, and a side without a mesh
 //! carries and prepares no source polynomial.
+//!
+//! The same state prepares the source meshes' witnesses, keeping inherited
+//! polynomials exactly, and holds the batch to its commitment deadlines
+//! ([`Prepared`]).
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use ragu_backend::Backend;
 use ragu_circuits::{
@@ -20,15 +24,12 @@ use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
 use super::{
-    Phase,
-    batch::Challenges,
-    circuit, extension,
-    mesh_preparation::PhaseWitness,
-    prepared::{PreparationChallenges, Prepared},
-    source::SourceRegistry,
+    Layout, Phase, PreparationChallenges, SourceRegistry,
+    circuit::{self, Challenges},
+    mesh::Mesh,
     stages::{
-        EvalStage, InputStage, InputWitness, PolynomialsLen, Present, QueryStage, QueryWitness,
-        Side,
+        self, EvalStage, InputStage, InputWitness, PolynomialsLen, Present, QueryStage,
+        QueryWitness, Side,
     },
 };
 use crate::profile::{ExtensionRxs, Profile};
@@ -427,7 +428,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         index: impl FnOnce(u32) -> CircuitIndex,
         rng: &mut RNG,
     ) -> Result<Fold<C::Scalar, P, S>> {
-        let sums = match (self.witness(challenges), extension::helper::<P, S>()) {
+        let sums = match (self.witness(challenges), stages::helper::<P, S>()) {
             (Some(witness), Some(helper)) => {
                 let circuit = MultiStage::<C::Scalar, R, _>::new(self.circuit());
                 let (trace, sums) = circuit.trace(witness)?.into_parts();
@@ -480,7 +481,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
 
     /// Completes the polynomials the profile's prover filled its own
     /// extension with into the registered extension's, in the order
-    /// [`extension::layout`] declares: the helper after the profile's
+    /// [`stages::layout`] declares: the helper after the profile's
     /// circuits, and the batch's stages before the profile's. A side without
     /// a batch adds nothing.
     pub(crate) fn extension_rxs(
@@ -498,5 +499,381 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             rxs.stages.splice(0..0, stages);
         }
         Ok(rxs)
+    }
+}
+
+/// Witnesses available at one declared mesh deadline.
+pub(crate) struct PhaseWitness<'a, F: Field, R: Rank> {
+    pub phase: Phase,
+    pub inputs: &'a [F],
+    pub challenges: PreparationChallenges<F>,
+    pub inherited: Option<[&'a sparse::Polynomial<F, R>; 2]>,
+    pub supplied: Vec<sparse::Polynomial<F, R>>,
+}
+
+impl Mesh {
+    /// Whether a polynomial slot is supplied by the source mesh.
+    pub fn owns(&self, index: usize) -> bool {
+        self.restrictions().any(|r| r.polynomial == index)
+            || self.helpers.iter().any(|h| h.polynomial == index)
+            || self.u == index
+            || self.outgoing == index
+    }
+
+    /// Positions of the two children's x,y coordinates, in child order.
+    pub fn inherited_coordinates(&self) -> [usize; 4] {
+        [
+            self.inherited[0].x,
+            self.inherited[0].y,
+            self.inherited[1].x,
+            self.inherited[1].y,
+        ]
+    }
+
+    /// Fills the inherited coordinates from the actual child instances.
+    ///
+    /// The corresponding circuit exports must authenticate these same values.
+    /// This helper alone is not a soundness boundary.
+    pub(crate) fn carry_inputs<F: Field>(
+        &self,
+        layout: Layout,
+        mut inputs: Vec<F>,
+        children: [[F; 2]; 2],
+    ) -> Result<Vec<F>> {
+        self.check(layout)?;
+        if inputs.len() != layout.inputs {
+            return Err(Error::InvalidWitness(
+                "source mesh input length does not match its declaration".into(),
+            ));
+        }
+        for (index, value) in self
+            .inherited_coordinates()
+            .into_iter()
+            .zip(children.into_iter().flatten())
+        {
+            inputs[index] = value;
+        }
+        Ok(inputs)
+    }
+
+    /// Merges user polynomial witnesses with the source mesh's reserved slots.
+    ///
+    /// Before w, inherited slots receive the children's retained polynomials,
+    /// without replacing them by freshly computed restrictions. Later slots
+    /// use only the enclosing challenges available at their deadlines.
+    pub(crate) fn prepare<F: Field, R: Rank>(
+        &self,
+        layout: Layout,
+        source: &SourceRegistry<'_, F>,
+        witness: PhaseWitness<'_, F, R>,
+    ) -> Result<Vec<sparse::Polynomial<F, R>>> {
+        let PhaseWitness {
+            phase,
+            inputs,
+            challenges,
+            inherited,
+            supplied,
+        } = witness;
+        self.check(layout)?;
+        if inputs.len() != layout.inputs {
+            return Err(Error::InvalidWitness(
+                "source mesh input length does not match its declaration".into(),
+            ));
+        }
+        let missing = || Error::InvalidWitness("source mesh is missing a deadline input".into());
+        let mut supplied = supplied.into_iter();
+        let mut polynomials = Vec::new();
+        for index in layout.phase_range(phase) {
+            let polynomial =
+                if let Some(child) = self.inherited.iter().position(|r| r.polynomial == index) {
+                    (*inherited.as_ref().ok_or_else(missing)?[child]).clone()
+                } else if let Some(r) = self.introduced.iter().find(|r| r.polynomial == index) {
+                    source.xy(inputs[r.x], inputs[r.y])?
+                } else if let Some(h) = self.helpers.iter().find(|h| h.polynomial == index) {
+                    source.wx(challenges.w.ok_or_else(missing)?, inputs[h.x])?
+                } else if index == self.u {
+                    source.wy(
+                        challenges.w.ok_or_else(missing)?,
+                        challenges.y.ok_or_else(missing)?,
+                    )?
+                } else if index == self.outgoing {
+                    source.xy(
+                        challenges.x.ok_or_else(missing)?,
+                        challenges.y.ok_or_else(missing)?,
+                    )?
+                } else {
+                    supplied.next().ok_or_else(|| {
+                        Error::InvalidWitness("missing user polynomial outside source mesh".into())
+                    })?
+                };
+            polynomials.push(polynomial);
+        }
+        if supplied.next().is_some() {
+            return Err(Error::InvalidWitness(
+                "extra user polynomial overlaps the source mesh".into(),
+            ));
+        }
+        Ok(polynomials)
+    }
+}
+
+impl Mesh {
+    /// Valid setup-defined mesh restrictions for a synthetic base child.
+    /// Unrelated online slots hold the padding polynomial, the constant one,
+    /// as a synthetic child's online slots do.
+    pub(crate) fn dummy_polynomials<F: Field, R: Rank>(
+        &self,
+        layout: Layout,
+        source: &SourceRegistry<'_, F>,
+        one: F,
+    ) -> Result<Vec<sparse::Polynomial<F, R>>> {
+        let inputs = alloc::vec![one;layout.inputs];
+        let inherited = source.xy::<R>(one, one)?;
+        let mut result = Vec::new();
+        for phase in Phase::ALL {
+            let challenges = PreparationChallenges {
+                w: (phase >= Phase::BeforeY).then_some(one),
+                y: (phase >= Phase::BeforeX).then_some(one),
+                x: (phase >= Phase::BeforeAlpha).then_some(one),
+            };
+            let supplied = layout
+                .phase_range(phase)
+                .filter(|&i| !self.owns(i))
+                .map(|_| crate::internal::native::online::padding())
+                .collect();
+            result.extend(self.prepare(
+                layout,
+                source,
+                PhaseWitness {
+                    phase,
+                    inputs: &inputs,
+                    challenges,
+                    inherited: Some([&inherited, &inherited]),
+                    supplied,
+                },
+            )?);
+        }
+        Ok(result)
+    }
+
+    /// Checks that `source`'s restrictions at the synthetic base child's
+    /// challenges are nonzero.
+    ///
+    /// The mesh's restrictions are the setup's polynomials, not the prover's,
+    /// so a source registry whose restrictions vanish is rejected here: their
+    /// commitments would be the identity, which the walk cannot take.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a restriction is the zero polynomial, and propagates
+    /// [`Self::dummy_polynomials`]'s errors.
+    pub(crate) fn check_source<F: Field, R: Rank>(
+        &self,
+        layout: Layout,
+        source: &SourceRegistry<'_, F>,
+        one: F,
+    ) -> Result<()> {
+        let vanishes = self
+            .dummy_polynomials::<F, R>(layout, source, one)?
+            .iter()
+            .any(|poly| poly.iter_coeffs().all(|c| c == F::ZERO));
+        if vanishes {
+            return Err(Error::Initialization(
+                "the source registry's restrictions vanish, so their commitments are the identity"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// An online batch under construction, with one assignment per polynomial.
+///
+/// This enforces the honest prover's lifecycle. The transcript absorption and
+/// circuit bindings independently enforce these deadlines against a malicious
+/// prover; a prover-side state machine is not a soundness boundary.
+pub(crate) struct Prepared<F: Field, R: Rank> {
+    layout: Layout,
+    inputs: Vec<F>,
+    polynomials: Vec<Option<sparse::Polynomial<F, R>>>,
+    next: usize,
+}
+
+const PHASES: [Phase; 4] = Phase::ALL;
+
+impl<F: Field, R: Rank> Prepared<F, R> {
+    /// Starts preparation with the values to commit before `w`.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a malformed layout or an incorrect number of input values.
+    pub(crate) fn new(layout: Layout, inputs: Vec<F>) -> Result<Self> {
+        layout.check()?;
+        if inputs.len() != layout.inputs {
+            return Err(Error::InvalidWitness(
+                "online input length does not match its declaration".into(),
+            ));
+        }
+        Ok(Self {
+            layout,
+            inputs,
+            polynomials: vec![None; layout.polynomials.len()],
+            next: 0,
+        })
+    }
+
+    /// The immutable input values prepared before the first challenge.
+    pub(crate) fn inputs(&self) -> &[F] {
+        &self.inputs
+    }
+
+    /// Supplies the polynomials of the next phase, in declaration order.
+    ///
+    /// Even an empty phase must be supplied, so every transition follows the
+    /// same schedule. Neither an earlier slot nor the early inputs can change.
+    ///
+    /// # Errors
+    ///
+    /// Rejects out-of-order or repeated phases, incorrect polynomial counts,
+    /// and the zero polynomial, whose commitment the walk cannot take. A
+    /// rejected call leaves the preparation unchanged.
+    pub(crate) fn supply(
+        &mut self,
+        phase: Phase,
+        polynomials: Vec<sparse::Polynomial<F, R>>,
+    ) -> Result<()> {
+        let count = self
+            .layout
+            .polynomials
+            .iter()
+            .filter(|&&p| p == phase)
+            .count();
+        if PHASES.get(self.next) != Some(&phase) || polynomials.len() != count {
+            return Err(Error::InvalidWitness(
+                "online polynomial preparation does not match its phase".into(),
+            ));
+        }
+        if polynomials
+            .iter()
+            .any(|poly| poly.iter_coeffs().all(|c| c == F::ZERO))
+        {
+            return Err(Error::InvalidWitness(
+                "an online polynomial must not be zero".into(),
+            ));
+        }
+        let mut polynomials = polynomials.into_iter();
+        for (slot, &deadline) in self.polynomials.iter_mut().zip(self.layout.polynomials) {
+            if deadline == phase {
+                *slot = Some(polynomials.next().expect("checked phase length"));
+            }
+        }
+        self.next += 1;
+        Ok(())
+    }
+
+    /// Returns the already prepared polynomials of one phase in slot order.
+    ///
+    /// # Errors
+    ///
+    /// Rejects access before that phase has been supplied.
+    pub(crate) fn phase(&self, phase: Phase) -> Result<Vec<&sparse::Polynomial<F, R>>> {
+        if !PHASES[..self.next].contains(&phase) {
+            return Err(Error::InvalidWitness(
+                "online polynomial phase has not been prepared".into(),
+            ));
+        }
+        Ok(self
+            .polynomials
+            .iter()
+            .zip(self.layout.polynomials)
+            .filter(|(_, p)| **p == phase)
+            .map(|(poly, _)| poly.as_ref().expect("completed phase"))
+            .collect())
+    }
+
+    /// Finishes preparation after every commitment phase.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an incomplete preparation, including missing empty phases.
+    pub(crate) fn finish(self) -> Result<Vec<sparse::Polynomial<F, R>>> {
+        if self.next != PHASES.len() {
+            return Err(Error::InvalidWitness(
+                "online polynomial preparation is incomplete".into(),
+            ));
+        }
+        Ok(self
+            .polynomials
+            .into_iter()
+            .map(|p| p.expect("all phases completed"))
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod prepared_tests {
+    use ragu_circuits::polynomials::TestRank;
+    use ragu_core::pasta::Fp;
+
+    use super::*;
+    use crate::profile::online::{Opening, Point};
+
+    const LAYOUT: Layout = Layout {
+        polynomials: &[Phase::BeforeW, Phase::BeforeX],
+        openings: &[
+            Opening {
+                polynomial: 0,
+                point: Point::Input(0),
+                value: 0,
+            },
+            Opening {
+                polynomial: 1,
+                point: Point::Constant(1),
+                value: 1,
+            },
+        ],
+        inputs: 1,
+        points: 0,
+        values: 2,
+    };
+
+    fn polynomial(value: u64) -> sparse::Polynomial<Fp, TestRank> {
+        sparse::Polynomial::from_coeffs(vec![Fp::from(value)])
+    }
+
+    #[test]
+    fn phases_are_once_only_and_rejected_calls_do_not_advance() -> Result<()> {
+        let mut prepared = Prepared::<Fp, TestRank>::new(LAYOUT, vec![Fp::from(7)])?;
+        assert!(prepared.phase(Phase::BeforeW).is_err());
+        assert!(
+            prepared
+                .supply(Phase::BeforeX, vec![polynomial(2)])
+                .is_err()
+        );
+        assert!(prepared.supply(Phase::BeforeW, vec![]).is_err());
+        prepared.supply(Phase::BeforeW, vec![polynomial(1)])?;
+        assert!(
+            prepared
+                .supply(Phase::BeforeW, vec![polynomial(3)])
+                .is_err()
+        );
+        prepared.supply(Phase::BeforeY, vec![])?;
+        prepared.supply(Phase::BeforeX, vec![polynomial(2)])?;
+        prepared.supply(Phase::BeforeAlpha, vec![])?;
+        assert_eq!(prepared.inputs(), &[Fp::from(7)]);
+        assert_eq!(prepared.phase(Phase::BeforeW)?[0].eval(Fp::ZERO), Fp::ONE);
+        let polynomials = prepared.finish()?;
+        assert_eq!(polynomials[0].eval(Fp::ZERO), Fp::ONE);
+        assert_eq!(polynomials[1].eval(Fp::ZERO), Fp::from(2));
+        Ok(())
+    }
+
+    #[test]
+    fn missing_inputs_or_phases_reject() -> Result<()> {
+        assert!(Prepared::<Fp, TestRank>::new(LAYOUT, vec![]).is_err());
+        let mut prepared = Prepared::<Fp, TestRank>::new(Layout::EMPTY, vec![])?;
+        prepared.supply(Phase::BeforeW, vec![])?;
+        assert!(prepared.finish().is_err());
+        Ok(())
     }
 }

@@ -15,9 +15,8 @@ use ragu_primitives::vec::FixedVec;
 use udon::field::Field;
 
 use super::{
-    Challenge, Layout, Opening, Phase, Point,
-    batch::Challenges,
-    circuit,
+    Challenge, Layout, Opening, Phase, Point, circuit,
+    circuit::Challenges,
     stages::{self, Side},
 };
 use crate::{
@@ -108,27 +107,27 @@ fn helper_uses_the_independent_stage_chain_on_both_fields() -> Result<()> {
 fn online_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
     use ragu_circuits::registry::RegistryBuilder;
 
-    use super::extension::{self, Bonding};
+    use super::stages::{self, Bonding};
     use crate::{
         internal::{native, nested},
         profile::{BondingSlot, CircuitSlot, Shape},
     };
 
     fn register<F: Field, S: Side>() -> Result<()> {
-        let layout = extension::layout::<Batched, S>();
+        let layout = stages::layout::<Batched, S>();
         assert_eq!(layout.circuits, vec![vec![0, 1, 2]]);
         assert_eq!(layout.final_masks, vec![vec![0]]);
         assert_eq!(layout.stages, 3);
-        assert_eq!(extension::helper::<Batched, S>(), Some(0));
-        extension::check::<Batched, S>()?;
-        let mut registry = extension::register_circuit::<F, WalletRank, Batched, S>(
+        assert_eq!(stages::helper::<Batched, S>(), Some(0));
+        stages::check::<Batched, S>()?;
+        let mut registry = stages::register_circuit::<F, WalletRank, Batched, S>(
             CircuitSlot::new(RegistryBuilder::new()),
             None,
             None,
         )?
         .into_registry();
         for j in 0..layout.bondings() {
-            let Bonding::Online(bonding) = extension::bonding::<Batched, S>(j)? else {
+            let Bonding::Online(bonding) = stages::bonding::<Batched, S>(j)? else {
                 panic!("batch-only profile has no user bonding");
             };
             registry = bonding
@@ -136,7 +135,7 @@ fn online_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
                 .into_registry();
         }
         assert_eq!(registry.num_internal_circuits(), layout.internal());
-        assert!(extension::bonding::<Batched, S>(layout.bondings()).is_err());
+        assert!(stages::bonding::<Batched, S>(layout.bondings()).is_err());
         Ok(())
     }
     register::<Fp, stages::Native>()?;
@@ -197,11 +196,11 @@ impl<const KIND: u8> Profile for Consumers<KIND> {
 
 #[test]
 fn consumer_prefixes_preserve_user_indices_and_cross_field_bindings() -> Result<()> {
-    use super::extension::{self, Bonding};
+    use super::stages::{self, Bonding};
     type P = Consumers<0>;
-    extension::check::<P, stages::Native>()?;
-    extension::check::<P, stages::Nested>()?;
-    let native = extension::layout::<P, stages::Native>();
+    stages::check::<P, stages::Native>()?;
+    stages::check::<P, stages::Nested>()?;
+    let native = stages::layout::<P, stages::Native>();
     assert_eq!(
         native.circuits,
         vec![vec![0, 1], vec![0, 1, 3], vec![], vec![0, 1, 2]]
@@ -211,17 +210,17 @@ fn consumer_prefixes_preserve_user_indices_and_cross_field_bindings() -> Result<
     assert_eq!(native.statement, Some(0));
     for (merged, user) in [(3, 0), (4, 1)] {
         assert!(
-            matches!(extension::bonding::<P, stages::Native>(merged)?, Bonding::User(j) if j == user)
+            matches!(stages::bonding::<P, stages::Native>(merged)?, Bonding::User(j) if j == user)
         );
     }
     assert_eq!(
-        extension::layout::<Standard, stages::Native>(),
+        stages::layout::<Standard, stages::Native>(),
         crate::profile::Extension::EMPTY
     );
-    assert_eq!(extension::helper::<Standard, stages::Native>(), None);
-    assert!(extension::check::<Consumers<1>, stages::Native>().is_err());
-    assert!(extension::check::<Consumers<2>, stages::Native>().is_err());
-    assert!(extension::check::<Consumers<3>, stages::Native>().is_err());
+    assert_eq!(stages::helper::<Standard, stages::Native>(), None);
+    assert!(stages::check::<Consumers<1>, stages::Native>().is_err());
+    assert!(stages::check::<Consumers<2>, stages::Native>().is_err());
+    assert!(stages::check::<Consumers<3>, stages::Native>().is_err());
     Ok(())
 }
 
@@ -235,7 +234,7 @@ fn preparation_commits_each_phase_once_and_rejects_zero_polynomials() -> Result<
     };
     use ragu_core::{Cycle, pasta::Pasta};
 
-    use super::{prepared::PreparationChallenges, prover::State};
+    use super::{PreparationChallenges, prover::State};
 
     type C = <Pasta as Cycle>::HostCurve;
     type R = WalletRank;
@@ -382,7 +381,7 @@ fn an_identity_online_eval_stage_is_resampled() -> Result<()> {
     use rand::{TryCryptoRng, TryRng};
     use udon::curve::Affine;
 
-    use super::{prepared::PreparationChallenges, prover::State};
+    use super::{PreparationChallenges, prover::State};
 
     #[derive(Default)]
     struct StageAlphas(u8);
@@ -566,7 +565,7 @@ fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
     use ragu_core::{Cycle, pasta::Pasta};
 
     use crate::{
-        internal::{claims::Source, native, tests::assert_stage_values},
+        internal::{native, revdot::Source, tests::assert_stage_values},
         profile::Profiled,
     };
     type C = Profiled<Pasta, NestedOnly>;
@@ -1462,7 +1461,7 @@ fn backend_selection_preserves_source_setup_and_undeclared_sources_reject() -> R
         .with_tag(Fp::from(23))
         .register_circuit(())?
         .finalize()?;
-    let source = super::source::SourceRegistry::new::<_, ReferenceBackend>(&registry);
+    let source = super::SourceRegistry::new::<_, ReferenceBackend>(&registry);
     let builder = crate::ApplicationBuilder::<Pasta, WalletRank, 2>::new()
         .with_source_registries(Some(source), None)
         .with_backend::<ReferenceBackend>();
@@ -1481,9 +1480,7 @@ fn mesh_preparation_uses_source_restrictions_and_preserves_both_child_obligation
         registry::RegistryBuilder,
     };
 
-    use super::{
-        mesh_preparation::PhaseWitness, prepared::PreparationChallenges, source::SourceRegistry,
-    };
+    use super::{PreparationChallenges, SourceRegistry, prover::PhaseWitness};
 
     fn check<F: Field>() -> Result<()> {
         let registry = RegistryBuilder::<F, TestRank>::new()
@@ -1638,7 +1635,7 @@ fn terminal_mesh_opens_both_ends_and_counts_each_polynomial_once() -> Result<()>
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_circuits::{polynomials::TestRank, registry::RegistryBuilder};
 
-    use super::{mesh_terminal::Coordinates, source::SourceRegistry};
+    use super::{SourceRegistry, mesh::Coordinates};
     fn check<F: Field>() -> Result<()> {
         let registry = RegistryBuilder::<F, TestRank>::new()
             .with_tag(F::from(23))
