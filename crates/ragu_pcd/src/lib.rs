@@ -20,24 +20,28 @@
 //!   and the aggregator profile, which carries decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
-//! - [`bridge_hash`] — the bridge hash of a commitment, computed outside the
-//!   circuit.
 //! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
 //!   counterparts — versioned byte encodings for storing and transporting
 //!   proofs, defined in [`serialization`].
-//!
-//! For each payload kind, decoding checks envelope, schema and protocol
-//! versions, bounds the declared dimensions, then checks the exact length
-//! fixed by the profile, rank and header size before decoding proof data. The
-//! caller selects the expected application and cryptographic parameters
-//! through its deployment or consensus rules. With the `serde` feature,
-//! [`Proof`] and [`CompressedProof`] implement `Serialize` and `Deserialize`
-//! directly, as the byte string `to_bytes` writes, envelope included.
-//! A receiver compresses a decoded proof and accepts it on
-//! [`verify_compressed`](Application::verify_compressed). See
-//! [`serialization`] for the envelope layout, version rules and input size
-//! limits, including the limits callers must apply to Serde backends before
-//! they allocate buffers.
+
+// Prover and verifier code.
+//
+// The prover is `fuse/`, every `prover.rs` (compression with its batch,
+// revdot and IPA arguments, decompression, and the online polynomials), and
+// the uncompressed proof's builder and dummy proof in `proof/uncompressed/`.
+// `tests/prover_isolation.rs` fails if any other code reaches into it.
+//
+// The verifier takes three forms:
+// - native: `compress/verifier.rs` and the `verifier.rs` of its batch, revdot
+//   and IPA arguments, behind `Application::verify_compressed`;
+// - recursive: the circuits in `internal/native/circuits/` and
+//   `internal/nested/circuits/`, which every fuse proves over its children;
+// - decompression: the gadgets and circuits in `decompress/`, which check
+//   `verify_compressed`'s equations on a compressed proof in circuit.
+//
+// `proof/uncompressed/verifier.rs` is a test oracle, not a production
+// verifier. The stages, claims, transcript, profiles, steps and
+// serialization are shared by both sides.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -60,10 +64,6 @@ mod compress;
 #[cfg(feature = "unstable-aggregator")]
 mod decompress;
 mod fuse;
-// The fuzzing surface. Its source lives in `tests/fuzzing/` beside the tests
-// rather than with the library's modules. It gates itself behind
-// `unstable-fuzzing` with an inner `#![cfg]` and hides itself from the docs,
-// so no feature attribute appears here.
 #[path = "../tests/fuzzing/mod.rs"]
 pub mod fuzzing;
 mod internal;

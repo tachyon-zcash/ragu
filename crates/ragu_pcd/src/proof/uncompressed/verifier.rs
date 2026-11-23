@@ -1,11 +1,12 @@
 #![cfg(any(test, feature = "test-utils"))]
-//! This module provides the [`Application::verify_uncompressed`] method
-//! implementation: the uncompressed verifier, a test oracle rather than a
-//! production path.
+//! The test-only uncompressed verifier, behind
+//! [`Application::verify_uncompressed`]. This is not the production
+//! verifier: production verification compresses a proof and checks it with
+//! [`Application::verify_compressed`], whose verifier is
+//! `compress/verifier.rs`.
 //!
 //! It gates itself behind the `test-utils` feature (or the crate's own
-//! tests) with the inner attribute above. Production verification compresses
-//! a proof and checks it with [`Application::verify_compressed`].
+//! tests) with the inner attribute above.
 //!
 //! The verifier is the decider: it holds every polynomial of the proof and
 //! checks the accumulated claims on them directly, at challenges it samples
