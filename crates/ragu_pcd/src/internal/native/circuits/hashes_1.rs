@@ -12,10 +12,11 @@
 //! - Absorb [`bridge_s_prime_commitment`].
 //! - Squeeze [$y$] and [$z$] challenges.
 //! - Absorb [`bridge_inner_error_commitment`].
-//! - Call [`Transcript::save_state`] to capture the transcript state for resumption
-//!   in [`hashes_2`][super::hashes_2]. This applies a permutation (the third) since we're at the
-//!   absorb-to-squeeze boundary.
-//! - Verify the saved state matches the witnessed value from [`outer_error`][super::super::stages::outer_error].
+//! - Call [`Transcript::save_state`] to capture the transcript state for
+//!   resumption in [`hashes_2`][super::hashes_2]. This applies a
+//!   permutation (the third) since we're at the absorb-to-squeeze boundary.
+//! - Verify the saved state matches the witnessed value from
+//!   [`outer_error`][super::super::stages::outer_error].
 //!
 //! The squeezed $w, y, z$ challenges are set in the unified instance by this
 //! circuit. **The rest of the transcript computations are performed in the
@@ -104,7 +105,7 @@ use super::super::{
 };
 use crate::{
     RAGU_TAG,
-    internal::{fold_revdot, transcript::Transcript},
+    internal::{revdot, transcript::Transcript},
     profile::ProfiledCycle,
 };
 
@@ -152,13 +153,13 @@ pub struct Output<
 /// circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: revdot::Parameters> {
     params: &'params C::Params,
     log2_circuits: u32,
     _marker: PhantomData<(R, FP)>,
 }
 
-impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit.
@@ -184,7 +185,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revd
 ///
 /// Combines the unified instance with stage witnesses needed to perform the
 /// Fiat-Shamir derivations and transcript-state verification.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
@@ -205,7 +206,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
     type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;

@@ -1,3 +1,24 @@
+//! Revdot claims: what one is, how a side assembles its claims, and how
+//! they fold.
+//!
+//! # Revdot claims
+//!
+//! A **revdot claim** asserts that two polynomials $a(X)$ and $b(X)$ satisfy
+//! a reversed inner product on their coefficient vectors (see
+//! [`sparse::Polynomial::revdot`]). In the proof system, each circuit stage
+//! produces a claim of the form
+//!
+//! $$\operatorname{revdot}(a(X), b(X)) = k(Y),$$
+//!
+//! where $k(Y)$ is the public-input polynomial restricted at a verifier
+//! challenge. Verifiers check these claims, and the folding machinery reduces
+//! many such claims into a single claim plus a bounded set of error terms.
+//!
+//! This module provides helpers to build the $(a, b)$ pairs for each claim
+//! and to aggregate them across proof components.
+//!
+//! # Folding
+//!
 //! Two-layer Lagrange folding of revdot claims.
 //!
 //! For $m$ claims, interpolate $A(T)$, $B(T)$ and their scalar targets $K(T)$
@@ -78,16 +99,179 @@
 //! [`Application::rerandomize`](crate::Application::rerandomize) runs two
 //! passes for this reason.
 
-use alloc::{vec, vec::Vec};
+use alloc::{borrow::Cow, vec, vec::Vec};
 use core::{borrow::Borrow, cell::RefCell, marker::PhantomData};
 
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_backend::Backend;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{CircuitIndex, Registry},
+};
 use ragu_core::{Coeff, Result, drivers::Driver};
 use ragu_primitives::{
     Element,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 use udon::field::Field;
+
+/// Sum an iterator of polynomials, borrowing if only one element.
+///
+/// Returns `Cow::Borrowed` for a single polynomial, `Cow::Owned` for multiple.
+/// Panics if the iterator is empty.
+pub fn sum_polynomials<'rx, F: Field, R: Rank>(
+    mut rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+) -> Cow<'rx, sparse::Polynomial<F, R>> {
+    let first = rxs.next().expect("must provide at least one rx polynomial");
+    match rxs.next() {
+        None => Cow::Borrowed(first),
+        Some(second) => {
+            let mut sum = first.clone();
+            sum.add_assign(second);
+            for rx in rxs {
+                sum.add_assign(rx);
+            }
+            Cow::Owned(sum)
+        }
+    }
+}
+
+/// Trait for providing claim component values from sources.
+///
+/// This trait abstracts over what a "source" provides. For polynomial contexts
+/// (verify, fuse), it provides polynomial references. For evaluation contexts
+/// (`compute_v`), it provides single element evaluations (at $xz$).
+///
+/// Implementors provide access to rx values for all proofs they manage. The
+/// `RxComponent` associated type defines which components can be requested.
+pub trait Source {
+    /// The type identifying which rx component to retrieve.
+    type RxComponent: Copy;
+
+    /// Opaque type for rx values.
+    type Rx;
+
+    /// Type for application circuit identifiers.
+    type AppCircuitId;
+
+    /// Get an iterator over rx values for all proofs for the given component.
+    fn rx(&self, component: Self::RxComponent) -> impl Iterator<Item = Self::Rx>;
+
+    /// Get an iterator over the application circuit claims this source
+    /// folds, each paired with the rxs its trace sums: the step's own
+    /// polynomial and the application stage's, in that order.
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])>;
+}
+
+/// Processor that builds polynomial vectors for revdot claims.
+///
+/// Accumulates (a, b) polynomial pairs for each claim type, using
+/// the registry polynomial to transform rx polynomials appropriately.
+///
+/// The type parameter `A` determines what is stored in the `a` vector:
+/// - Verify path: `A = Cow<'rx, Polynomial>` (plain polynomial references)
+/// - Fuse path: `A = TrackedPoly<'rx, FoldKey, F, R>` (polynomial +
+///   commitment decomposition; see `fuse::claims`)
+pub struct Builder<'m, 'rx, A, F: Field, R: Rank, B: Backend> {
+    pub registry: &'m Registry<'m, F, R>,
+    pub y: F,
+    pub z: F,
+    pub tz: sparse::Polynomial<F, R>,
+    /// The accumulated `a` polynomials.
+    pub a: Vec<A>,
+    /// The accumulated `b` polynomials for revdot claims.
+    pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
+    backend: PhantomData<B>,
+}
+
+impl<'m, 'rx, A, F: Field, R: Rank, B: Backend> Builder<'m, 'rx, A, F, R, B>
+where
+    A: Borrow<sparse::Polynomial<F, R>>,
+{
+    /// Create a new claim builder.
+    pub fn new(registry: &'m Registry<'m, F, R>, y: F, z: F) -> Self {
+        Self {
+            registry,
+            y,
+            z,
+            tz: R::tz(z),
+            a: Vec::new(),
+            b: Vec::new(),
+            backend: PhantomData,
+        }
+    }
+
+    /// Push a circuit claim. Computes `b` from `a.borrow()` (the polynomial).
+    pub fn circuit_impl(&mut self, circuit_id: CircuitIndex, a: A) {
+        let rx = a.borrow();
+        let sy = B::registry_circuit_y(self.registry, circuit_id, self.y);
+        let mut b = rx.clone();
+        b.dilate(self.z);
+        b.add_assign(&sy);
+        b.add_assign(&self.tz);
+        self.a.push(a);
+        self.b.push(Cow::Owned(b));
+    }
+
+    /// Push a bonding claim. There is no dilation and no $t(z)$, so
+    /// $b = s\_{y}$ and $k(y) = 0$.
+    pub fn bonding_impl(&mut self, circuit_id: CircuitIndex, a: A) {
+        let sy = B::registry_circuit_y(self.registry, circuit_id, self.y);
+        self.a.push(a);
+        self.b.push(Cow::Owned(sy));
+    }
+
+    /// Lays the claims built so far out over the grid of the fold `P` with
+    /// the fold randomizer's claims, whose sides are `a` and `b` (see
+    /// [`fold_revdot::randomized`](crate::internal::revdot::randomized)).
+    /// Call it once, after every claim has been built.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the grid does not hold every claim.
+    pub fn randomize<P: crate::internal::revdot::Parameters>(
+        &mut self,
+        a: A,
+        b: &'rx sparse::Polynomial<F, R>,
+    ) where
+        A: Clone + Default,
+    {
+        use crate::internal::revdot::{capacity, randomized};
+
+        assert!(
+            self.a.len() <= capacity::<P>(),
+            "the fold's grid does not hold every claim"
+        );
+        let real = core::mem::take(&mut self.a);
+        self.a = randomized::<_, P>(real, A::default(), a.clone(), a).collect();
+        let real = core::mem::take(&mut self.b);
+        self.b = randomized::<_, P>(
+            real,
+            Cow::Owned(sparse::Polynomial::default()),
+            Cow::Borrowed(b),
+            Cow::Owned(sparse::Polynomial::default()),
+        )
+        .collect();
+    }
+
+    /// Horner-fold groups of polynomials. Each group is first summed, then
+    /// the sums are Horner-folded with $z$.
+    ///
+    /// The fold gives group `i` coefficient $z^{n-1-i}$. Callers that track
+    /// commitment decompositions must assign the same coefficients to the
+    /// corresponding source keys.
+    ///
+    /// Folding is sound because the revdot identity for bonding polynomials is
+    /// linear in the trace.
+    pub fn fold_bonding_groups(
+        &self,
+        groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
+    ) -> Cow<'rx, sparse::Polynomial<F, R>> {
+        Cow::Owned(sparse::Polynomial::fold(
+            groups.map(|g| sum_polynomials(g)),
+            self.z,
+        ))
+    }
+}
 
 /// Operations for forming linear combinations of foldable values.
 pub trait Foldable<F: Field>: Default + Clone {
@@ -1081,5 +1265,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "../../tests/backend_equivalence/fold_revdot.rs"]
+#[path = "../../../tests/backend_equivalence/fold_revdot.rs"]
 mod backend_equivalence;

@@ -19,7 +19,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    internal::fold_revdot::{self, NumErrorTerms},
+    internal::revdot::{self, NumErrorTerms},
     profile::ProfiledCycle,
 };
 
@@ -47,7 +47,7 @@ pub struct KyValues<F> {
 /// Contains $N - 1$ quotient coefficients for the second layer of reduction, plus the
 /// $N$ collapsed values from layer 1 folding, and the saved sponge state for
 /// bridging the transcript between hashes_1 and hashes_2.
-pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
+pub struct Witness<C: Cycle, FP: revdot::Parameters> {
     /// Layer-2 quotient coefficients in ascending power order.
     pub error_terms: FixedVec<C::CircuitField, NumErrorTerms<FP::NumGroups>>,
 
@@ -86,7 +86,7 @@ pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
 pub struct Output<
     'dr,
     D: Driver<'dr>,
-    FP: fold_revdot::Parameters,
+    FP: revdot::Parameters,
     Poseidon: ragu_core::PoseidonPermutation<D::F>,
 > {
     /// Layer-2 quotient coefficients in ascending power order.
@@ -109,11 +109,11 @@ pub struct Output<
 
 /// The outer error stage (layer 2) of the fuse witness.
 #[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: revdot::Parameters> {
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
     type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;

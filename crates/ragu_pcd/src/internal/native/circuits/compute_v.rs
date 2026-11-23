@@ -78,9 +78,9 @@ use ragu_primitives::{
 };
 
 use super::super::{
-    InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, STATIC_F_QUERIES,
-    StaticFQuery,
+    InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex,
     claims::{self, Processor},
+    pcs::{STATIC_F_QUERIES, StaticFQuery},
     stages::{
         eval as native_eval, preamble as native_preamble,
         query::{self as native_query, ChildEvaluations},
@@ -89,10 +89,9 @@ use super::super::{
 };
 use crate::{
     internal::{
-        claims::Source,
-        fold_revdot::{EvaluationFolder, Parameters},
         inverter::Inverter,
         native::{RevdotParameters, online},
+        revdot::{EvaluationFolder, Parameters, Source},
     },
     profile::{
         Profile, ProfiledCycle,
@@ -303,7 +302,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 let denominators =
                     Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
                 let mut horner = Horner::new(&alpha);
-                crate::profile::online::batch::append_quotients(
+                crate::profile::online::circuit::append_quotients(
                     dr,
                     &mut horner,
                     poly_queries(
@@ -317,7 +316,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 )?;
                 let mut fu = horner.finish(dr);
                 if !C::Profile::NATIVE_ONLINE.is_empty() {
-                    fu = crate::profile::online::batch::mul_pow(
+                    fu = crate::profile::online::circuit::mul_pow(
                         dr,
                         &fu,
                         &alpha,
@@ -337,7 +336,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 eval.write(dr, &mut horner)?;
                 let mut value = horner.finish(dr);
                 if !C::Profile::NATIVE_ONLINE.is_empty() {
-                    value = crate::profile::online::batch::mul_pow(
+                    value = crate::profile::online::circuit::mul_pow(
                         dr,
                         &value,
                         &effective_beta,

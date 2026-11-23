@@ -2,7 +2,7 @@
 //!
 //! This stage handles N separate M-sized revdot claim reductions. It also
 //! holds the target $c_r$ of the fold randomizer's claim (see
-//! [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)), which is
+//! [`revdot`](crate::internal::revdot#the-randomizer)), which is
 //! fixed with the quotients, before the first layer's challenge.
 
 use core::marker::PhantomData;
@@ -21,14 +21,14 @@ use ragu_primitives::{
 };
 
 use crate::{
-    internal::fold_revdot::{self, NumErrorTerms},
+    internal::revdot::{self, NumErrorTerms},
     profile::ProfiledCycle,
 };
 
 /// Witness data for the inner error stage (layer 1).
 ///
 /// Contains N groups of M-1 quotient coefficients for the first layer.
-pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
+pub struct Witness<C: Cycle, FP: revdot::Parameters> {
     /// Error term elements for layer 1.
     /// Outer: N groups. Inner: M-1 quotient coefficients in ascending power order.
     pub error_terms:
@@ -41,7 +41,7 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
+pub struct Output<'dr, D: Driver<'dr>, FP: revdot::Parameters> {
     /// Error term elements for layer 1.
     /// Outer: N groups. Inner: M-1 quotient coefficients in ascending power order.
     #[ragu(gadget)]
@@ -54,11 +54,11 @@ pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
 
 /// The inner error stage (layer 1) of the fuse witness.
 #[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: revdot::Parameters> {
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
     type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, FP>;

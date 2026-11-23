@@ -21,20 +21,20 @@ use ragu_primitives::vec::ConstLen;
 use ragu_primitives::{Element, GadgetExt, Point, vec::FixedVec};
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
-use super::{
-    native::{
-        self,
-        stages::preamble::{ProofInputs, encode_output_header},
-        unified as native_unified,
-    },
-    nested::{self, unified as nested_unified},
-};
 #[cfg(test)]
 use crate::Pcd;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::Proof;
 use crate::{
     header::Header,
+    internal::{
+        native::{
+            self,
+            stages::preamble::{ProofInputs, encode_output_header},
+            unified as native_unified,
+        },
+        nested::{self, unified as nested_unified},
+    },
     profile::{Binding, Profile, ProfiledCycle},
 };
 

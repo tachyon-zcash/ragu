@@ -39,7 +39,7 @@ pub mod circuits {
 }
 
 use crate::{
-    internal::{endoscalar, fold_revdot::Parameters},
+    internal::{endoscalar, revdot::Parameters},
     profile::{BondingSlot, CircuitSlot, Profile, ProfiledCycle, Shape},
 };
 
@@ -179,7 +179,7 @@ pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 3;
 /// The minimum groups for the nested quotient fold: eleven groups with
 /// eight claims each provide room for 88 claims, and the twelfth holds the
 /// randomizer's half-claim (see
-/// [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)). Larger
+/// [`revdot`](crate::internal::revdot#the-randomizer)). Larger
 /// profiles grow the group count.
 pub const NUM_FOLD_GROUPS: usize = 12;
 
@@ -207,13 +207,13 @@ pub fn num_claims<P: Profile>() -> usize {
 /// profile's [`NUM_FOLD_GROUPS`], or as many groups of
 /// [`FOLD_GROUP_SIZE`] as the profile's [`num_claims`] need beside the
 /// randomizer's (see
-/// [`fold_revdot::num_groups`](crate::internal::fold_revdot::num_groups)),
+/// [`revdot::num_groups`](crate::internal::revdot::num_groups)),
 /// whichever is more.
 pub struct NumFoldGroups<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumFoldGroups<P> {
     fn len() -> usize {
-        NUM_FOLD_GROUPS.max(crate::internal::fold_revdot::num_groups(
+        NUM_FOLD_GROUPS.max(crate::internal::revdot::num_groups(
             num_claims::<P>(),
             FOLD_GROUP_SIZE,
         ))
@@ -744,7 +744,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
             ExtensionCircuit(k) => {
-                use crate::profile::online::{extension, stages::Nested};
+                use crate::profile::online::stages::{self as extension, Nested};
                 let slot = CircuitSlot::new(registry);
                 let (registry, registration) =
                     if Some(k) == extension::helper::<C::Profile, Nested>() {
@@ -761,7 +761,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 registry
             }
             ExtensionBonding(j) => {
-                use crate::profile::online::{extension, stages::Nested};
+                use crate::profile::online::stages::{self as extension, Nested};
                 let slot = BondingSlot::new(registry);
                 let (registry, registration) =
                     match extension::bonding::<C::Profile, Nested>(j as usize)? {

@@ -6,7 +6,10 @@ use ragu_circuits::{
     Circuit,
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
-use ragu_core::pasta::{Fp, Fq, Pasta};
+use ragu_core::{
+    Error, Result,
+    pasta::{Fp, Fq, Pasta},
+};
 
 use super::*;
 use crate::*;
@@ -21,7 +24,7 @@ use ragu_core::{
 use udon::field::Field;
 
 #[cfg(feature = "unstable-fuzzing")]
-#[path = "../../tests/hoisted_products.rs"]
+#[path = "hoisted_products.rs"]
 mod hoisted_products;
 
 pub fn assert_stage_values<F, R, S>(stage: &S)
@@ -287,7 +290,7 @@ fn claimed_stages_lie_on_each_circuits_chain() {
     use InternalCircuitIndex::*;
     use native::{RxComponent, circuits, claims::Processor};
 
-    use crate::internal::claims::Source;
+    use crate::internal::revdot::Source;
 
     /// Yields one marker per component, as a single proof would.
     struct Marks;
@@ -1141,7 +1144,6 @@ fn test_extension_claims_follow_the_declaration() {
 
     use crate::{
         internal::{
-            claims::Source,
             native::{
                 RxComponent::{self, Rx},
                 RxIndex::{
@@ -1150,6 +1152,7 @@ fn test_extension_claims_follow_the_declaration() {
                 },
                 claims::{KySource, Processor, build, ky_values},
             },
+            revdot::Source,
         },
         profile::{
             Profile,
@@ -1568,7 +1571,7 @@ fn test_fold_groups_follow_the_profile() {
     use ragu_primitives::vec::Len;
 
     use crate::{
-        internal::fold_revdot::capacity,
+        internal::revdot::capacity,
         profile::{Standard, testing::Wider},
     };
 

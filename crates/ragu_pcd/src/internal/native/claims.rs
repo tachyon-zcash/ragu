@@ -1,4 +1,5 @@
-//! Common abstraction for orchestrating revdot claims.
+//! The native side's revdot claims: their canonical order ([`build`]) and
+//! their targets ([`ky_values`]).
 //!
 //! This module provides a unified interface for assembling `a` and `b`
 //! polynomial vectors for revdot claim verification, used by both verification
@@ -23,7 +24,7 @@ use udon::field::Field;
 
 use super::{InternalCircuitIndex, NUM_BINDERS, NumSteps, RxComponent, RxIndex};
 use crate::{
-    internal::claims::{Builder, Source, sum_polynomials},
+    internal::revdot::{Builder, Source, sum_polynomials},
     profile::Profile,
 };
 
@@ -451,7 +452,7 @@ pub trait KySource {
     fn raw_c(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// Iterator over application circuit $k(y)$ values, one per claim the
-    /// source's [`applications`](crate::internal::claims::Source::applications)
+    /// source's [`applications`](crate::internal::revdot::Source::applications)
     /// yields.
     fn application_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
@@ -538,7 +539,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 extension.binding.is_none() || binding.len() == ones.len(),
                 "a profile with a binding circuit takes one binding value per proof"
             );
-            let helper = crate::profile::online::extension::helper::<
+            let helper = crate::profile::online::stages::helper::<
                 P,
                 crate::profile::online::stages::Native,
             >();

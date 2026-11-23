@@ -52,7 +52,7 @@ use crate::{
     Application, Proof, SelectableBackend,
     profile::{
         Profile, ProfiledCycle, Source,
-        online::{Phase, prepared::PreparationChallenges, prover::State},
+        online::{Phase, PreparationChallenges, prover::State},
     },
     proof::ProofBuilder,
 };

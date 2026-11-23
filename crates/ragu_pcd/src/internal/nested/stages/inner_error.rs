@@ -9,7 +9,7 @@
 //! challenges and checking the fold; storing these terms does not enforce it.
 //! The [`collapse`] circuit checks the fold. The stage also carries the
 //! target of the nested fold randomizer's claim (see
-//! [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)).
+//! [`revdot`](crate::internal::revdot#the-randomizer)).
 //!
 //! [`collapse`]: crate::internal::nested::circuits::collapse
 
@@ -31,8 +31,8 @@ use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
     internal::{
-        fold_revdot::{NumErrorTerms, Parameters},
         nested::RevdotParameters,
+        revdot::{NumErrorTerms, Parameters},
     },
     profile::Profile,
 };
@@ -52,7 +52,7 @@ pub struct Witness<C: Affine, P: Profile> {
     /// Outer: one entry per group. Inner: the group's quotient coefficients
     /// in ascending power order, as returned by [`inner_error_terms_with_backend`].
     ///
-    /// [`inner_error_terms_with_backend`]: crate::internal::fold_revdot::inner_error_terms_with_backend
+    /// [`inner_error_terms_with_backend`]: crate::internal::revdot::inner_error_terms_with_backend
     pub error_terms: FixedVec<FixedVec<C::Base, NumErrorTerms<GroupSize<P>>>, NumGroups<P>>,
     /// The revdot product of the step's own nested fold randomizers.
     pub randomizer_c: C::Base,

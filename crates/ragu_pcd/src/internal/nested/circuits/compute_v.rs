@@ -68,8 +68,6 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 use super::common;
 use crate::{
     internal::{
-        claims::Source,
-        fold_revdot::EvaluationFolder,
         inverter::Inverter,
         nested::{
             InternalCircuitIndex, RevdotParameters, RxComponent, RxIndex,
@@ -79,6 +77,7 @@ use crate::{
             stages::{self, challenges, eval as nested_eval, preamble as nested_preamble, query},
             unified,
         },
+        revdot::{EvaluationFolder, Source},
     },
     profile::{
         Profile,
@@ -224,7 +223,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 &stages.preamble,
             )?;
             let mut horner = Horner::new(lift(challenges::ALPHA));
-            crate::profile::online::batch::append_quotients(
+            crate::profile::online::circuit::append_quotients(
                 dr,
                 &mut horner,
                 poly_queries(
@@ -242,7 +241,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let fu = if P::NESTED_ONLINE.is_empty() {
             fu
         } else {
-            crate::profile::online::batch::mul_pow(
+            crate::profile::online::circuit::mul_pow(
                 dr,
                 &fu,
                 lift(challenges::ALPHA),
@@ -267,7 +266,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let computed_v = if P::NESTED_ONLINE.is_empty() {
             computed_v
         } else {
-            crate::profile::online::batch::mul_pow(
+            crate::profile::online::circuit::mul_pow(
                 dr,
                 &computed_v,
                 beta,

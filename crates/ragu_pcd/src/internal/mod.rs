@@ -12,15 +12,21 @@
 //! - [`nested`] — circuits and claim orchestration for the nested
 //!   (scalar) field, including endoscaling verification and the step's own
 //!   [`online`](nested::online) polynomials
-//! - [`claims`] — generic [`claims::Builder`] for assembling revdot
-//!   claims, shared by both fields
-//! - [`fold_revdot`] — two-layer quotient folding that batch-reduces
-//!   revdot claims
+//! - [`revdot`] — revdot claims: the generic [`revdot::Builder`] each
+//!   side assembles its claims with, and the two-layer quotient folding
+//!   that batch-reduces them
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
+//! - [`ky`] — the $k(y)$ targets of a proof's revdot claims, computed one
+//!   way for every verifier
+//! - [`inverter`] — batch inversion of the quotient denominators the
+//!   `compute_v` circuits need
 //! - [`const_fns`] — compile-time helper functions for array construction
+//!
+//! [`revdot`], [`endoscalar`], [`transcript`], [`ky`] and [`inverter`] live
+//! in `shared/` and are re-exported here.
 //!
 //! # Crossing the cycle
 //!
@@ -62,15 +68,43 @@
 //! [`loading`]: nested::circuits::loading
 //! [`Oracles::bridge_hash`]: crate::step::Oracles::bridge_hash
 
-pub mod claims;
-pub mod const_fns;
-pub mod endoscalar;
-pub mod fold_revdot;
-pub mod inverter;
-pub mod ky;
+/// Compile-time helpers for building the index lists' constant arrays.
+pub mod const_fns {
+    /// Assigns `val` into the next slot and advances the counter.
+    pub const fn push<T: Copy, const N: usize>(slots: &mut [Option<T>; N], c: &mut usize, val: T) {
+        slots[*c] = Some(val);
+        *c += 1;
+    }
+
+    /// Unwraps every element of an `Option` array at compile time.
+    ///
+    /// Panics (at compile time) if any slot is `None`.
+    pub const fn unwrap_all<T: Copy, const N: usize>(slots: [Option<T>; N]) -> [T; N] {
+        // The filler is immediately overwritten for every index; it exists only
+        // because `[T; N]` requires an initializer in const context.
+        let mut arr = [slots[0].unwrap(); N];
+        let mut i = 1;
+        while i < N {
+            arr[i] = slots[i].unwrap();
+            i += 1;
+        }
+        arr
+    }
+}
+
 pub mod native;
 pub mod nested;
-pub mod transcript;
+
+/// The machinery both sides share, in `shared/`. Each module is re-exported
+/// here, so its path stays `internal::<module>`.
+mod shared {
+    pub mod endoscalar;
+    pub mod inverter;
+    pub mod ky;
+    pub mod revdot;
+    pub mod transcript;
+}
+pub use shared::{endoscalar, inverter, ky, revdot, transcript};
 
 /// Identifies which of the two child proofs a component came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,4 +114,5 @@ pub enum Side {
 }
 
 #[cfg(test)]
+#[path = "../../tests/internal.rs"]
 pub mod tests;

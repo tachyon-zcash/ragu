@@ -376,9 +376,8 @@ mod folding {
     use crate::{
         Proof,
         internal::{
-            claims,
-            fold_revdot::{self, ClaimFolder},
             nested::{self, claims::KySource},
+            revdot::{self, ClaimFolder},
         },
         profile::ProfiledCycle,
     };
@@ -425,7 +424,7 @@ mod folding {
     }
 
     type Claims<'a> =
-        claims::Builder<'a, 'a, Cow<'a, sparse::Polynomial<Fq, R>>, Fq, R, ReferenceBackend>;
+        revdot::Builder<'a, 'a, Cow<'a, sparse::Polynomial<Fq, R>>, Fq, R, ReferenceBackend>;
 
     /// The children's nested claims at `y` and `z`, in the order
     /// [`build`](nested::claims::build) emits them, with their $k(y)$ values.
@@ -436,7 +435,7 @@ mod folding {
         y: Fq,
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
-        let mut nested_claims = claims::Builder::new(&app.nested_registry, y, z);
+        let mut nested_claims = revdot::Builder::new(&app.nested_registry, y, z);
         nested::claims::build::<crate::profile::Standard, _, _>(
             &NestedFuseProofSource { left, right },
             &mut nested_claims,
@@ -520,8 +519,8 @@ mod folding {
         // claim at the last node of every group but the last, and its a
         // side against zero alone in the last group. Lay the grid out here
         // from that description, apart from the production layout.
-        let groups = <P as fold_revdot::Parameters>::NumGroups::len();
-        let size = <P as fold_revdot::Parameters>::GroupSize::len();
+        let groups = <P as revdot::Parameters>::NumGroups::len();
+        let size = <P as revdot::Parameters>::GroupSize::len();
         assert_eq!(randomizer.c, randomizer.a.revdot(&randomizer.b));
         let zero = sparse::Polynomial::<Fq, R>::default();
         let lay_out = |real: &[Cow<'_, sparse::Polynomial<Fq, R>>],
@@ -558,13 +557,10 @@ mod folding {
         }
 
         // 2. The accumulator is the two-layer fold of those claims.
-        let inner_errors =
-            fold_revdot::inner_error_terms::<_, R, P>(&nested_claims.a, &nested_claims.b);
-        let a_folded =
-            fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.a, mu);
-        let b_folded =
-            fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.b, mu);
-        let outer_errors = fold_revdot::outer_error_terms::<_, R, P>(&a_folded, &b_folded);
+        let inner_errors = revdot::inner_error_terms::<_, R, P>(&nested_claims.a, &nested_claims.b);
+        let a_folded = revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.a, mu);
+        let b_folded = revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.b, mu);
+        let outer_errors = revdot::outer_error_terms::<_, R, P>(&a_folded, &b_folded);
         let collapsed: Vec<_> = a_folded
             .iter()
             .zip(b_folded.iter())
@@ -654,8 +650,8 @@ mod folding {
             );
         }
 
-        let a_final = fold_revdot::fold_outer::<_, _, P>(a_folded, mu_prime);
-        let b_final = fold_revdot::fold_outer::<_, _, P>(b_folded, mu_prime);
+        let a_final = revdot::fold_outer::<_, _, P>(a_folded, mu_prime);
+        let b_final = revdot::fold_outer::<_, _, P>(b_folded, mu_prime);
         assert!(
             a_final.iter_coeffs().eq(parent.nested_a_poly.iter_coeffs()),
             "nested a is not the fold of the children's claims"
@@ -1037,7 +1033,7 @@ mod challenge_stage {
                 "{case}: the edit must leave the child's nested claims true"
             );
             assert!(
-                !crate::verify::nested_challenges_match::<C, R>(
+                !crate::proof::uncompressed::verifier::nested_challenges_match::<C, R>(
                     &forged,
                     &forged.challenges().lifts::<C>()?,
                 )?,
