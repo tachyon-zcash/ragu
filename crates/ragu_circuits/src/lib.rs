@@ -296,6 +296,9 @@ where
         metrics: metrics::CircuitMetrics,
     }
 
+    // TODO(#503): each evaluation below re-synthesizes the whole circuit.
+    // Routine memoization in the `wiring` drivers will reuse each routine's
+    // contribution across its invocations instead.
     impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> WiringObject<F, R> for Processed<RC> {
         fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F {
             wiring::sxy::eval::<_, _, R>(&self.circuit, x, y, floor_plan)
