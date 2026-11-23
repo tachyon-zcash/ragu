@@ -258,6 +258,10 @@ where
         self.sides(source).nested.online_inputs().to_vec()
     }
 
+    // TODO: A fuse that decompresses nothing still proves every chunk over
+    // the canonical proof. Skipping those witnesses, with the extension's
+    // activation bound to the application circuit id on both curves, is
+    // prototyped in https://github.com/tachyon-zcash/ragu/pull/966.
     /// The sides a fuse runs the chunks over: `source`'s, the proof the
     /// step decompresses, or the canonical proof's without.
     fn sides<'a>(&'a self, source: Option<&'a Decompressed<C>>) -> &'a Sides<C> {
@@ -923,6 +927,8 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
         claim.value,
     )?;
     let g_prime = guard.compute_g::<B>();
+    // TODO: Reuse `g_prime` through `use_g` rather than recomputing the
+    // generator MSM, as https://github.com/tachyon-zcash/ragu/pull/966 does.
     if !guard.use_challenges().eval::<B>() {
         return Err(Error::InvalidWitness("the IPA fails".into()));
     }
