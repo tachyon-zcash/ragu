@@ -1,6 +1,7 @@
 //! Merging operations defined for the proof-carrying data computational graph.
 
 mod encoder;
+pub mod header;
 pub(crate) mod internal;
 pub mod oracles;
 mod prepared;
