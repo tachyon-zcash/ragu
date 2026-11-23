@@ -271,6 +271,9 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         routine: Ro,
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
+        // TODO(#503): memoize routines rather than executing each invocation.
+        // Invocations of a routine with the same constraints differ here only
+        // by their segment's offset and their input wires.
         self.current_routine += 1;
         let seg = &self.floor_plan[self.current_routine];
 

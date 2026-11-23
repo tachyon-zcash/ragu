@@ -144,7 +144,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Its values are the step's secrets. Its commitment joins the
         // preamble bridge.
         let rx = staging::stage_rx::<_, R>(Blind::random(rng), 1, self.stage_size, staged)?;
-        let commitment = B::sparse_commit_to_affine(&rx, C::host_generators(self.params));
+        let commitment = self.host().commit(&rx);
         Ok((prepared, NativeApplicationStage { rx, commitment }))
     }
 
@@ -192,7 +192,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let rx = self
             .native_registry
             .assemble(&trace, circuit_id, &mut *rng)?;
-        let commitment = B::sparse_commit_to_affine(&rx, C::host_generators(self.params));
+        let commitment = self.host().commit(&rx);
 
         let ((left_header, right_header, output_header), output_data, step_aux, queries) = aux;
         // The step's circuit must encode the headers the native preamble

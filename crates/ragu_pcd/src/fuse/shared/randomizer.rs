@@ -228,6 +228,11 @@ pub(crate) mod observed {
         REACHES.with(|reaches| reaches.borrow_mut().clear());
     }
 
+    /// Whether this thread is [watching](watch).
+    pub(crate) fn watching() -> bool {
+        WATCHING.with(Cell::get)
+    }
+
     /// The reaches recorded since [`watch`] was called, in the order the
     /// fuses folded: the native fold of a fuse and then its nested fold.
     pub(crate) fn reaches() -> Vec<Reach> {

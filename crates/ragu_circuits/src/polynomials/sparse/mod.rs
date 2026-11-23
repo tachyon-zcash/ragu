@@ -150,6 +150,30 @@ fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<
     }
 }
 
+/// Adds the coefficients of $\sum\_i c\_i \cdot p\_i$ at the degrees
+/// `start..start + out.len()` to `out`.
+fn accumulate<F: Field, R: Rank>(terms: &[(&Polynomial<F, R>, F)], start: usize, out: &mut [F]) {
+    let end = start + out.len();
+    for (poly, by) in terms {
+        // Blocks are sorted and disjoint, so those meeting the range are
+        // consecutive.
+        let first = poly
+            .blocks
+            .partition_point(|(block, data)| block + data.len() <= start);
+        for (block, data) in &poly.blocks[first..] {
+            if *block >= end {
+                break;
+            }
+            let from = (*block).max(start);
+            let to = (block + data.len()).min(end);
+            let coefficients = &data[from - block..to - block];
+            for (sum, coefficient) in out[from - start..to - start].iter_mut().zip(coefficients) {
+                *sum = coefficient.mul_add(by, sum);
+            }
+        }
+    }
+}
+
 impl<T, R: Rank> Default for Polynomial<T, R> {
     fn default() -> Self {
         Self::new()
@@ -348,6 +372,44 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         self.combine_assign(other, |a, b| *a += *b);
     }
 
+    /// Adds `by * other` to `self`.
+    ///
+    /// This is [`add_assign`](Self::add_assign) of `other` scaled by `by`,
+    /// in one pass and without the scaled copy.
+    pub fn add_scaled_assign(&mut self, other: &Self, by: F) {
+        if by.is_zero() {
+            return;
+        }
+        self.combine_assign(other, |a, b| *a = b.mul_add(&by, a));
+    }
+
+    /// Returns $\sum\_i c\_i \cdot p\_i$ over the given $(p\_i, c\_i)$ terms.
+    ///
+    /// The sum is accumulated densely, visiting each term's stored
+    /// coefficients once: unlike a Horner fold, no pass rescales the running
+    /// sum between terms.
+    pub fn linear_combination(terms: &[(&Self, F)]) -> Self {
+        let mut dense = alloc::vec![F::ZERO; R::num_coeffs()];
+        accumulate(terms, 0, &mut dense);
+        Self::from_coeffs(dense)
+    }
+
+    /// Computes the linear combination with the coefficient range split into
+    /// one contiguous range per worker. Returns exactly
+    /// [`Self::linear_combination`].
+    ///
+    /// Udon's scheduler assigns ranges to jobs statically, so a finer split
+    /// would not balance unevenly stored coefficients: each job would still
+    /// take an equal run of consecutive ranges.
+    pub fn linear_combination_parallel(terms: &[(&Self, F)]) -> Self {
+        let mut dense = alloc::vec![F::ZERO; R::num_coeffs()];
+        let len = R::num_coeffs().div_ceil(ragu_core::worker_count()).max(1);
+        ragu_core::for_each_chunk_mut(&mut dense, len, |chunk, out| {
+            accumulate(terms, chunk * len, out);
+        });
+        Self::from_coeffs(dense)
+    }
+
     /// Subtracts the coefficients of `other` from `self`.
     pub fn sub_assign(&mut self, other: &Self) {
         self.combine_assign(other, |a, b| *a -= *b);
@@ -364,12 +426,32 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// $\alpha$:
     ///
     /// $$\text{fold} = \alpha^{k-1} p\_{0} + \alpha^{k-2} p\_{1} + \cdots + p\_{k-1}$$
+    ///
+    /// It is the [`linear_combination`](Self::linear_combination) of
+    /// [`fold_terms`](Self::fold_terms), so no pass rescales the running sum.
     pub fn fold<E: Borrow<Self>>(polys: impl IntoIterator<Item = E>, scale_factor: F) -> Self {
-        polys.into_iter().fold(Self::default(), |mut acc, poly| {
-            acc.scale(scale_factor);
-            acc.add_assign(poly.borrow());
-            acc
-        })
+        let polys: Vec<E> = polys.into_iter().collect();
+        Self::linear_combination(&Self::fold_terms(
+            polys.iter().map(Borrow::borrow),
+            scale_factor,
+        ))
+    }
+
+    /// The terms of [`fold`](Self::fold): each polynomial with its power of
+    /// `scale_factor`, $\alpha^{k-1}$ for the first through one for the
+    /// last, in input order. A backend's linear combination of them is the
+    /// fold.
+    pub fn fold_terms<'a>(
+        polys: impl IntoIterator<Item = &'a Self>,
+        scale_factor: F,
+    ) -> Vec<(&'a Self, F)> {
+        let mut terms: Vec<_> = polys.into_iter().map(|poly| (poly, F::ONE)).collect();
+        let mut power = F::ONE;
+        for (_, weight) in terms.iter_mut().rev() {
+            *weight = power;
+            power *= scale_factor;
+        }
+        terms
     }
 
     /// Evaluates this polynomial at `z` using reverse Horner's method by block.

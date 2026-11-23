@@ -26,7 +26,7 @@ use core::marker::PhantomData;
 
 use ragu_backend::Backend;
 use ragu_circuits::{
-    CircuitExt,
+    Blind, CircuitExt,
     polynomials::{Rank, WalletRank, sparse},
     registry::{CircuitIndex, Registry},
     staging::StageExt,
@@ -258,6 +258,10 @@ where
         self.sides(source).nested.online_inputs().to_vec()
     }
 
+    // TODO: A fuse that decompresses nothing still proves every chunk over
+    // the canonical proof. Skipping those witnesses, with the extension's
+    // activation bound to the application circuit id on both curves, is
+    // prototyped in https://github.com/tachyon-zcash/ragu/pull/966.
     /// The sides a fuse runs the chunks over: `source`'s, the proof the
     /// step decompresses, or the canonical proof's without.
     fn sides<'a>(&'a self, source: Option<&'a Decompressed<C>>) -> &'a Sides<C> {
@@ -305,31 +309,35 @@ where
         // The chunks load the online stages the step's fuse committed.
         let prepared = &prepared.clone().with_online(online_input, online_query)?;
         let schedule = prepared.schedule.clone();
-        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
-        for index in 0..schedule.circuits.len() {
-            let trace =
-                chunk_trace::<C, Native, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
+        // The chunk circuits, then the statement circuit and the binding
+        // circuit: their traces are independent work for the backend. Each
+        // one's blinding factor is drawn first, in that order, so that no
+        // job touches the RNG.
+        let chunks = schedule.circuits.len();
+        let blinds: Vec<Blind<C::CircuitField>> =
+            (0..chunks + 2).map(|_| Blind::random(rng)).collect();
+        let circuits = B::map(blinds.into_iter().enumerate(), |(index, blind)| {
+            let trace = if index < chunks {
+                chunk_trace::<C, Native, R, HEADER_SIZE>(&schedule, index, prepared, params)?
+            } else if index == chunks {
+                circuits::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
+                    schedule.clone(),
+                )
+                .trace(prepared)?
+                .into_parts()
+                .0
+            } else {
+                circuits::BindingCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
+                    schedule.clone(),
+                )
+                .trace(prepared)?
+                .into_parts()
+                .0
+            };
             let circuit = native::InternalCircuitIndex::ExtensionCircuit(index as u32);
-            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
-        }
-        let trace = circuits::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
-        let statement =
-            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
-        circuits.push(registry.assemble(&trace, statement.circuit_index::<P>(), rng)?);
-        let trace = circuits::BindingCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
-        let binding =
-            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32 + 1);
-        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+            registry.assemble_with_alpha(&trace, circuit.circuit_index::<P>(), blind)
+        })
+        .collect::<Result<Vec<_>>>()?;
         type Lifts<C, R, const H: usize> = LiftsStage<C, Native, WalletRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Native, WalletRank, R, H>;
         type Transcript<C, R, const H: usize> = TranscriptStage<C, Native, WalletRank, R, H>;
@@ -388,22 +396,26 @@ where
             .with_online(online_input, online_query)?;
         let prepared = &prepared;
         let schedule = prepared.schedule.clone();
-        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
-        for index in 0..schedule.circuits.len() {
-            let trace =
-                chunk_trace::<C, Nested, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
+        // As on the native side: independent traces, with each circuit's
+        // blinding factor drawn first, the chunks' and then the binding's.
+        let chunks = schedule.circuits.len();
+        let blinds: Vec<Blind<C::ScalarField>> =
+            (0..chunks + 1).map(|_| Blind::random(rng)).collect();
+        let circuits = B::map(blinds.into_iter().enumerate(), |(index, blind)| {
+            let trace = if index < chunks {
+                chunk_trace::<C, Nested, R, HEADER_SIZE>(&schedule, index, prepared, params)?
+            } else {
+                circuits::BindingCircuit::<C, Nested, WalletRank, R, HEADER_SIZE>::new(
+                    schedule.clone(),
+                )
+                .trace(prepared)?
+                .into_parts()
+                .0
+            };
             let circuit = nested::InternalCircuitIndex::ExtensionCircuit(index as u32);
-            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
-        }
-        let trace = circuits::BindingCircuit::<C, Nested, WalletRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
-        let binding =
-            nested::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
-        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+            registry.assemble_with_alpha(&trace, circuit.circuit_index::<P>(), blind)
+        })
+        .collect::<Result<Vec<_>>>()?;
         type Lifts<C, R, const H: usize> = LiftsStage<C, Nested, WalletRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Nested, WalletRank, R, H>;
         type Digits<C, R, const H: usize> = DigitsStage<C, Nested, WalletRank, R, H>;
@@ -721,12 +733,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         let native = {
             let registry = &app.native_registry;
-            let masked = instance.native_bindings::<K, Verifier<B>, HEADER_SIZE>(
+            let bindings = instance.native_bindings::<K, Verifier<B>, HEADER_SIZE>(
                 &fuse,
                 registry,
                 native_sampled.sigma,
             )?;
-            let shapes = claims::native_shapes::<Standard, _>(native_sampled.z, &masked)?;
+            let shapes = claims::native_shapes::<Standard, _>(native_sampled.z, &bindings.masked)?;
             let kinds = shapes.iter().map(|shape| shape.kind).collect();
             let mut openings = crate::compress::revdot::verify_native::<C, K, Verifier<B>>(
                 |component| instance.native_commitment(component),
@@ -734,14 +746,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 native_sampled.y,
                 native_sampled.z,
                 &native_targets,
-                &masked,
+                &bindings.masked,
                 &proof.native.reduction,
                 &mut Lifted(lifted.host()),
             )?
             .ok_or_else(|| Error::InvalidWitness("the native reduction fails".into()))?;
             let (commitments, claims) = instance.native_openings::<K, Verifier<B>>(
                 &fuse,
-                registry,
+                &bindings.registry_xy,
                 native_sampled.w,
                 openings.commitments.len(),
             );
@@ -757,7 +769,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                     messages: &proof.native,
                     openings: &openings,
                     registry,
-                    masked: masked
+                    masked: bindings
+                        .masked
                         .iter()
                         .map(|m| {
                             (
@@ -782,12 +795,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         let nested = {
             let registry = &app.nested_registry;
-            let masked = instance.nested_bindings::<K, Verifier<B>>(
+            let bindings = instance.nested_bindings::<K, Verifier<B>>(
                 &fuse,
                 registry,
                 nested_sampled.sigma,
             )?;
-            let shapes = claims::nested_shapes::<Standard, _>(nested_sampled.z, &masked)?;
+            let shapes = claims::nested_shapes::<Standard, _>(nested_sampled.z, &bindings.masked)?;
             let kinds = shapes.iter().map(|shape| shape.kind).collect();
             let mut openings = crate::compress::revdot::verify_nested::<C, K, Verifier<B>>(
                 |component| instance.nested_commitment(component),
@@ -795,14 +808,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 nested_sampled.y,
                 nested_sampled.z,
                 &nested_targets,
-                &masked,
+                &bindings.masked,
                 &proof.nested.reduction,
                 &mut Lifted(lifted.nested()),
             )?
             .ok_or_else(|| Error::InvalidWitness("the nested reduction fails".into()))?;
             let (commitments, claims) = instance.nested_openings::<K, Verifier<B>>(
                 &fuse,
-                registry,
+                &bindings.registry_xy,
                 nested_sampled.w,
                 openings.commitments.len(),
             )?;
@@ -816,7 +829,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                     messages: &proof.nested,
                     openings: &openings,
                     registry,
-                    masked: masked
+                    masked: bindings
+                        .masked
                         .iter()
                         .map(|m| {
                             (
@@ -913,6 +927,8 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
         claim.value,
     )?;
     let g_prime = guard.compute_g::<B>();
+    // TODO: Reuse `g_prime` through `use_g` rather than recomputing the
+    // generator MSM, as https://github.com/tachyon-zcash/ragu/pull/966 does.
     if !guard.use_challenges().eval::<B>() {
         return Err(Error::InvalidWitness("the IPA fails".into()));
     }
@@ -945,20 +961,22 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
             .collect::<Result<_>>()?,
     };
 
-    let mut restrictions: Vec<(CircuitIndex, P::Scalar)> = Vec::new();
+    // Each distinct circuit in claim order, evaluated together.
+    let mut circuits: Vec<CircuitIndex> = Vec::new();
     for kind in &kinds {
         if let Kind::Circuit(circuit) | Kind::Bonding(circuit) = *kind
-            && !restrictions.iter().any(|(listed, _)| *listed == circuit)
+            && !circuits.contains(&circuit)
         {
-            let value = B::registry_wxy(
-                registry,
-                circuit.omega_j(),
-                lifted_squeezed.r,
-                lifted_squeezed.sampled.y,
-            );
-            restrictions.push((circuit, value));
+            circuits.push(circuit);
         }
     }
+    let values = B::registry_circuits_xy(
+        registry,
+        &circuits,
+        lifted_squeezed.r,
+        lifted_squeezed.sampled.y,
+    );
+    let restrictions: Vec<(CircuitIndex, P::Scalar)> = circuits.into_iter().zip(values).collect();
 
     let mut b = P::Scalar::ONE;
     let mut cur = claim.point;

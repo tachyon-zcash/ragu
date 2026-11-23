@@ -20,7 +20,9 @@ use std::{collections::BTreeSet, fs, path::Path};
 fn is_prover(path: &[String]) -> bool {
     let path: Vec<&str> = path.iter().map(String::as_str).collect();
     match path.as_slice() {
-        ["fuse", ..] | ["proof", "uncompressed", "builder" | "dummy", ..] => true,
+        ["fuse", ..]
+        | ["proof", "uncompressed", "builder" | "dummy", ..]
+        | ["backend", "committer", ..] => true,
         // Prover items re-exported from shared modules.
         ["proof", "ProofBuilder"]
         | ["ipa", "create_proof"]
@@ -35,6 +37,7 @@ fn is_prover_file(file: &str) -> bool {
     file.starts_with("fuse/")
         || file == "proof/uncompressed/builder.rs"
         || file == "proof/uncompressed/dummy.rs"
+        || file == "backend/committer.rs"
         || file.ends_with("/prover.rs")
 }
 
@@ -46,6 +49,11 @@ fn is_test_file(file: &str) -> bool {
 
 /// The prover paths that code outside the prover files may name, and why.
 const ALLOWED: &[(&str, &str, &str)] = &[
+    (
+        "application.rs",
+        "backend::committer::Committer",
+        "holds the prover's committers, which `finalize` prepares",
+    ),
     (
         "proof/mod.rs",
         "proof::uncompressed::builder::ProofBuilder",

@@ -28,4 +28,5 @@ bench = false
 [dependencies]
 udon = { workspace = true }
 ragu_backend = { path = "../ragu_backend", version = "0.0.0", default-features = false }
+ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }

@@ -152,9 +152,17 @@ impl<'a, C: Affine> MSM<'a, C> {
 
     /// Perform multiexp through backend `B` and check that it results in zero.
     pub fn eval<B: SelectableBackend>(self) -> bool {
-        let len = self.g_scalars.as_ref().map(|v| v.len()).unwrap_or(0)
-            + self.u_scalar.map(|_| 1).unwrap_or(0)
-            + self.other.len();
+        self.eval_with_workspace::<B>(&mut ragu_core::MsmWorkspace::default())
+    }
+
+    pub(crate) fn eval_with_workspace<B: SelectableBackend>(
+        self,
+        workspace: &mut ragu_core::MsmWorkspace,
+    ) -> bool {
+        let fixed_len = self.g_scalars.as_ref().map_or(0, Vec::len);
+        let prepared = self.params.g.prepared().filter(|_| fixed_len >= 128);
+        let dynamic_len = self.other.len() + usize::from(self.u_scalar.is_some());
+        let len = dynamic_len + if prepared.is_some() { 0 } else { fixed_len };
         let mut scalars: Vec<C::Scalar> = Vec::with_capacity(len);
         let mut bases: Vec<C> = Vec::with_capacity(len);
 
@@ -170,15 +178,37 @@ impl<'a, C: Affine> MSM<'a, C> {
             bases.push(self.params.u);
         }
 
-        if let Some(g_scalars) = &self.g_scalars {
-            scalars.extend(g_scalars);
-            bases.extend(self.params.g.iter());
-        }
-
-        assert_eq!(scalars.len(), len);
-
-        let identity = multiexp::<C, B>(&scalars, &bases).is_identity();
-        super::fingerprint::record_msm(&scalars, &bases, self.other.len(), identity);
+        #[cfg(test)]
+        let prepared_scalars = self
+            .g_scalars
+            .as_ref()
+            .filter(|_| prepared.is_some())
+            .cloned()
+            .unwrap_or_default();
+        let identity = if let Some(prepared) = prepared {
+            // The fixed generator equation and proof-specific terms are
+            // evaluated separately, then added without changing the equation.
+            let fixed = B::msm_prepared(
+                self.g_scalars.expect("prepared MSM has generator scalars"),
+                prepared,
+                workspace,
+            );
+            let dynamic = multiexp::<C, B>(&scalars, &bases);
+            (fixed + dynamic).is_identity()
+        } else {
+            if let Some(g_scalars) = self.g_scalars {
+                scalars.extend(g_scalars);
+                bases.extend(self.params.g.iter());
+            }
+            multiexp::<C, B>(&scalars, &bases).is_identity()
+        };
+        #[cfg(test)]
+        super::fingerprint::record_msm(
+            &scalars,
+            &prepared_scalars,
+            &bases[..self.other.len()],
+            identity,
+        );
         identity
     }
 }

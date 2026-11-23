@@ -102,6 +102,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Evaluate left/right child witnesses concurrently with the
         // current-step polynomial evaluations at u.
         let (left_witness, right_witness, current) = par_join!(
+            B;
             || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(left, u),
             || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(right, u),
             || native::stages::eval::CurrentStepWitness {
@@ -129,6 +130,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
 
         let (left_nested, right_nested, current_nested) = par_join!(
+            B;
             || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(left, u_nested),
             || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(
                 right, u_nested
@@ -197,8 +199,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     )> {
         let eval_rx =
             native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(Blind::random(rng), eval_witness)?;
-        let native_eval_commitment =
-            B::sparse_commit_to_affine(&eval_rx, C::host_generators(self.params));
+        let native_eval_commitment = self.host().commit(&eval_rx);
 
         let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
             Blind::random(rng),
@@ -208,8 +209,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 nested: nested_eval.clone(),
             },
         )?;
-        let bridge_eval_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_eval_commitment = self.nested().commit(&bridge_rx);
 
         Ok((eval_rx, bridge_rx, bridge_eval_commitment))
     }

@@ -286,6 +286,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         let mut builder = ProofBuilder::<C, R, B>::new(
             self.params,
+            self.host(),
+            self.nested(),
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 

@@ -23,12 +23,32 @@
 //! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
 //!   counterparts — versioned byte encodings for storing and transporting
 //!   proofs, defined in [`serialization`].
+//!
+//! The default `asm` feature enables Udon's AArch64 field arithmetic. On
+//! x86-64, Udon uses its own assembly only in a build whose target features
+//! include BMI2 and ADX, or with its `x86_64-asm` feature; it does not detect
+//! the CPU at run time, and any other x86-64 build uses portable Rust. Other
+//! targets and Miri use the portable Rust kernels. To select portable
+//! arithmetic on AArch64, disable default features and retain `alloc`; on
+//! x86-64, a build compiled for those extensions stays portable with Udon's
+//! `portable` feature (`--features udon/portable` for this crate).
+//! `multicore` is an independent, opt-in feature. Cargo unifies dependency
+//! features, so portable AArch64 builds must ensure no other dependency
+//! enables Udon's `aarch64-asm` feature.
+//!
+//! # Prover memory
+//!
+//! Proving holds witnesses and witness-derived polynomials in ordinary
+//! process memory. Uncompressed proofs retain those polynomials for recursion.
+//! Prover MSMs release their scratch when the call returns. Ordinary
+//! deallocation provides no erasure guarantee. See [`ragu_core::msm`].
 
 // Prover and verifier code.
 //
 // The prover is `fuse/`, every `prover.rs` (compression with its batch,
-// revdot and IPA arguments, decompression, and the online polynomials), and
-// the uncompressed proof's builder and dummy proof in `proof/uncompressed/`.
+// revdot and IPA arguments, decompression, and the online polynomials), the
+// uncompressed proof's builder and dummy proof in `proof/uncompressed/`, and
+// the committer in `backend/`.
 // `tests/prover_isolation.rs` fails if any other code reaches into it.
 //
 // The verifier takes three forms:

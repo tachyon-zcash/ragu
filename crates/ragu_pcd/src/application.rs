@@ -1,20 +1,21 @@
 //! The application: [`ApplicationBuilder`] registers the steps and finalizes
 //! into the [`Application`] in which proofs are made and checked.
 
-use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder},
     staging,
 };
-use ragu_core::{Cycle, Error, Result};
+use ragu_core::{Cycle, Error, FixedGenerators, PreparedMsm, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 
 use crate::{
     Pcd, Proof, SelectableBackend,
+    backend::committer::Committer,
     header::Header,
     profile::{Profile, ProfiledCycle},
     step::{Step, internal::adapter::Adapter},
@@ -34,12 +35,15 @@ type ApplicationRegistration<'params, C, R> = Box<
 >;
 
 /// Builder for an [`Application`] for proof-carrying data.
+///
+/// Independent work uses [`AcceleratedBackend`] by default. Select another
+/// backend explicitly with [`Self::with_backend`].
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     pub(crate) native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     pub(crate) nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -65,6 +69,9 @@ pub struct ApplicationBuilder<
     /// padding: what a profile's context is checked against (see
     /// [`Profile::check_context`]).
     pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
+    /// Whether [`Self::finalize`] prepares tables of the commitment
+    /// generators (see [`Self::with_commitment_tables`]).
+    commitment_tables: bool,
     pub(crate) _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -92,8 +99,25 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: BTreeMap::new(),
             bootstrap: None,
             output_headers: BTreeMap::new(),
+            commitment_tables: false,
             _marker: PhantomData,
         }
+    }
+
+    /// Prepares tables of the commitment generators at [`Self::finalize`],
+    /// for the selected backend's prover.
+    ///
+    /// A backend that supports them, as the accelerated backends do, then
+    /// commits to polynomials with fewer point additions, which makes every
+    /// proof faster. The proofs themselves are unchanged. The tables are
+    /// prepared once and held for the application's life: on each curve, 16
+    /// points of 96 bytes for every coefficient of the rank, about 12.6 MB at
+    /// 8192 coefficients. An application that proves repeatedly recovers the
+    /// preparation within a few proofs; one that proves once, or only
+    /// verifies, should leave them out. Other backends ignore the request.
+    pub fn with_commitment_tables(mut self) -> Self {
+        self.commitment_tables = true;
+        self
     }
 
     /// Supplies source registries for meshes whose profile context supplies
@@ -199,6 +223,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: self.header_map,
             bootstrap: self.bootstrap,
             output_headers: self.output_headers,
+            commitment_tables: self.commitment_tables,
             _marker: PhantomData,
         }
     }
@@ -484,17 +509,50 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_domain,
         )?;
 
+        // TODO: In terms of how it currently works, `finalize` builds the
+        // registries and derives the tags on every wallet startup. We'll
+        // eventually refactor toward the app pinning the two registry
+        // tags as constants (rederived and checked by a CI test) and
+        // shipping them in the wallet binary as a trusted build artifact,
+        // which the wallet loads at startup instead of hashing. This just
+        // felt like a good interstitial step towards that.
+        let native_registry = self.native_registry.finalize()?;
+        let nested_registry = self.nested_registry.finalize()?;
+        let host_generators = C::host_generators(params);
+        let nested_generators = C::nested_generators(params);
+        type Verifier<B> = <B as SelectableBackend>::Verifier;
+        let native_ipa_generators = <Verifier<B> as ragu_backend::Backend>::prepare_msm(
+            &host_generators.g()[..R::num_coeffs()],
+        )
+        .map(Arc::new);
+        let nested_ipa_generators = <Verifier<B> as ragu_backend::Backend>::prepare_msm(
+            &nested_generators.g()[..R::num_coeffs()],
+        )
+        .map(Arc::new);
+
         let mut app = Application {
             native_source: self.native_source,
             nested_source: self.nested_source,
-            native_registry: self.native_registry.finalize()?,
-            nested_registry: self.nested_registry.finalize()?,
+            native_registry,
+            nested_registry,
             params,
             num_application_steps: self.num_application_steps,
             #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
+            host_committer: Committer::new::<R>(
+                host_generators,
+                self.commitment_tables,
+                native_ipa_generators.as_ref(),
+            ),
+            nested_committer: Committer::new::<R>(
+                nested_generators,
+                self.commitment_tables,
+                nested_ipa_generators.as_ref(),
+            ),
+            native_ipa_generators,
+            nested_ipa_generators,
             context,
             _marker: PhantomData,
         };
@@ -609,7 +667,7 @@ pub struct Application<
     C: ProfiledCycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     pub(crate) native_registry: Registry<'params, C::CircuitField, R>,
     pub(crate) nested_registry: Registry<'params, C::ScalarField, R>,
@@ -637,6 +695,11 @@ pub struct Application<
     /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
     /// `Application`.
     pub(crate) bootstrap: Option<Proof<C, R>>,
+    /// Fixed IPA bases prepared once during application startup.
+    pub(crate) native_ipa_generators: Option<Arc<PreparedMsm<C::HostCurve>>>,
+    pub(crate) nested_ipa_generators: Option<Arc<PreparedMsm<C::NestedCurve>>>,
+    host_committer: Committer<'params, C::HostCurve, C::HostGenerators, B>,
+    nested_committer: Committer<'params, C::NestedCurve, C::NestedGenerators, B>,
     pub(crate) _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -853,10 +916,17 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
         let poly =
             ragu_circuits::polynomials::sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec());
-        Ok(B::sparse_commit_to_affine(
-            &poly,
-            C::host_generators(self.params),
-        ))
+        Ok(self.host().commit(&poly))
+    }
+
+    /// What the prover commits to host-curve polynomials with.
+    pub(crate) fn host(&self) -> &Committer<'params, C::HostCurve, C::HostGenerators, B> {
+        &self.host_committer
+    }
+
+    /// What the prover commits to nested-curve polynomials with.
+    pub(crate) fn nested(&self) -> &Committer<'params, C::NestedCurve, C::NestedGenerators, B> {
+        &self.nested_committer
     }
 
     /// The native source registry the profile's mesh certifies: the builder's

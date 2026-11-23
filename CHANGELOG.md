@@ -16,8 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Polynomial`, `Rank`, `WalletRank` and `AcceleratedProver`.
   `ragu_primitives`, `ragu_circuits`, `ragu_pcd` and `ragu_acceleration` stay
   reachable as the `primitives`, `circuits`, `pcd` and `acceleration` modules.
-  Its `baked`, `std`, `multicore` and `test-utils` features forward to the
-  member crates.
+  Its `asm`, `baked`, `std`, `multicore` and `test-utils` features forward
+  to the member crates. `asm` is enabled by default and selects Udon's
+  AArch64 field assembly.
+- `ApplicationBuilder::with_commitment_tables` opts into fixed-base tables
+  for repeated polynomial commitments with accelerated proving backends.
 - `ragu_pcd::bridge_hash`, with `digest` and `rx`: the bridge hash of a
   host-curve point computed outside the circuit, without an `Application`.
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
@@ -95,7 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The PCD transcript tag is `ragu-pcd-v1`; proofs made under the placeholder
   tag do not verify. Compression has its own tag, `ragu-ipa-v1`.
 - `ApplicationBuilder` and `Application` take a fourth type parameter
-  `B: SelectableBackend`, defaulting to `ragu_backend::ReferenceBackend`.
+  `B: SelectableBackend`, defaulting to `ragu_acceleration::AcceleratedBackend`
+  for both proving and verification. Select `AcceleratedProver` for
+  accelerated proving with reference verification, or `ReferenceBackend`
+  for reference proving and verification.
 - Random-number bounds use `rand 0.10`'s `CryptoRng` instead of
   `CryptoRngCore` on `seed`, `fuse`, `rerandomize` and `verify`.
 - Header suffix `2` is reserved for the internal `Dummy` header; application

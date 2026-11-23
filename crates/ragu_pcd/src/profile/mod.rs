@@ -1076,6 +1076,30 @@ pub(crate) const NO_NATIVE_EXTENSION_PROVER: &str = "the profile's native extens
 /// The nested counterpart of [`NO_NATIVE_EXTENSION_PROVER`].
 pub(crate) const NO_NESTED_EXTENSION_PROVER: &str = "the profile's nested extension has no prover";
 
+/// The lengths of a profile's extension, which are all that the arithmetic
+/// index lookups need from it.
+#[derive(Clone, Copy)]
+pub(crate) struct ExtensionLengths {
+    pub circuits: usize,
+    pub stages: usize,
+    pub bondings: usize,
+}
+
+/// The lengths of profile `P`'s nested extension when `nested` is set, and
+/// of its native extension otherwise.
+pub(crate) fn extension_lengths<P: Profile>(nested: bool) -> ExtensionLengths {
+    let extension = if nested {
+        nested_extension::<P>()
+    } else {
+        native_extension::<P>()
+    };
+    ExtensionLengths {
+        circuits: extension.circuits.len(),
+        stages: extension.stages,
+        bondings: extension.bondings(),
+    }
+}
+
 /// An extension's polynomials for one proof: its circuits' rx polynomials
 /// in circuit order, then its stages' in stage order.
 #[derive(Clone, Debug)]

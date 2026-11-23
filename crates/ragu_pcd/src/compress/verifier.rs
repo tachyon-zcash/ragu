@@ -1,14 +1,14 @@
 //! The verifier's side of the compression: [`Application::verify_compressed`].
 
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{Error, Result};
+use ragu_core::{Error, MsmWorkspace, Result};
 
 use super::{Lifted, Sampled, batch, revdot, transcript};
 use crate::{
     Application, CompressedPcd, CompressedProof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{ky, nested},
-    ipa::{CycleTranscript, IpaCycle},
+    ipa::{CycleTranscript, IpaCycle, Params},
     profile::{Profile, ProfiledCycle, online::mesh::Coordinates},
 };
 
@@ -123,10 +123,13 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             nested_sampled.y,
         )?;
 
+        // Scratch for this check's two IPA openings, scoped to the call so
+        // that the application holds no mutable state and stays `Sync`.
+        let mut workspace = MsmWorkspace::default();
         let native = {
             let registry = &self.native_registry;
             let Sampled { w, y, z, sigma } = native_sampled;
-            let masked = instance.native_bindings::<R, Verifier<B>, HEADER_SIZE>(
+            let bindings = instance.native_bindings::<R, Verifier<B>, HEADER_SIZE>(
                 &challenges,
                 registry,
                 sigma,
@@ -137,7 +140,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 y,
                 z,
                 &native_targets,
-                &masked,
+                &bindings.masked,
                 &proof.native.reduction,
                 &mut Lifted(transcript.host()),
             )) else {
@@ -145,7 +148,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             };
             let (commitments, claims) = instance.native_openings::<R, Verifier<B>>(
                 &challenges,
-                registry,
+                &bindings.registry_xy,
                 w,
                 openings.commitments.len(),
             );
@@ -172,12 +175,18 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                         .map(|i| instance.native_online_commitments[i]),
                 );
             }
-            proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
+            let params = Params::for_verifier(
+                C::host_generators(self.params),
+                *C::host_u(self.params),
+                R::RANK,
+                self.native_ipa_generators.as_ref(),
+            );
+            proof_check!(batch::verify_openings::<_, Verifier<B>>(
                 &openings,
                 &proof.native.batch,
                 &proof.native.opening,
-                C::host_generators(self.params),
-                *C::host_u(self.params),
+                &params,
+                &mut workspace,
                 &mut Lifted(transcript.host()),
             ))
         };
@@ -188,7 +197,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         let nested = {
             let registry = &self.nested_registry;
             let Sampled { w, y, z, sigma } = nested_sampled;
-            let masked =
+            let bindings =
                 instance.nested_bindings::<R, Verifier<B>>(&challenges, registry, sigma)?;
             let Some(mut openings) = proof_check!(revdot::verify_nested::<C, R, Verifier<B>>(
                 |component| instance.nested_commitment(component),
@@ -196,7 +205,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 y,
                 z,
                 &nested_targets,
-                &masked,
+                &bindings.masked,
                 &proof.nested.reduction,
                 &mut Lifted(transcript.nested()),
             )) else {
@@ -204,7 +213,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             };
             let (commitments, claims) = instance.nested_openings::<R, Verifier<B>>(
                 &challenges,
-                registry,
+                &bindings.registry_xy,
                 w,
                 openings.commitments.len(),
             )?;
@@ -231,12 +240,18 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                         .map(|i| instance.nested_online_commitments[i]),
                 );
             }
-            proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
+            let params = Params::for_verifier(
+                C::nested_generators(self.params),
+                *C::nested_u(self.params),
+                R::RANK,
+                self.nested_ipa_generators.as_ref(),
+            );
+            proof_check!(batch::verify_openings::<_, Verifier<B>>(
                 &openings,
                 &proof.nested.batch,
                 &proof.nested.opening,
-                C::nested_generators(self.params),
-                *C::nested_u(self.params),
+                &params,
+                &mut workspace,
                 &mut Lifted(transcript.nested()),
             ))
         };

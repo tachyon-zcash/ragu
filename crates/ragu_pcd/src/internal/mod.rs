@@ -106,6 +106,19 @@ mod shared {
 }
 pub use shared::{endoscalar, inverter, ky, revdot, transcript};
 
+/// Position `index` among a profile's `count` variants of one kind, for
+/// either side's arithmetic index lookups.
+///
+/// # Panics
+///
+/// Panics if `index` is not below `count`, rejecting a variant the profile
+/// does not have just as a lookup in the canonical list did.
+fn checked_index(index: u32, count: usize) -> usize {
+    let index = index as usize;
+    assert!(index < count, "index is outside the profile");
+    index
+}
+
 /// Identifies which of the two child proofs a component came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {

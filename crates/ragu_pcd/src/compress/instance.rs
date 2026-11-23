@@ -18,7 +18,7 @@ use alloc::{vec, vec::Vec};
 
 use ragu_backend::Backend;
 use ragu_circuits::{
-    polynomials::Rank,
+    polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry},
     staging::{StageExt, StageReader, stage_wire_indices, wire_degree, wires_of},
 };
@@ -62,6 +62,13 @@ pub(crate) struct NestedChild<F> {
 /// How many polynomials [`Instance::native_openings`] and
 /// [`Instance::nested_openings`] open beyond the reduction's.
 pub(crate) const OPENED: usize = 4;
+
+/// A curve's wire bindings and the registry restriction shared by those
+/// bindings and the opening at the fresh compression challenge.
+pub(crate) struct Bindings<Id, F: Field, R: Rank> {
+    pub(crate) masked: Vec<Masked<Id, F>>,
+    pub(crate) registry_xy: sparse::Polynomial<F, R>,
+}
 
 /// The instance of a proof: its circuit id, its commitments and the scalars
 /// the decider would derive or read off polynomials. Like a proof, it
@@ -609,7 +616,7 @@ impl<C: ProfiledCycle> Instance<C> {
         challenges: &nested::Challenges<C::CircuitField>,
         registry: &Registry<'_, C::CircuitField, R>,
         sigma: C::CircuitField,
-    ) -> Result<Vec<Masked<native::RxComponent, C::CircuitField>>> {
+    ) -> Result<Bindings<native::RxComponent, C::CircuitField, R>> {
         use native::{RxComponent::Rx, RxIndex::*};
         type F<C> = <C as Cycle>::CircuitField;
         let (w, x, y, u) = (challenges.w, challenges.x, challenges.y, challenges.u);
@@ -648,9 +655,10 @@ impl<C: ProfiledCycle> Instance<C> {
                 evals[bit_reverse(j as usize, log2_n)]
             })
             .collect();
+        let registry_xy = B::registry_interpolate_xy(registry, evals);
         values.extend([
-            m(w, x, y),
-            m(self.circuit_id.omega_j(), x, y),
+            B::sparse_eval(&registry_xy, w),
+            B::sparse_eval(&registry_xy, self.circuit_id.omega_j()),
             m(w, l.x, l.y),
             m(w, l.x, y),
             m(w, r.x, r.y),
@@ -682,7 +690,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 m(w, u, y),
                 self.a_at_u,
                 self.b_at_u,
-                m(u, x, y),
+                B::sparse_eval(&registry_xy, u),
             ],
         );
 
@@ -703,7 +711,10 @@ impl<C: ProfiledCycle> Instance<C> {
         let [gx, gy] = coordinates(self.nested_registry_xy)?;
         let points_f = claim(Rx(PointsF), points_f, vec![gx, gy]);
 
-        Ok(vec![preamble, query, eval, points_ab, points_f])
+        Ok(Bindings {
+            masked: vec![preamble, query, eval, points_ab, points_f],
+            registry_xy,
+        })
     }
 
     /// The nested wire claims under `sigma`, over the preamble, query and
@@ -713,7 +724,7 @@ impl<C: ProfiledCycle> Instance<C> {
         challenges: &nested::Challenges<C::CircuitField>,
         registry: &Registry<'_, C::ScalarField, R>,
         sigma: C::ScalarField,
-    ) -> Result<Vec<Masked<nested::RxComponent, C::ScalarField>>> {
+    ) -> Result<Bindings<nested::RxComponent, C::ScalarField, R>> {
         use nested::{RxComponent::Rx, RxIndex::*};
         type F<C> = <C as Cycle>::ScalarField;
         let w = nested_challenge::<C>(challenges.w)?;
@@ -755,8 +766,9 @@ impl<C: ProfiledCycle> Instance<C> {
                 evals[bit_reverse(j as usize, log2_n)]
             })
             .collect();
+        let registry_xy = B::registry_interpolate_xy(registry, evals);
         values.extend([
-            m(w, x, y),
+            B::sparse_eval(&registry_xy, w),
             m(w, l.x, l.y),
             m(w, l.x, y),
             m(w, r.x, r.y),
@@ -788,11 +800,14 @@ impl<C: ProfiledCycle> Instance<C> {
                 m(w, u, y),
                 self.nested_a_at_u,
                 self.nested_b_at_u,
-                m(u, x, y),
+                B::sparse_eval(&registry_xy, u),
             ],
         );
 
-        Ok(vec![preamble, query, eval])
+        Ok(Bindings {
+            masked: vec![preamble, query, eval],
+            registry_xy,
+        })
     }
 
     /// The native openings beyond the revdot reduction's, over [`OPENED`]
@@ -803,11 +818,11 @@ impl<C: ProfiledCycle> Instance<C> {
     pub(crate) fn native_openings<R: Rank, B: Backend>(
         &self,
         challenges: &nested::Challenges<C::CircuitField>,
-        registry: &Registry<'_, C::CircuitField, R>,
+        registry_xy: &sparse::Polynomial<C::CircuitField, R>,
         w: C::CircuitField,
         base: usize,
     ) -> ([C::HostCurve; OPENED], Vec<OpeningClaim<C::CircuitField>>) {
-        let (x, y, u) = (challenges.x, challenges.y, challenges.u);
+        let u = challenges.u;
         let claim = |poly, point, value| OpeningClaim { poly, point, value };
         (
             [
@@ -817,7 +832,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(native::RxComponent::AbB),
             ],
             vec![
-                claim(base, w, B::registry_wxy(registry, w, x, y)),
+                claim(base, w, B::sparse_eval(registry_xy, w)),
                 claim(base + 1, u, self.v),
                 claim(base + 2, u, self.a_at_u),
                 claim(base + 3, u, self.b_at_u),
@@ -830,12 +845,10 @@ impl<C: ProfiledCycle> Instance<C> {
     pub(crate) fn nested_openings<R: Rank, B: Backend>(
         &self,
         challenges: &nested::Challenges<C::CircuitField>,
-        registry: &Registry<'_, C::ScalarField, R>,
+        registry_xy: &sparse::Polynomial<C::ScalarField, R>,
         w: C::ScalarField,
         base: usize,
     ) -> Result<([C::NestedCurve; OPENED], Vec<OpeningClaim<C::ScalarField>>)> {
-        let x = nested_challenge::<C>(challenges.x)?;
-        let y = nested_challenge::<C>(challenges.y)?;
         let u = nested_challenge::<C>(challenges.u)?;
         let claim = |poly, point, value| OpeningClaim { poly, point, value };
         Ok((
@@ -846,7 +859,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.nested_commitment(nested::RxComponent::AbB),
             ],
             vec![
-                claim(base, w, B::registry_wxy(registry, w, x, y)),
+                claim(base, w, B::sparse_eval(registry_xy, w)),
                 claim(base + 1, u, self.nested_v),
                 claim(base + 2, u, self.nested_a_at_u),
                 claim(base + 3, u, self.nested_b_at_u),

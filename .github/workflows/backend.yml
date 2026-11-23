@@ -69,6 +69,13 @@ jobs:
   # of adding a feature-specific matrix (and three more PR status checks).
   # The general Rust jobs exercise all features together; this checks each
   # backend's distinct feature configuration and end-to-end boundary.
+  # Every runner checks Udon's portable arithmetic against a committed digest
+  # of a pseudorandom workload (`ragu_core/tests/udon_arithmetic.rs`), and
+  # each assembly backend against the same digest and the committed fixtures:
+  # the ARM64 runners Udon's AArch64 assembly, macOS for Apple's ABI and
+  # ubuntu-24.04-arm for the Linux one, and ubuntu-latest its x86-64
+  # assembly, which Udon selects only on request or for a build compiled for
+  # BMI2 and ADX, after checking that the runner's CPU has both.
   backend-equivalence:
     name: backend equivalence (${{ matrix.os }})
     needs: changes
@@ -77,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,7 +93,9 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           components: clippy
-          cache-suffix: backend-equivalence
+          # The target cache is keyed by OS, not architecture; keep the two
+          # Linux runners from sharing one.
+          cache-suffix: backend-equivalence-${{ runner.arch }}
           ci-release-profile: true
           cache-pcd-incremental: ${{ runner.os == 'macOS' || runner.os == 'Windows' }}
       - name: Run acceleration backend clippy
@@ -127,6 +136,113 @@ jobs:
           ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
           ${{ runner.os == 'Windows' && '--config .github/actions/rust-setup/ci-release-windows.toml' || '' }}
           --lib backend_equivalence:: -- --test-threads=1
+      - name: Check the portable arithmetic digest
+        run: cargo test --release -p ragu_core --locked --test udon_arithmetic
+      - name: Check AArch64 ASM feature selection
+        if: runner.arch == 'ARM64'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess
+
+          version = subprocess.check_output(["rustc", "-vV"], text=True)
+          assert "host: aarch64-" in version, version
+          command = ["cargo", "tree", "-p", "ragu_pcd", "--locked", "-e", "features", "-i", "zakura-udon"]
+          for flags, expected in [([], True), (["--no-default-features"], False)]:
+              tree = subprocess.check_output(command + flags, text=True)
+              enabled = 'zakura-udon feature "aarch64-asm"' in tree
+              assert enabled == expected, tree
+              print(f"Udon aarch64-asm: {enabled}; flags: {flags}")
+          PY
+      - name: Check the AArch64 assembly arithmetic digest
+        if: runner.arch == 'ARM64'
+        run: >-
+          cargo test --release -p ragu_core --locked --features udon/aarch64-asm
+          --test udon_arithmetic
+      - name: Check portable fuse and verifier fixtures
+        if: runner.arch == 'ARM64'
+        env:
+          RAGU_FIXTURES: check
+          RAGU_PCD_TARGETED_TESTS: "1"
+        run: >-
+          ${{ runner.os != 'Linux' && 'env -u CARGO_INCREMENTAL' || '' }}
+          cargo test --release -p ragu_pcd --locked --no-default-features
+          --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
+          --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
+      - name: Check portable x86-64 fuse and verifier fixtures
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RAGU_FIXTURES: check
+          RAGU_PCD_TARGETED_TESTS: "1"
+        run: >-
+          cargo test --release -p ragu_pcd --locked --features udon/portable
+          --config .github/actions/rust-setup/ci-release.toml
+          --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
+      - name: Check default ASM fuse and verifier fixtures
+        if: runner.arch == 'ARM64'
+        env:
+          RAGU_FIXTURES: check
+          RAGU_PCD_TARGETED_TESTS: "1"
+        run: >-
+          ${{ runner.os != 'Linux' && 'env -u CARGO_INCREMENTAL' || '' }}
+          cargo test --release -p ragu_pcd --locked
+          --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
+          --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
+      # The fixtures pin fixed seeds; this drives the assembly through both
+      # backends' differing operation sequences on random inputs. It reuses
+      # the build of the step above.
+      - name: Run default ASM PCD backend equivalence
+        if: runner.arch == 'ARM64'
+        env:
+          PROPTEST_CASES: "4"
+          RAGU_PCD_TARGETED_TESTS: "1"
+        run: >-
+          ${{ runner.os != 'Linux' && 'env -u CARGO_INCREMENTAL' || '' }}
+          cargo test --release -p ragu_pcd --locked
+          --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
+          --lib backend_equivalence:: -- --test-threads=1
+      # Udon's x86-64 assembly uses BMI2 and ADX without run-time dispatch,
+      # so a runner without them would fault rather than test it.
+      - name: Check x86-64 assembly support and selection
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          for flag in bmi2 adx; do
+            grep -qw "$flag" /proc/cpuinfo || { echo "the runner's CPU lacks $flag"; exit 1; }
+          done
+          tree=$(cargo tree -p ragu_pcd --locked -e features -i zakura-udon --features udon/x86_64-asm)
+          grep -q 'zakura-udon feature "x86_64-asm"' <<<"$tree"
+          if grep -q 'zakura-udon feature "portable"' <<<"$tree"; then
+            echo "Udon's portable feature would override the x86-64 assembly"
+            exit 1
+          fi
+      - name: Check the x86-64 assembly arithmetic digest
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --release -p ragu_core --locked --features udon/x86_64-asm
+          --test udon_arithmetic
+      - name: Check x86-64 ASM fuse and verifier fixtures
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RAGU_FIXTURES: check
+          RAGU_PCD_TARGETED_TESTS: "1"
+        run: >-
+          cargo test --release -p ragu_pcd --locked --features udon/x86_64-asm
+          --config .github/actions/rust-setup/ci-release.toml
+          --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
+      # As on ARM64, the fixtures pin fixed seeds; this drives the x86-64
+      # assembly through both backends on random inputs, reusing that build.
+      - name: Run x86-64 ASM PCD backend equivalence
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          PROPTEST_CASES: "4"
+          RAGU_PCD_TARGETED_TESTS: "1"
+        run: >-
+          cargo test --release -p ragu_pcd --locked --features udon/x86_64-asm
+          --config .github/actions/rust-setup/ci-release.toml
+          --lib backend_equivalence:: -- --test-threads=1
       - name: Enforce PCD MSM and FFT backend routing
         if: matrix.os == 'ubuntu-latest'
         env:
@@ -154,9 +270,13 @@ jobs:
         run: >-
           cargo build -p ragu_backend -p ragu_acceleration --lib
           --no-default-features --target thumbv7em-none-eabihf
-      - name: Build PCD reference configuration for bare-metal no_std
+      - name: Build portable PCD configuration for bare-metal no_std
         run: >-
           cargo build -p ragu_pcd --lib --no-default-features --features alloc
+          --target thumbv7em-none-eabihf
+      - name: Build default PCD features for bare-metal no_std
+        run: >-
+          cargo build -p ragu_pcd --lib --locked
           --target thumbv7em-none-eabihf
       - name: Build a no_std consumer that depends only on ragu
         run: >-

@@ -132,6 +132,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             left_witness,
             right_witness,
         ) = par_join!(
+            B;
             || (
                 B::sparse_eval(&registry_xy_poly, w),
                 B::sparse_eval(&registry_xy_poly, application.circuit_id.omega_j()),
@@ -217,6 +218,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let registry_xy_poly = B::registry_interpolate_xy(&self.nested_registry, registry_xy_evals);
 
         let (registry_wxy, left_witness, right_witness) = par_join!(
+            B;
             || B::sparse_eval(&registry_xy_poly, w),
             || nested::stages::query::ChildEvaluationsWitness::from_proof::<C, R, B>(
                 left,
@@ -284,8 +286,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 nested: nested_query.clone(),
             },
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_query_rx(bridge_rx, bridge_commitment);
 
         Ok(nested_query)

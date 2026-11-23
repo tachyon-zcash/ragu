@@ -3,7 +3,7 @@
 //! commitment and value of the prover's $p$, the IPA proves it, and a
 //! tampered message breaks the proof.
 
-use alloc::{borrow::Cow, vec, vec::Vec};
+use alloc::{borrow::Cow, string::ToString, vec, vec::Vec};
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::polynomials::{Rank, TestRank, WalletRank, sparse};
@@ -20,6 +20,7 @@ type EqAffine = <Pasta as Cycle>::HostCurve;
 use super::{Batch, Batched, prover::batch, verifier::verify};
 use crate::{
     Application, ApplicationBuilder, Proof,
+    backend::committer::Committer,
     compress::revdot::{self, OpeningClaim, Openings, Reduction},
     internal::{
         ky::{self, NativeKy, NestedKy},
@@ -111,7 +112,7 @@ fn duplicate_claims<C: Affine>(generators: &impl FixedGenerators<C>) {
     let (messages, witness) = batch::<C, TestRank, ReferenceBackend>(
         &polys,
         &claims,
-        generators,
+        &Committer::<_, _, ReferenceBackend>::new::<TestRank>(generators, false, None),
         &mut BatchTranscript::new(),
     )
     .unwrap();
@@ -143,7 +144,12 @@ fn duplicate_claims<C: Affine>(generators: &impl FixedGenerators<C>) {
 
     let mut prover = BatchTranscript::new();
     assert!(matches!(
-        batch::<C, TestRank, ReferenceBackend>(&polys, &conflicting, generators, &mut prover),
+        batch::<C, TestRank, ReferenceBackend>(
+            &polys,
+            &conflicting,
+            &Committer::<_, _, ReferenceBackend>::new::<TestRank>(generators, false, None),
+            &mut prover,
+        ),
         Err(Error::InvalidWitness(_))
     ));
     prover.assert_unused();
@@ -185,8 +191,13 @@ where
     R: Rank,
     T: IpaTranscript<C>,
 {
-    let (messages, witness) =
-        batch::<C, R, ReferenceBackend>(polys, &openings.claims, generators, transcript).unwrap();
+    let (messages, witness) = batch::<C, R, ReferenceBackend>(
+        polys,
+        &openings.claims,
+        &Committer::<_, _, ReferenceBackend>::new::<R>(generators, false, None),
+        transcript,
+    )
+    .unwrap();
     let claim = verify::<_, ReferenceBackend, _>(
         &openings.commitments,
         &openings.claims,
@@ -285,7 +296,7 @@ fn native_batch_opens_through_the_ipa() {
     let (reduction, witness) = revdot::prover::reduce_native::<Pasta, TestR, ReferenceBackend>(
         proof,
         &app.native_registry,
-        generators,
+        &Committer::<_, _, ReferenceBackend>::new::<TestR>(generators, false, None),
         y,
         z,
         &[],
@@ -412,7 +423,7 @@ fn nested_batch_opens_through_the_ipa() {
     let (reduction, witness) = revdot::prover::reduce_nested::<Pasta, TestR, ReferenceBackend>(
         proof,
         &app.nested_registry,
-        generators,
+        &Committer::<_, _, ReferenceBackend>::new::<TestR>(generators, false, None),
         y,
         z,
         &[],
@@ -473,4 +484,70 @@ fn nested_batch_opens_through_the_ipa() {
         *Pasta::nested_u(crate::pasta::baked()),
         &mut verifier.nested()
     ));
+}
+
+/// Repeated query points share inverses without changing Horner weights;
+/// every zero denominator must still reject rather than enter the batch.
+#[test]
+fn batched_denominators_match_individual_inversions() {
+    fn check<C: Affine>() {
+        let commitments = [C::generator(), -C::generator()];
+        let batch = Batch {
+            f: C::generator(),
+            evaluations: vec![C::Scalar::from(13), C::Scalar::from(17)],
+        };
+        let claims = [
+            OpeningClaim {
+                poly: 0,
+                point: C::Scalar::from(2),
+                value: C::Scalar::from(5),
+            },
+            OpeningClaim {
+                poly: 1,
+                point: C::Scalar::from(2),
+                value: C::Scalar::from(7),
+            },
+            OpeningClaim {
+                poly: 0,
+                point: C::Scalar::from(3),
+                value: C::Scalar::from(11),
+            },
+            OpeningClaim {
+                poly: 0,
+                point: C::Scalar::from(2),
+                value: C::Scalar::from(5),
+            },
+        ];
+        let (alpha, u, beta) = (C::Scalar::from(3), C::Scalar::from(7), C::Scalar::from(11));
+        let transcript = || BatchTranscript {
+            challenges: [alpha, u, beta].into_iter(),
+            writes: 0,
+        };
+        for selected in [&claims[..0], &claims[..1], &claims[..]] {
+            let quotient = selected.iter().fold(C::Scalar::ZERO, |sum, claim| {
+                sum * alpha
+                    + (batch.evaluations[claim.poly] - claim.value)
+                        * (u - claim.point).invert().unwrap()
+            });
+            let expected = batch
+                .evaluations
+                .iter()
+                .fold(quotient, |sum, value| sum * beta + value);
+            let actual =
+                verify::<_, ReferenceBackend, _>(&commitments, selected, &batch, &mut transcript())
+                    .unwrap();
+            assert_eq!(actual.value, expected);
+            assert_eq!(actual.point, u);
+        }
+        for index in 0..claims.len() {
+            let mut invalid = claims;
+            invalid[index].point = u;
+            assert!(matches!(
+                verify::<_, ReferenceBackend, _>(&commitments, &invalid, &batch, &mut transcript()),
+                Err(Error::InvalidWitness(message)) if message.to_string() == "u lands on a query point"
+            ));
+        }
+    }
+    check::<EpAffine>();
+    check::<EqAffine>();
 }

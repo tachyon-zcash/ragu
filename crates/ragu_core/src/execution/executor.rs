@@ -27,21 +27,69 @@ pub fn for_each_mut<T: Send>(values: &mut [T], work: impl Fn(usize, &mut T) + Sy
     );
 }
 
-// Match maybe-rayon's serial fallback on WebAssembly without atomics.
-#[cfg(all(
-    feature = "multicore",
-    not(all(target_arch = "wasm32", not(target_feature = "atomics")))
-))]
-fn worker_count() -> usize {
-    maybe_rayon::current_num_threads()
+/// Applies `work` to each consecutive chunk of `chunk_len` items using Udon's
+/// scoped scheduler.
+///
+/// Chunks have `chunk_len` items, except the last, which may be shorter. The
+/// callback's index `i` identifies the chunk starting at `i * chunk_len`. The
+/// current pool's worker count bounds concurrent jobs, and each job visits a
+/// run of consecutive chunks in order; builds without `multicore` execute
+/// serially. This does not allocate or create a new thread pool.
+///
+/// Callbacks may run in any order, but each chunk is visited exactly once on
+/// success. If a callback panics, all scheduled jobs finish or unwind before
+/// the panic propagates; some chunks may remain unvisited.
+///
+/// # Panics
+///
+/// Panics if `chunk_len` is zero.
+pub fn for_each_chunk_mut<T: Send>(
+    values: &mut [T],
+    chunk_len: usize,
+    work: impl Fn(usize, &mut [T]) + Sync,
+) {
+    // As in `for_each_mut`, the scheduler's per-job budget stays internal.
+    udon::exec::for_each_chunk_mut(
+        values,
+        chunk_len,
+        options().task_budget(),
+        &PoolExecutor,
+        |index, chunk, _| work(index, chunk),
+    );
 }
 
-#[cfg(not(all(
-    feature = "multicore",
-    not(all(target_arch = "wasm32", not(target_feature = "atomics")))
-)))]
-fn worker_count() -> usize {
-    1
+/// Runs two independent jobs and returns both results.
+///
+/// The jobs may run concurrently on the current pool; builds without
+/// `multicore` run `left` and then `right`. Neither job may depend on the
+/// other having run. This does not allocate or create a new thread pool.
+///
+/// If either job panics, the panic propagates once both have finished or
+/// unwound.
+pub fn join<A: Send, B: Send>(
+    left: impl FnOnce() -> A + Send,
+    right: impl FnOnce() -> B + Send,
+) -> (A, B) {
+    PoolExecutor.join(left, right)
+}
+
+/// Returns the current worker pool's size, or one for serial execution.
+pub fn worker_count() -> usize {
+    // Match maybe-rayon's serial fallback on WebAssembly without atomics.
+    #[cfg(all(
+        feature = "multicore",
+        not(all(target_arch = "wasm32", not(target_feature = "atomics")))
+    ))]
+    {
+        maybe_rayon::current_num_threads()
+    }
+    #[cfg(not(all(
+        feature = "multicore",
+        not(all(target_arch = "wasm32", not(target_feature = "atomics")))
+    )))]
+    {
+        1
+    }
 }
 
 pub(crate) struct PoolExecutor;

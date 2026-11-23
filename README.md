@@ -20,7 +20,7 @@
 
 * The minimum supported [Rust](https://rust-lang.org/) version is currently **1.97.1**.
 * Ragu requires minimal dependencies and currently strives to avoid using dependencies that are not already used in [Zebra](https://github.com/ZcashFoundation/zebra).
-* Ragu's library crates are [`no_std`]-compatible and only need a global allocator; the default `multicore` crate feature uses [`maybe-rayon`] and pulls in `std`. See the [book][book-no-std] for details.
+* Ragu's library crates are [`no_std`]-compatible and only need a global allocator; the default `multicore` crate feature uses [`maybe-rayon`] and pulls in `std`, and the default `asm` feature enables Udon's AArch64 field assembly. See the [book][book-no-std] for details.
 
 [Zebra]: https://github.com/ZcashFoundation/zebra
 [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-attribute

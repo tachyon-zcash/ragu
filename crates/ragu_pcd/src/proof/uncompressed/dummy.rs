@@ -55,8 +55,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             view.d.push(C::CircuitField::ONE);
             view.build()
         };
-        let host_commitment =
-            B::sparse_commit_to_affine(&ones_host, C::host_generators(self.params));
+        let host_commitment = self.host().commit(&ones_host);
         let ones_nested = {
             let mut view = sparse::View::<_, R, _>::trace();
             view.a.push(C::ScalarField::ONE);
@@ -121,10 +120,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 C::Profile::NATIVE_ONLINE.polynomials.len()
             ]
         };
-        let native_online_commitments: Vec<_> = native_online_polynomials
-            .iter()
-            .map(|p| B::sparse_commit_to_affine(p, C::host_generators(self.params)))
-            .collect();
+        let native_online_commitments = self.host().commit_many(&native_online_polynomials);
         let nested_online_polynomials = if let Some(mesh) = C::Profile::NESTED_MESH {
             mesh.dummy_polynomials(
                 C::Profile::NESTED_ONLINE,
@@ -138,11 +134,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 C::Profile::NESTED_ONLINE.polynomials.len()
             ]
         };
-        let nested_online_commitments: Vec<_> = nested_online_polynomials
-            .iter()
-            .map(|p| B::sparse_commit_to_affine(p, C::nested_generators(self.params)))
-            .collect();
-        let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
+        let nested_online_commitments = self.nested().commit_many(&nested_online_polynomials);
+        let mut builder = ProofBuilder::<C, R, B>::new(
+            self.params,
+            self.host(),
+            self.nested(),
+            C::ScalarField::ONE,
+        );
         // Bootstrap bypasses the synthetic child's circuit claims, so it has
         // no online batch: the builder takes its commitments and outgoing
         // source polynomials from here.
@@ -233,8 +231,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             online_fq::BoundOpeningsLen::<C::Profile>::len()
         ]);
         let (nested_p_poly, nested_p_commitment) = {
-            let nested_commitment =
-                B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
+            let nested_commitment = self.nested().commit(&ones_nested);
             let registry_xy_commitment = builder.nested_registry_xy_commitment();
 
             let mut points = Vec::with_capacity(native::NumPoints::<C::Profile>::len());
@@ -316,7 +313,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // (independent of p_commitment), then endoscaling (computes
         // p_commitment), then preamble (needs p_commitment for
         // ChildWitness.p), then native_p_poly.
-        let nested_gen = C::nested_generators(self.params);
+        let nested = self.nested();
         {
             let rx = nested::stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
@@ -332,7 +329,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 },
             )
             .expect("trivial s_prime rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_s_prime_rx(rx, commitment);
         }
         {
@@ -348,7 +345,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 },
             )
             .expect("trivial inner_error rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_inner_error_rx(rx, commitment);
         }
         {
@@ -361,7 +358,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 },
             )
             .expect("trivial outer_error rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_outer_error_rx(rx, commitment);
         }
         {
@@ -378,7 +375,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 },
             )
             .expect("trivial query rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_query_rx(rx, commitment);
         }
         {
@@ -391,7 +388,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 },
             )
             .expect("trivial f rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_f_rx(rx, commitment);
         }
         {
@@ -406,7 +403,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 },
             )
             .expect("trivial eval rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_eval_rx(rx, commitment);
         }
 
@@ -566,13 +563,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 },
             )
             .expect("trivial preamble rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_preamble_rx(rx, commitment);
 
             let o1 = builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1];
             let rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)
                 .expect("trivial bridge-hash rx");
-            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            let commitment = nested.commit(&rx);
             builder.set_bridge_hash_rx(rx, commitment);
         }
 

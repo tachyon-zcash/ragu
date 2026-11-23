@@ -792,7 +792,7 @@ fn an_online_fq_polynomial_proves_verifies_and_compresses() -> Result<()> {
 fn a_binding_holds_the_sides_to_each_other_under<P>() -> Result<()>
 where
     P: Profile<
-        Context<'static, Pasta, R<14>, ragu_backend::ReferenceBackend> = CrossingContext<
+        Context<'static, Pasta, R<14>, ragu_acceleration::AcceleratedBackend> = CrossingContext<
             'static,
             Pasta,
         >,
@@ -864,7 +864,7 @@ fn a_nested_binding_holds_the_sides_to_each_other() -> Result<()> {
 fn extension_polynomials_are_bound_under<P>() -> Result<()>
 where
     P: Profile<
-        Context<'static, Pasta, R<14>, ragu_backend::ReferenceBackend> = CrossingContext<
+        Context<'static, Pasta, R<14>, ragu_acceleration::AcceleratedBackend> = CrossingContext<
             'static,
             Pasta,
         >,

@@ -148,7 +148,8 @@ fn binding_degrees_are_the_bindings() {
             &app.native_registry,
             Fp::ONE,
         )
-        .unwrap();
+        .unwrap()
+        .masked;
     let degrees =
         crate::decompress::program::native_binding_degrees::<Pasta, TestR, HEADER_SIZE>().unwrap();
     assert_eq!(native.len(), degrees.len());
@@ -158,7 +159,8 @@ fn binding_degrees_are_the_bindings() {
 
     let nested = instance
         .nested_bindings::<TestR, ReferenceBackend>(&challenges, &app.nested_registry, Fq::ONE)
-        .unwrap();
+        .unwrap()
+        .masked;
     let degrees = crate::decompress::program::nested_binding_degrees::<Pasta, TestR>().unwrap();
     assert_eq!(nested.len(), degrees.len());
     for (index, (binding, degrees)) in nested.iter().zip(degrees).enumerate() {
@@ -187,13 +189,15 @@ fn wire_bindings_hold() {
             &app.native_registry,
             sigma,
         )
-        .unwrap();
+        .unwrap()
+        .masked;
     assert_eq!(native.len(), 5);
     check_bindings(&native, |component| proof[component].clone(), r);
 
     let nested = instance
         .nested_bindings::<TestR, ReferenceBackend>(&challenges, &app.nested_registry, nested_sigma)
-        .unwrap();
+        .unwrap()
+        .masked;
     assert_eq!(nested.len(), 3);
     check_bindings(&nested, |component| proof[component].clone(), nested_r);
 
@@ -217,7 +221,8 @@ fn wire_bindings_hold() {
             &app.native_registry,
             sigma,
         )
-        .unwrap();
+        .unwrap()
+        .masked;
     let eval = native
         .iter()
         .find(|m| m.poly == native::RxComponent::Rx(native::RxIndex::Eval))
@@ -270,7 +275,8 @@ fn every_bound_wire_is_pinned() {
             &app.native_registry,
             Fp::random(|bytes| rng.fill_bytes(bytes)),
         )
-        .unwrap();
+        .unwrap()
+        .masked;
     check_pinned(&native, |component| proof[component].clone());
 
     let nested = instance
@@ -279,7 +285,8 @@ fn every_bound_wire_is_pinned() {
             &app.nested_registry,
             Fq::random(|bytes| rng.fill_bytes(bytes)),
         )
-        .unwrap();
+        .unwrap()
+        .masked;
     check_pinned(&nested, |component| proof[component].clone());
 }
 
@@ -295,9 +302,16 @@ fn extra_openings_hold() {
     );
     let base = Derived::ALL.len() + 2;
 
+    let native = instance
+        .native_bindings::<TestR, ReferenceBackend, HEADER_SIZE>(
+            &challenges,
+            &app.native_registry,
+            Fp::ONE,
+        )
+        .unwrap();
     let (polys, claims) = instance.native_openings::<TestR, ReferenceBackend>(
         &challenges,
-        &app.native_registry,
+        &native.registry_xy,
         w,
         base,
     );
@@ -323,10 +337,13 @@ fn extra_openings_hold() {
     }
     assert_eq!(claims[1].value, proof.v());
 
+    let nested = instance
+        .nested_bindings::<TestR, ReferenceBackend>(&challenges, &app.nested_registry, Fq::ONE)
+        .unwrap();
     let (polys, claims) = instance
         .nested_openings::<TestR, ReferenceBackend>(
             &challenges,
-            &app.nested_registry,
+            &nested.registry_xy,
             nested_w,
             base,
         )
