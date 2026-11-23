@@ -19,7 +19,6 @@
 //! [`native::stages::points`]).
 
 use alloc::vec::Vec;
-use core::ops::AddAssign;
 
 use ragu_circuits::{
     Blind, CircuitExt,
@@ -35,6 +34,7 @@ use ragu_primitives::{
     EndoscalarChallenge, Uendo, lift_endoscalar,
     vec::{FixedVec, Len},
 };
+use udon::field::Field;
 
 use super::{
     _01_application::NativeApplication,
@@ -71,22 +71,38 @@ pub(super) type NativeWalk<C> =
 /// is sampled from.
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 
-/// Accumulates polynomials with their commitments.
-struct Accumulator<'a, C: Cycle, R: Rank> {
-    poly: &'a mut sparse::Polynomial<C::CircuitField, R>,
-    commitments: &'a mut Vec<C::HostCurve>,
-    beta: C::CircuitField,
+/// Collects the polynomials of an accumulation with their commitments.
+struct Accumulator<'a, 'c, C: Cycle, R: Rank> {
+    polys: Vec<&'a sparse::Polynomial<C::CircuitField, R>>,
+    commitments: &'c mut Vec<C::HostCurve>,
 }
 
-impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
-    fn acc<P>(&mut self, poly: &P, commitment: C::HostCurve)
-    where
-        for<'p> sparse::Polynomial<C::CircuitField, R>: AddAssign<&'p P>,
-    {
-        self.poly.scale(self.beta);
-        *self.poly += poly;
+impl<'a, C: Cycle, R: Rank> Accumulator<'a, '_, C, R> {
+    fn acc(&mut self, poly: &'a sparse::Polynomial<C::CircuitField, R>, commitment: C::HostCurve) {
+        self.polys.push(poly);
         self.commitments.push(commitment);
     }
+}
+
+/// The polynomial Horner's rule accumulates from `first` and then each of
+/// `rest` in order: $\beta^k \cdot \text{first} + \sum\_i \beta^{k-1-i} \cdot
+/// \text{rest}\_i$ for the $k$ polynomials of `rest`.
+///
+/// It is formed as one linear combination under those powers, so that the
+/// running sum is never rescaled and the backend can split the work.
+fn accumulate<B: ragu_backend::Backend, F: Field, R: Rank>(
+    first: &sparse::Polynomial<F, R>,
+    rest: &[&sparse::Polynomial<F, R>],
+    beta: F,
+) -> sparse::Polynomial<F, R> {
+    let mut terms = Vec::with_capacity(rest.len() + 1);
+    let mut power = F::ONE;
+    for poly in rest.iter().rev() {
+        terms.push((*poly, power));
+        power *= beta;
+    }
+    terms.push((first, power));
+    B::sparse_linear_combination(&terms)
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
@@ -216,8 +232,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         randomizer: &NativeRandomizer<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<PointsWitness<C::HostCurve, C::Profile>> {
-        let mut poly = f.poly.clone();
-
         // Collect commitments for PointsWitness construction.
         let mut commitments: Vec<C::HostCurve> = Vec::new();
 
@@ -228,11 +242,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // commitment computation.
         let effective_beta = lift_endoscalar(beta_endo);
 
-        {
-            let mut acc: Accumulator<'_, C, R> = Accumulator {
-                poly: &mut poly,
+        let poly = {
+            let mut acc: Accumulator<'_, '_, C, R> = Accumulator {
+                polys: Vec::new(),
                 commitments: &mut commitments,
-                beta: effective_beta,
             };
 
             for proof in [left, right] {
@@ -284,7 +297,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             for (poly, &point) in online.polynomials().iter().zip(online.commitments()) {
                 acc.acc(poly, point);
             }
-        }
+            accumulate::<B, _, _>(&f.poly, &acc.polys, effective_beta)
+        };
 
         // Build the PointsStage input vector ([f.commitment, commitments..])
         // and delegate to the shared endoscaling helper, which also
@@ -339,16 +353,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             randomizer,
         );
 
-        let mut poly = nested_f.poly.clone();
-        for evaluated in batch.evaluated() {
-            poly.scale(beta);
-            poly.add_assign(evaluated);
-        }
-
-        for evaluated in builder.nested_online().polynomials() {
-            poly.scale(beta);
-            poly.add_assign(evaluated);
-        }
+        let poly = {
+            let rest: Vec<&sparse::Polynomial<C::ScalarField, R>> = batch
+                .evaluated()
+                .chain(builder.nested_online().polynomials())
+                .collect();
+            accumulate::<B, _, _>(&nested_f.poly, &rest, beta)
+        };
         let (p_commitment, walk) =
             self.compute_native_endoscaling(rng, beta_endo, native_points, builder)?;
         // A child can carry a polynomial inconsistent with its cached point.
@@ -397,22 +408,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let num_steps = NumSteps::<C::Profile>::len();
         let mut step_rxs = Vec::with_capacity(num_steps);
-        for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step);
-            let staged = MultiStage::new(step_circuit);
+        // The steps' traces are independent work for the backend. Each
+        // step's blinding factor is drawn first, in step order, so that no
+        // job touches the RNG.
+        let blinds: Vec<Blind<C::ScalarField>> =
+            (0..num_steps).map(|_| Blind::random(rng)).collect();
+        let (registry, points) = (&self.nested_registry, &witness);
+        for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
+            let staged = MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step));
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
                     endoscalar: beta_endo,
-                    points: &witness,
+                    points,
                 })?
                 .into_output();
-            let step_rx = self.nested_registry.assemble(
+            registry.assemble_with_alpha(
                 &step_trace,
                 nested::InternalCircuitIndex::EndoscalingStep(step as u32)
                     .circuit_index::<C::Profile>(),
-                rng,
-            )?;
-            step_rxs.push(step_rx);
+                blind,
+            )
+        }) {
+            step_rxs.push(step_rx?);
         }
 
         builder.set_nested_endoscaling_step_rxs(step_rxs);
@@ -460,22 +477,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &walk,
         )?;
 
-        let mut step_rxs = Vec::with_capacity(native::NumSteps::<C::Profile>::len());
-        for step in 0..native::NumSteps::<C::Profile>::len() {
+        let num_steps = native::NumSteps::<C::Profile>::len();
+        let mut step_rxs = Vec::with_capacity(num_steps);
+        // As for the nested steps: independent work, with each step's
+        // blinding factor drawn first, in step order.
+        let blinds: Vec<Blind<C::CircuitField>> =
+            (0..num_steps).map(|_| Blind::random(rng)).collect();
+        let (registry, walk_ref) = (&self.native_registry, &walk);
+        for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
             let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
                 .trace(native::circuits::endoscaling_step::Witness {
                     inputs,
-                    walk: &walk,
+                    walk: walk_ref,
                 })?
                 .into_output();
-            step_rxs.push(
-                self.native_registry.assemble(
-                    &trace,
-                    native::InternalCircuitIndex::EndoscalingStep(step as u32)
-                        .circuit_index::<C::Profile>(),
-                    &mut *rng,
-                )?,
-            );
+            registry.assemble_with_alpha(
+                &trace,
+                native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index::<C::Profile>(),
+                blind,
+            )
+        }) {
+            step_rxs.push(step_rx?);
         }
 
         builder.set_native_points_walk_rx(walk_rx);

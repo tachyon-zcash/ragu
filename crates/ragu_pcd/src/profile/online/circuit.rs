@@ -419,43 +419,6 @@ impl Layout {
         })
     }
 
-    /// Builds the appended quotient in opening order.
-    ///
-    /// Repeated polynomial indices contribute separate quotient terms.
-    ///
-    /// # Errors
-    ///
-    /// Rejects malformed layouts, witness lengths or point indices.
-    pub(crate) fn quotient<F: Field, R: Rank>(
-        &self,
-        polynomials: &[sparse::Polynomial<F, R>],
-        inputs: &[F],
-        points: &[F],
-        challenges: &Challenges<F>,
-    ) -> Result<sparse::Polynomial<F, R>> {
-        self.check()?;
-        if polynomials.len() != self.polynomials.len()
-            || inputs.len() != self.inputs
-            || points.len() != self.points
-        {
-            return Err(Error::InvalidWitness(
-                "online batch has the wrong witness lengths".into(),
-            ));
-        }
-        let quotients = self
-            .openings
-            .iter()
-            .map(|opening| {
-                let point = opening.point.resolve(challenges, inputs, points)?;
-                Ok(udon::polynomial::divide_linear_rev(
-                    polynomials[opening.polynomial].iter_coeffs(),
-                    point,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(quotient_sum(quotients, challenges.alpha))
-    }
-
     /// Constrains the online quotient and evaluation sums.
     ///
     /// `queries` must be the shared `OnlineQuery` wires, `evaluations` the
@@ -519,27 +482,6 @@ impl Layout {
     }
 }
 
-/// Horner-batches quotient coefficient streams with $\alpha$: the first
-/// stream receives the highest power.
-pub(crate) fn quotient_sum<F: Field, R: Rank>(
-    mut iters: Vec<impl Iterator<Item = F>>,
-    alpha: F,
-) -> sparse::Polynomial<F, R> {
-    let mut coeffs = Vec::with_capacity(R::num_coeffs());
-    let Some((first, rest)) = iters.split_first_mut() else {
-        return sparse::Polynomial::new();
-    };
-    for val in first.by_ref() {
-        let c = rest
-            .iter_mut()
-            .fold(val, |acc, iter| acc.mul_add(&alpha, &iter.next().unwrap()));
-        coeffs.push(c);
-    }
-    coeffs.reverse();
-
-    sparse::Polynomial::from_coeffs(coeffs)
-}
-
 /// Multiplies `value` by `base` raised to a setup-fixed `exponent`.
 ///
 /// Square-and-multiply costs about $\log_2$ of the exponent in
@@ -599,7 +541,7 @@ mod tests {
     use ragu_primitives::Simulator;
 
     use super::*;
-    use crate::profile::online::{Opening, Phase};
+    use crate::profile::online::{Opening, Phase, prover::alpha_batched_quotients};
 
     const LAYOUT: Layout = Layout {
         polynomials: &[Phase::BeforeW, Phase::BeforeW],
@@ -664,8 +606,12 @@ mod tests {
                 F::ONE + F::from(5) * omega
             ]
         );
-        let quotient =
-            LAYOUT.quotient(&polynomials, &queries.inputs, &queries.points, &challenges)?;
+        let quotient = LAYOUT.quotient::<_, _, ReferenceBackend>(
+            &polynomials,
+            &queries.inputs,
+            &queries.points,
+            &challenges,
+        )?;
         let u = challenges.u;
         let a = challenges.alpha;
         // The circuit-point opening of 1 + 5X is last, so it takes alpha^0
@@ -780,12 +726,12 @@ mod tests {
         );
         assert!(
             LAYOUT
-                .quotient(&polynomials[..1], &[], &[Fp::ONE], &challenges)
+                .quotient::<_, _, ReferenceBackend>(&polynomials[..1], &[], &[Fp::ONE], &challenges)
                 .is_err()
         );
         assert!(
             LAYOUT
-                .quotient(&polynomials, &[], &[], &challenges)
+                .quotient::<_, _, ReferenceBackend>(&polynomials, &[], &[], &challenges)
                 .is_err()
         );
     }
@@ -813,11 +759,87 @@ mod tests {
             assert!(queries.values.iter().all(|v| *v == Fp::ZERO));
             assert_eq!(
                 layout
-                    .quotient(&polynomials, &queries.inputs, &queries.points, &challenges)?
+                    .quotient::<_, _, ReferenceBackend>(
+                        &polynomials,
+                        &queries.inputs,
+                        &queries.points,
+                        &challenges
+                    )?
                     .eval(challenges.u),
                 Fp::ZERO
             );
         }
         Ok(())
+    }
+
+    fn check_grouped<F: Field>() {
+        let polys = [
+            sparse::Polynomial::<F, TestRank>::default(),
+            sparse::Polynomial::from_coeffs(alloc::vec![F::from(3)]),
+            sparse::Polynomial::from_coeffs(alloc::vec![F::from(5), F::ZERO, F::from(7)]),
+            sparse::Polynomial::from_coeffs(
+                (0..TestRank::num_coeffs())
+                    .map(|i| {
+                        if i % 11 == 0 {
+                            F::from(i as u64 + 1)
+                        } else {
+                            F::ZERO
+                        }
+                    })
+                    .collect(),
+            ),
+        ];
+        for alpha in [F::ZERO, F::ONE, F::from(17)] {
+            for points in [
+                [F::ZERO; 7],
+                [F::ONE; 7],
+                [
+                    F::from(2),
+                    F::ZERO,
+                    F::from(3),
+                    F::from(2),
+                    F::ONE,
+                    F::ZERO,
+                    F::from(3),
+                ],
+            ] {
+                let queries: Vec<_> = points
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, point)| (&polys[i % polys.len()], point))
+                    .collect();
+                let mut expected = alloc::vec![F::ZERO; TestRank::num_coeffs() - 1];
+                // Independent reference: divide every query first, then apply
+                // the original Horner combination to each coefficient.
+                for (poly, point) in &queries {
+                    let mut q: Vec<_> =
+                        udon::polynomial::divide_linear_rev(poly.iter_coeffs(), *point).collect();
+                    q.reverse();
+                    for (coefficient, q) in expected.iter_mut().zip(q) {
+                        *coefficient = coefficient.mul_add(&alpha, &q);
+                    }
+                }
+                let expected = sparse::Polynomial::<F, TestRank>::from_coeffs(expected);
+                let reference =
+                    alpha_batched_quotients::<_, _, ReferenceBackend>(queries.clone(), alpha);
+                let accelerated =
+                    alpha_batched_quotients::<_, _, ragu_acceleration::AcceleratedBackend>(
+                        queries, alpha,
+                    );
+                assert!(expected.iter_coeffs().eq(reference.iter_coeffs()));
+                assert!(expected.iter_coeffs().eq(accelerated.iter_coeffs()));
+            }
+        }
+        assert!(
+            alpha_batched_quotients::<F, TestRank, ReferenceBackend>(Vec::new(), F::ONE)
+                .iter_coeffs()
+                .all(|v| v == F::ZERO)
+        );
+    }
+
+    #[test]
+    fn grouped_quotients_preserve_weights_on_both_fields() {
+        check_grouped::<Fp>();
+        check_grouped::<Fq>();
     }
 }

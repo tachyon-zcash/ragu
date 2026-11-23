@@ -163,9 +163,7 @@ fn combine<'a, F: Field, R: Rank>(
 ) -> sparse::Polynomial<F, R> {
     let mut acc = sparse::Polynomial::default();
     for (weight, poly) in terms {
-        let mut term = poly.clone();
-        term.scale(weight);
-        acc.add_assign(&term);
+        acc.add_scaled_assign(poly, weight);
     }
     acc
 }
@@ -175,7 +173,15 @@ fn fold_powers<'a, F: Field, R: Rank>(
     polys: impl DoubleEndedIterator<Item = &'a sparse::Polynomial<F, R>>,
     x: F,
 ) -> sparse::Polynomial<F, R> {
-    sparse::Polynomial::fold(polys.rev(), x)
+    let mut power = F::ONE;
+    let terms: Vec<_> = polys
+        .map(|poly| {
+            let term = (poly, power);
+            power *= x;
+            term
+        })
+        .collect();
+    sparse::Polynomial::linear_combination(&terms)
 }
 
 /// The products `pairs` index into `a` and `b`, as the low coefficients of
@@ -236,8 +242,8 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
     let inner_commitment = B::sparse_commit_to_affine(&inner, generators);
     transcript.write_point(inner_commitment)?;
     let (mu, nu) = squeeze_pair(transcript)?;
-    let groups: Vec<(sparse::Polynomial<_, R>, sparse::Polynomial<_, R>)> = (0..layout.groups())
-        .map(|g| {
+    let groups: Vec<(sparse::Polynomial<_, R>, sparse::Polynomial<_, R>)> =
+        B::map(0..layout.groups(), |g| {
             let members = &claims[layout.members(g)];
             (
                 fold_powers(members.iter().map(|(a, _)| a.as_ref()), mu),
@@ -279,9 +285,7 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
     let mut committed_a = a.clone();
     for (i, shape) in shapes.iter().enumerate() {
         if let Kind::Masked(m) = shape.kind {
-            let mut expected = masked[m].expected::<R>();
-            expected.scale(weights.a(i));
-            committed_a.add_assign(&expected);
+            committed_a.add_scaled_assign(&masked[m].expected::<R>(), weights.a(i));
         }
     }
     let of_kind = |kinds: fn(Kind) -> bool| {
@@ -410,10 +414,11 @@ pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
 ) -> Result<(Reduction<C::HostCurve>, Witness<C::HostCurve, R>)> {
     let mut builder = Builder::<_, C::CircuitField, R, B>::new(registry, y, z);
     native::claims::build::<C::Profile, _, _>(&NativePolys(proof), &mut builder)?;
-    let claims: Vec<_> = builder
+    let built = builder.finish();
+    let claims: Vec<_> = built
         .a
         .into_iter()
-        .zip(builder.b)
+        .zip(built.b)
         .chain(masked_claims(|component| &proof[component], masked))
         .collect();
     let shapes = claims::native_shapes::<C::Profile, _>(z, masked)?;
@@ -441,10 +446,11 @@ pub(crate) fn reduce_nested<C: ProfiledCycle, R: Rank, B: Backend>(
 ) -> Result<(Reduction<C::NestedCurve>, Witness<C::NestedCurve, R>)> {
     let mut builder = Builder::<_, C::ScalarField, R, B>::new(registry, y, z);
     nested::claims::build::<C::Profile, _, _>(&NestedPolys(proof), &mut builder)?;
-    let claims: Vec<_> = builder
+    let built = builder.finish();
+    let claims: Vec<_> = built
         .a
         .into_iter()
-        .zip(builder.b)
+        .zip(built.b)
         .chain(masked_claims(|component| &proof[component], masked))
         .collect();
     let shapes = claims::nested_shapes::<C::Profile, _>(z, masked)?;

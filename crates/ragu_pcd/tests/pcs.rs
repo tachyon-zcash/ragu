@@ -423,8 +423,7 @@ mod folding {
         }
     }
 
-    type Claims<'a> =
-        revdot::Builder<'a, 'a, Cow<'a, sparse::Polynomial<Fq, R>>, Fq, R, ReferenceBackend>;
+    type Claims<'a> = revdot::Claims<'a, Cow<'a, sparse::Polynomial<Fq, R>>, Fq, R>;
 
     /// The children's nested claims at `y` and `z`, in the order
     /// [`build`](nested::claims::build) emits them, with their $k(y)$ values.
@@ -435,7 +434,8 @@ mod folding {
         y: Fq,
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
-        let mut nested_claims = revdot::Builder::new(&app.nested_registry, y, z);
+        let mut nested_claims =
+            revdot::Builder::<_, _, _, ReferenceBackend>::new(&app.nested_registry, y, z);
         nested::claims::build::<crate::profile::Standard, _, _>(
             &NestedFuseProofSource { left, right },
             &mut nested_claims,
@@ -461,7 +461,7 @@ mod folding {
             left_unified: unified_ky(left)?,
             right_unified: unified_ky(right)?,
         };
-        Ok((nested_claims, children))
+        Ok((nested_claims.finish(), children))
     }
 
     /// Whether every nested claim of the two children holds at `y` and `z`.

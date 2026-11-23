@@ -943,13 +943,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn native_extension_circuit_commitments(&self) -> &[C::HostCurve] {
         self.native_extension_circuit_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_extension_circuit_rxs
-                .as_ref()
-                .expect("native_extension_circuit_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_extension_circuit_rxs
+                    .as_ref()
+                    .expect("native_extension_circuit_rxs not set"),
+            )
         })
     }
 
@@ -957,13 +955,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// stages' rx polynomials. Returns the cached slice.
     pub(crate) fn native_extension_stage_commitments(&self) -> &[C::HostCurve] {
         self.native_extension_stage_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_extension_stage_rxs
-                .as_ref()
-                .expect("native_extension_stage_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_extension_stage_rxs
+                    .as_ref()
+                    .expect("native_extension_stage_rxs not set"),
+            )
         })
     }
 
@@ -971,13 +967,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// steps' rx polynomials. Returns the cached slice.
     pub(crate) fn native_endoscaling_step_commitments(&self) -> &[C::HostCurve] {
         self.native_endoscaling_step_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_endoscaling_step_rxs
-                .as_ref()
-                .expect("native_endoscaling_step_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_endoscaling_step_rxs
+                    .as_ref()
+                    .expect("native_endoscaling_step_rxs not set"),
+            )
         })
     }
 
@@ -985,13 +979,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// binding circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn native_bind_challenges_commitments(&self) -> &[C::HostCurve] {
         self.native_bind_challenges_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_bind_challenges_rxs
-                .as_ref()
-                .expect("native_bind_challenges_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_bind_challenges_rxs
+                    .as_ref()
+                    .expect("native_bind_challenges_rxs not set"),
+            )
         })
     }
 
@@ -1183,13 +1175,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn nested_extension_circuit_commitments(&self) -> &[C::NestedCurve] {
         self.nested_extension_circuit_commitments.get_or_init(|| {
-            let nested_gen = C::nested_generators(self.params);
-            self.nested_extension_circuit_rxs
-                .as_ref()
-                .expect("nested_extension_circuit_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            self.nested.commit_many(
+                self.nested_extension_circuit_rxs
+                    .as_ref()
+                    .expect("nested_extension_circuit_rxs not set"),
+            )
         })
     }
 
@@ -1197,13 +1187,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// stages' rx polynomials. Returns the cached slice.
     pub(crate) fn nested_extension_stage_commitments(&self) -> &[C::NestedCurve] {
         self.nested_extension_stage_commitments.get_or_init(|| {
-            let nested_gen = C::nested_generators(self.params);
-            self.nested_extension_stage_rxs
-                .as_ref()
-                .expect("nested_extension_stage_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            self.nested.commit_many(
+                self.nested_extension_stage_rxs
+                    .as_ref()
+                    .expect("nested_extension_stage_rxs not set"),
+            )
         })
     }
 
@@ -1225,13 +1213,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// polynomials. Returns the cached slice.
     pub(crate) fn nested_endoscaling_step_commitments(&self) -> &[C::NestedCurve] {
         self.nested_endoscaling_step_commitments.get_or_init(|| {
-            let nested_gen = C::nested_generators(self.params);
-            self.nested_endoscaling_step_rxs
-                .as_ref()
-                .expect("nested_endoscaling_step_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            self.nested.commit_many(
+                self.nested_endoscaling_step_rxs
+                    .as_ref()
+                    .expect("nested_endoscaling_step_rxs not set"),
+            )
         })
     }
 

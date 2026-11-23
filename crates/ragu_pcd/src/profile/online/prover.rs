@@ -9,7 +9,7 @@
 //! polynomials exactly, and holds the batch to its commitment deadlines
 //! ([`Prepared`]).
 
-use alloc::{vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec, vec::Vec};
 
 use ragu_backend::Backend;
 use ragu_circuits::{
@@ -33,6 +33,107 @@ use super::{
     },
 };
 use crate::profile::{ExtensionRxs, Profile};
+
+impl Layout {
+    /// Builds the appended quotient: every opening's quotient, batched under
+    /// `challenges.alpha` in opening order by [`alpha_batched_quotients`].
+    ///
+    /// Repeated polynomial indices contribute separate quotient terms.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed layouts, witness lengths or point indices.
+    pub(crate) fn quotient<F: Field, R: Rank, B: Backend>(
+        &self,
+        polynomials: &[sparse::Polynomial<F, R>],
+        inputs: &[F],
+        points: &[F],
+        challenges: &Challenges<F>,
+    ) -> Result<sparse::Polynomial<F, R>> {
+        self.check()?;
+        if polynomials.len() != self.polynomials.len()
+            || inputs.len() != self.inputs
+            || points.len() != self.points
+        {
+            return Err(Error::InvalidWitness(
+                "online batch has the wrong witness lengths".into(),
+            ));
+        }
+        let queries = self
+            .openings
+            .iter()
+            .map(|opening| {
+                let point = opening.point.resolve(challenges, inputs, points)?;
+                Ok((&polynomials[opening.polynomial], point))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(alpha_batched_quotients::<F, R, B>(
+            queries,
+            challenges.alpha,
+        ))
+    }
+}
+
+/// The $\alpha$-batched quotients of `queries`, each a polynomial and the
+/// point it is opened at: the first query receives the highest power of
+/// $\alpha$ and the last receives one.
+///
+/// Queries at the same point are summed under their weights and divided
+/// once, and the points are independent work for the backend.
+pub(crate) fn alpha_batched_quotients<F: Field, R: Rank, B: Backend>(
+    queries: Vec<(&sparse::Polynomial<F, R>, F)>,
+    alpha: F,
+) -> sparse::Polynomial<F, R> {
+    let mut indices = BTreeMap::new();
+    let mut groups: Vec<(F, Vec<_>)> = Vec::new();
+    let mut weight = F::ONE;
+    for (poly, point) in queries.into_iter().rev() {
+        let index = *indices
+            .entry(point.to_bytes().as_ref().to_vec())
+            .or_insert_with(|| {
+                let index = groups.len();
+                groups.push((point, Vec::new()));
+                index
+            });
+        groups[index].1.push((poly, weight));
+        weight *= alpha;
+    }
+
+    let quotient = |(point, polys): (F, Vec<(&sparse::Polynomial<F, R>, F)>)| {
+        let mut coefficients = Vec::new();
+        for (poly, weight) in polys {
+            if weight == F::ZERO {
+                continue;
+            }
+            // Registry restrictions can be much shorter than the rank bound.
+            // Visit stored coefficients and divide only the populated prefix.
+            for (index, coefficient) in poly.iter_stored_coeffs() {
+                if coefficients.len() <= index {
+                    coefficients.resize(index + 1, F::ZERO);
+                }
+                coefficients[index] = coefficient.mul_add(&weight, &coefficients[index]);
+            }
+        }
+        let mut quotient: Vec<_> =
+            udon::polynomial::divide_linear_rev(coefficients, point).collect();
+        quotient.reverse();
+        sparse::Polynomial::<F, R>::from_coeffs(quotient)
+    };
+    let mut result = sparse::Polynomial::default();
+    let mut add_quotient = |part| result.add_assign(&part);
+    let workers = ragu_core::worker_count();
+    if workers == 1 {
+        groups.into_iter().map(quotient).for_each(add_quotient);
+    } else {
+        // An eager backend holds every output of map. Reduce each batch
+        // before starting the next so only one quotient per worker is live.
+        let mut groups = groups.into_iter();
+        while !groups.as_slice().is_empty() {
+            B::map(groups.by_ref().take(workers), quotient).for_each(&mut add_quotient);
+        }
+    }
+    result
+}
 
 /// A batch's fold, the helper's quotient and evaluation sums in that order:
 /// empty for a side without a batch.
@@ -371,7 +472,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     /// Appends the batch's quotient to the step's: `poly` moves up one power
     /// of `alpha` per opening and the batch's quotients, in opening order,
     /// take the powers below. A side without a batch returns `poly` as it is.
-    pub(crate) fn append_quotient(
+    pub(crate) fn append_quotient<B: Backend>(
         &self,
         mut poly: sparse::Polynomial<C::Scalar, R>,
         alpha: C::Scalar,
@@ -384,7 +485,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         poly.scale(alpha.pow_u64(layout.openings.len() as u64));
         // Opening descriptors can use w, y and x; u and beta are not sampled
         // yet and are never read by quotient construction.
-        poly += &layout.quotient(
+        poly += &layout.quotient::<_, _, B>(
             &self.polynomials,
             self.early_values(),
             &query.points,

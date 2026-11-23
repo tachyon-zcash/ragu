@@ -26,7 +26,7 @@ use core::marker::PhantomData;
 
 use ragu_backend::Backend;
 use ragu_circuits::{
-    CircuitExt,
+    Blind, CircuitExt,
     polynomials::{Rank, WalletRank, sparse},
     registry::{CircuitIndex, Registry},
     staging::StageExt,
@@ -305,31 +305,35 @@ where
         // The chunks load the online stages the step's fuse committed.
         let prepared = &prepared.clone().with_online(online_input, online_query)?;
         let schedule = prepared.schedule.clone();
-        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
-        for index in 0..schedule.circuits.len() {
-            let trace =
-                chunk_trace::<C, Native, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
+        // The chunk circuits, then the statement circuit and the binding
+        // circuit: their traces are independent work for the backend. Each
+        // one's blinding factor is drawn first, in that order, so that no
+        // job touches the RNG.
+        let chunks = schedule.circuits.len();
+        let blinds: Vec<Blind<C::CircuitField>> =
+            (0..chunks + 2).map(|_| Blind::random(rng)).collect();
+        let circuits = B::map(blinds.into_iter().enumerate(), |(index, blind)| {
+            let trace = if index < chunks {
+                chunk_trace::<C, Native, R, HEADER_SIZE>(&schedule, index, prepared, params)?
+            } else if index == chunks {
+                circuits::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
+                    schedule.clone(),
+                )
+                .trace(prepared)?
+                .into_parts()
+                .0
+            } else {
+                circuits::BindingCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
+                    schedule.clone(),
+                )
+                .trace(prepared)?
+                .into_parts()
+                .0
+            };
             let circuit = native::InternalCircuitIndex::ExtensionCircuit(index as u32);
-            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
-        }
-        let trace = circuits::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
-        let statement =
-            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
-        circuits.push(registry.assemble(&trace, statement.circuit_index::<P>(), rng)?);
-        let trace = circuits::BindingCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
-        let binding =
-            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32 + 1);
-        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+            registry.assemble_with_alpha(&trace, circuit.circuit_index::<P>(), blind)
+        })
+        .collect::<Result<Vec<_>>>()?;
         type Lifts<C, R, const H: usize> = LiftsStage<C, Native, WalletRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Native, WalletRank, R, H>;
         type Transcript<C, R, const H: usize> = TranscriptStage<C, Native, WalletRank, R, H>;
@@ -388,22 +392,26 @@ where
             .with_online(online_input, online_query)?;
         let prepared = &prepared;
         let schedule = prepared.schedule.clone();
-        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
-        for index in 0..schedule.circuits.len() {
-            let trace =
-                chunk_trace::<C, Nested, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
+        // As on the native side: independent traces, with each circuit's
+        // blinding factor drawn first, the chunks' and then the binding's.
+        let chunks = schedule.circuits.len();
+        let blinds: Vec<Blind<C::ScalarField>> =
+            (0..chunks + 1).map(|_| Blind::random(rng)).collect();
+        let circuits = B::map(blinds.into_iter().enumerate(), |(index, blind)| {
+            let trace = if index < chunks {
+                chunk_trace::<C, Nested, R, HEADER_SIZE>(&schedule, index, prepared, params)?
+            } else {
+                circuits::BindingCircuit::<C, Nested, WalletRank, R, HEADER_SIZE>::new(
+                    schedule.clone(),
+                )
+                .trace(prepared)?
+                .into_parts()
+                .0
+            };
             let circuit = nested::InternalCircuitIndex::ExtensionCircuit(index as u32);
-            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
-        }
-        let trace = circuits::BindingCircuit::<C, Nested, WalletRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
-        let binding =
-            nested::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
-        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+            registry.assemble_with_alpha(&trace, circuit.circuit_index::<P>(), blind)
+        })
+        .collect::<Result<Vec<_>>>()?;
         type Lifts<C, R, const H: usize> = LiftsStage<C, Nested, WalletRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Nested, WalletRank, R, H>;
         type Digits<C, R, const H: usize> = DigitsStage<C, Nested, WalletRank, R, H>;

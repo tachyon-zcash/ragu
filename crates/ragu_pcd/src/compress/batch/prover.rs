@@ -5,10 +5,13 @@ use alloc::{borrow::Cow, vec::Vec};
 use ragu_backend::Backend;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{FixedGenerators, Result};
-use udon::{curve::Affine, field::Field, polynomial::divide_linear_rev};
+use udon::{curve::Affine, field::Field};
 
 use super::{Batch, check_claims};
-use crate::{compress::revdot::OpeningClaim, ipa::IpaTranscript};
+use crate::{
+    compress::revdot::OpeningClaim, ipa::IpaTranscript,
+    profile::online::prover::alpha_batched_quotients,
+};
 
 /// What the prover keeps to open the batched claim.
 pub(crate) struct Witness<F> {
@@ -35,29 +38,33 @@ pub(crate) fn batch<C: Affine, R: Rank, B: Backend>(
     let alpha = transcript.squeeze_challenge()?;
 
     // f: the quotients of every claim, batched under alpha.
-    let quotients = claims
-        .iter()
-        .map(|claim| divide_linear_rev(polys[claim.poly].iter_coeffs(), claim.point))
-        .collect::<Vec<_>>();
-    let f = batched_quotients::<_, R>(quotients, alpha);
+    assert!(!claims.is_empty(), "at least one claim");
+    let f = alpha_batched_quotients::<_, R, B>(
+        claims
+            .iter()
+            .map(|claim| (polys[claim.poly].as_ref(), claim.point))
+            .collect(),
+        alpha,
+    );
     let f_commitment = B::sparse_commit_to_affine(&f, generators);
     transcript.write_point(f_commitment)?;
 
     let u = transcript.squeeze_challenge()?;
-    let mut evaluations = Vec::with_capacity(polys.len());
-    for poly in polys {
-        let value = poly.eval(u);
-        transcript.write_scalar(value)?;
-        evaluations.push(value);
+    let evaluations: Vec<_> = B::map(polys.iter(), |poly| poly.eval(u)).collect();
+    for value in &evaluations {
+        transcript.write_scalar(*value)?;
     }
 
     // p: f and every polynomial, folded under beta with f weighted highest.
     let beta = transcript.squeeze_challenge()?;
-    let mut p = f;
-    for poly in polys {
-        p.scale(beta);
-        p.add_assign(poly);
+    let mut terms = Vec::with_capacity(polys.len() + 1);
+    let mut power = C::Scalar::ONE;
+    for poly in polys.iter().rev() {
+        terms.push((poly.as_ref(), power));
+        power *= beta;
     }
+    terms.push((&f, power));
+    let p = B::sparse_linear_combination(&terms);
 
     Ok((
         Batch {
@@ -69,23 +76,4 @@ pub(crate) fn batch<C: Affine, R: Rank, B: Backend>(
             u,
         },
     ))
-}
-
-/// Horner-batches quotient coefficient streams, highest degree first as
-/// [`divide_linear_rev`] yields them, under $\alpha$: the first stream
-/// receives the highest power.
-fn batched_quotients<F: Field, R: Rank>(
-    mut streams: Vec<impl Iterator<Item = F>>,
-    alpha: F,
-) -> sparse::Polynomial<F, R> {
-    let mut coeffs = Vec::with_capacity(R::num_coeffs());
-    let (first, rest) = streams.split_first_mut().expect("at least one claim");
-    for coeff in first.by_ref() {
-        let batched = rest.iter_mut().fold(coeff, |acc, stream| {
-            alpha * acc + stream.next().expect("streams have equal length")
-        });
-        coeffs.push(batched);
-    }
-    coeffs.reverse();
-    sparse::Polynomial::from_coeffs(coeffs)
 }

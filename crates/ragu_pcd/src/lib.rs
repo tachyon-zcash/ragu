@@ -35,6 +35,15 @@
 //! `multicore` is an independent, opt-in feature. Cargo unifies dependency
 //! features, so portable AArch64 builds must ensure no other dependency
 //! enables Udon's `aarch64-asm` feature.
+//!
+//! # Prover memory
+//!
+//! Proving holds witnesses and witness-derived polynomials in ordinary
+//! process memory. Uncompressed proofs retain those polynomials for recursion,
+//! and ordinary deallocation provides no erasure guarantee. With `std`,
+//! including `multicore`, the process-wide Pasta MSM cache can retain
+//! scalar-derived data after the proof and application are dropped. Later MSMs
+//! overwrite only the scratch they use. See [`ragu_core::msm`].
 
 // Prover and verifier code.
 //
