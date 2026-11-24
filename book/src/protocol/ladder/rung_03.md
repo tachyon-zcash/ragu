@@ -29,8 +29,8 @@ the "split" in split accumulation. A
 once, on the final accumulator.
 
 A proof therefore carries an accumulator and a
-[**frontier**](../construction/proof.md#frontier): the traces of the internal
-circuits its own fuse ran, which nothing has checked yet.
+[**pending trace**](../construction/proof.md#pending-trace): the traces of the
+internal circuits its own fuse ran, which nothing has checked yet.
 
 **Why it holds.** Each merge must have two properties. If every input claim is
 true, the honest prover produces a true output claim. If any input claim is
@@ -38,7 +38,7 @@ false, then except with small probability over the merge's challenges the output
 claim is false. Given the second property, a true accumulator at the root
 implies by induction that every claim ever merged into it was true, and so that
 every circuit whose claim was merged was satisfied. The claims not yet merged
-are those of the root's frontier, which the decider checks itself.
+are those of the root's pending trace, which the decider checks itself.
 
 The circuits that verify a merge, a fuse's **internal circuits**, are circuits
 like any other. Their satisfaction is a new set of revdot claims. Their traces

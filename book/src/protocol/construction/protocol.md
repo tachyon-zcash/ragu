@@ -12,7 +12,8 @@ absorbs one point of $\E_p$ that commits to all of them: the commitment of a
 commitments of the native objects of the round. It holds the round's nested
 objects directly when they are scalars. When they are commitments, it holds the
 commitment of the native points stage that carries them. One absorbed point
-therefore fixes both sides.
+therefore fixes both sides. The [overview](index.md#stages-time) shows the
+same schedule as a figure.
 
 ## Rounds {#rounds}
 
@@ -114,19 +115,19 @@ A verifier of the interactive protocol would check the following.
 In practice, no party runs this verifier during a fuse. Checks 2 to 9 are
 constraints of the [circuits](internal_circuits.md) named beside them, and the
 fuse produces the traces of those circuits. The statements that those circuits
-are satisfied are revdot claims, and they form the fuse's
-[frontier](proof.md#frontier). Check 1 is a revdot claim too, and the fuse folds
-it into its new raw claim with the claims of the children.
+are satisfied are revdot claims about the fuse's
+[pending trace](proof.md#pending-trace). Check 1 is a revdot claim too, and the
+fuse folds it into its new raw claim with the claims of the children.
 
 After the fuse, three things remain to be established on each side:
 
-- the frontier claims of the fuse;
+- the claims of the fuse's pending trace;
 - the new raw claim $\revdot{A}{B} = c$, which now stands for check 1 as well;
 - the new batched opening $p(u) = v$ against $P$, and that the stored
   restriction is $m(W, x, y)$.
 
 A parent's fuse folds the first two into its own raw claim, and opens $p$ and
 the restriction in its own batch. For the root, the [decider](decider.md)
-settles all three. It checks the frontier claims, the restriction and the
-commitment $P$, and it derives $c$ and $v$ from the polynomials, so that the raw
-claim and the batched opening hold by construction.
+settles all three. It checks the claims of the pending trace, the restriction
+and the commitment $P$, and it derives $c$ and $v$ from the polynomials, so
+that the raw claim and the batched opening hold by construction.

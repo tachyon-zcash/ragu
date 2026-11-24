@@ -244,9 +244,10 @@ registry, and a position is a claim's place in its list.
 
 The native list has the raw claim of each child, then the claim of the fuse's
 own step circuit, then one circuit claim for each of the $37$ internal circuits
-of each child's [frontier](proof.md#frontier). It ends with one bonding claim
-for each of the $18$ native bonding polynomials. Sixteen of these cover both
-children, and the two of the application stage cover the fuse's own polynomials.
+of each child's [pending trace](proof.md#pending-trace). It ends with one
+bonding claim for each of the $18$ native bonding polynomials. Sixteen of these
+cover both children, and the two of the application stage cover the fuse's own
+polynomials.
 
 In each row, $i$ ranges over the children, left before right. We abbreviate the
 sum of a child's six points stages as

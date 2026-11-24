@@ -3,7 +3,8 @@
 A fuse commits most of its data in [stages](staging.md#stages): whatever several
 of its circuits read, and whatever must be fixed before a challenge is drawn.
 The contents of each stage are listed in wire order. **Fields that only a
-profile hook fills are omitted from the tables on this page.**
+profile's extension fills are omitted from the tables on this page.** The
+[overview](index.md#stages-time-space) shows the stages by round and by gate.
 
 A field of type point is a curve point and takes two values, its $x$ coordinate
 and then its $y$ coordinate. A count is in units of the field's type, so a point

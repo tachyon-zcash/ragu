@@ -167,7 +167,7 @@ curves, see the [detailed Fuse PIOP](../iop.md).
     $c_q = \revdot{A_q}{B_q}$ and $v_q = p_q(u_q)$. Compute the traces of
     `Collapse` and `ComputeV`.
 42. Compute every commitment not yet computed and output $\pi$. The proof keeps
-    the accumulator, the frontier and the auxiliary data of the
+    the accumulator, the pending trace and the auxiliary data of the
     [proof page](proof.md). It does not keep $r[\texttt{Application}]$,
     $r[\texttt{ApplicationStage}]$ or the six randomizers, and it has no field
     for the three headers or the openings, which remain only as values of the
