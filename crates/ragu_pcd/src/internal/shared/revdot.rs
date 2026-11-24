@@ -344,23 +344,19 @@ where
         Claims { a, b }
     }
 
-    /// Horner-fold groups of polynomials. Each group is first summed, then
-    /// the sums are Horner-folded with $z$.
+    /// Horner-folds the polynomials of a bonding claim with $z$.
     ///
-    /// The fold gives group `i` coefficient $z^{n-1-i}$. Callers that track
-    /// commitment decompositions must assign the same coefficients to the
-    /// corresponding source keys.
+    /// The fold gives polynomial `i` of `n` the coefficient $z^{n-1-i}$.
+    /// Callers that track commitment decompositions must assign the same
+    /// coefficients to the corresponding source keys.
     ///
     /// Folding is sound because the revdot identity for bonding polynomials is
     /// linear in the trace.
-    pub fn fold_bonding_groups(
+    pub fn fold_bonding(
         &self,
-        groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) -> Cow<'rx, sparse::Polynomial<F, R>> {
-        Cow::Owned(sparse::Polynomial::fold(
-            groups.map(|g| sum_polynomials(g)),
-            self.z,
-        ))
+        Cow::Owned(sparse::Polynomial::fold(rxs, self.z))
     }
 }
 

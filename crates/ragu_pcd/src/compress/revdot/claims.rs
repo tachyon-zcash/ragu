@@ -207,20 +207,16 @@ impl<Id, F: Field> Shaper<Id, F> {
         self.push(Kind::Circuit(circuit), a, Vec::new());
     }
 
-    /// A bonding claim over the Horner fold of per-group sums under $z$, as
+    /// A bonding claim over the Horner fold of `rxs` under $z$, as
     /// [`sparse::Polynomial::fold`](ragu_circuits::polynomials::sparse::Polynomial::fold)
     /// weights it.
-    fn bonding(
-        &mut self,
-        circuit: CircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Id>>,
-    ) {
+    fn bonding(&mut self, circuit: CircuitIndex, rxs: impl Iterator<Item = Id>) {
         let mut a: Vec<(F, Id)> = Vec::new();
-        for group in groups {
+        for rx in rxs {
             for (weight, _) in &mut a {
                 *weight *= self.z;
             }
-            a.extend(group.map(|rx| (F::ONE, rx)));
+            a.push((F::ONE, rx));
         }
         self.push(Kind::Bonding(circuit), a, Vec::new());
     }
@@ -243,12 +239,12 @@ impl<P: Profile, Id, F: Field> native::claims::Processor<P, Id, CircuitIndex> fo
         self.circuit(id.circuit_index::<P>(), rxs);
     }
 
-    fn grouped_bonding_claim(
+    fn bonding_claim(
         &mut self,
         id: native::InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Id>>,
+        rxs: impl Iterator<Item = Id>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<P>(), groups);
+        self.bonding(id.circuit_index::<P>(), rxs);
         Ok(())
     }
 }
@@ -266,12 +262,12 @@ impl<P: Profile, Id, F: Field> nested::claims::Processor<P, Id> for Shaper<Id, F
         self.circuit(id.circuit_index::<P>(), rxs);
     }
 
-    fn grouped_bonding_claim(
+    fn bonding_claim(
         &mut self,
         id: nested::InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Id>>,
+        rxs: impl Iterator<Item = Id>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<P>(), groups);
+        self.bonding(id.circuit_index::<P>(), rxs);
         Ok(())
     }
 }

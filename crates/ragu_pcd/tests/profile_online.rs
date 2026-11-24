@@ -602,10 +602,10 @@ fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
         ) {
             self.0.push((id, rxs.collect()));
         }
-        fn grouped_bonding_claim(
+        fn bonding_claim(
             &mut self,
             _: native::InternalCircuitIndex,
-            _: impl Iterator<Item = impl Iterator<Item = native::RxComponent>>,
+            _: impl Iterator<Item = native::RxComponent>,
         ) -> Result<()> {
             Ok(())
         }

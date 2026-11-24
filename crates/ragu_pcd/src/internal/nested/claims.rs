@@ -45,23 +45,12 @@ pub trait Processor<P: Profile, Rx> {
     /// Process a claim whose trace is the Horner fold (with $z$) of the given
     /// rxs, with one rx per fold slot ($k(y) = 0$).
     ///
-    /// The default implementation wraps each rx as a single-element group and
-    /// delegates to [`grouped_bonding_claim`](Self::grouped_bonding_claim).
+    /// Returns `Result<()>` because the evaluation context requires fallible
+    /// fold operations.
     fn bonding_claim(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = Rx>,
-    ) -> Result<()> {
-        self.grouped_bonding_claim(id, rxs.map(core::iter::once))
-    }
-
-    /// Process a claim whose trace is the Horner fold (with $z$) of per-group
-    /// sums, where each fold slot holds the sum of one inner iterator
-    /// ($k(y) = 0$).
-    fn grouped_bonding_claim(
-        &mut self,
-        id: InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Rx>>,
     ) -> Result<()>;
 }
 
@@ -83,13 +72,13 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
         self.circuit_impl(circuit_id, rx);
     }
 
-    fn grouped_bonding_claim(
+    fn bonding_claim(
         &mut self,
         id: InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) -> Result<()> {
         let circuit_id = id.circuit_index::<P>();
-        let folded = self.fold_bonding_groups(groups);
+        let folded = self.fold_bonding(rxs);
         self.bonding_impl(circuit_id, folded);
         Ok(())
     }

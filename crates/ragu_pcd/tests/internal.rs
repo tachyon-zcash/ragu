@@ -329,10 +329,10 @@ fn claimed_stages_lie_on_each_circuits_chain() {
             self.0.push((id, rxs.collect()));
         }
 
-        fn grouped_bonding_claim(
+        fn bonding_claim(
             &mut self,
             _: InternalCircuitIndex,
-            _: impl Iterator<Item = impl Iterator<Item = RxComponent>>,
+            _: impl Iterator<Item = RxComponent>,
         ) -> ragu_core::Result<()> {
             Ok(())
         }
@@ -1197,12 +1197,12 @@ fn test_extension_claims_follow_the_declaration() {
             self.circuits.push((id, rxs.collect()));
         }
 
-        fn grouped_bonding_claim(
+        fn bonding_claim(
             &mut self,
             id: InternalCircuitIndex,
-            groups: impl Iterator<Item = impl Iterator<Item = (usize, RxComponent)>>,
+            rxs: impl Iterator<Item = (usize, RxComponent)>,
         ) -> Result<()> {
-            self.bondings.push((id, groups.flatten().collect()));
+            self.bondings.push((id, rxs.collect()));
             Ok(())
         }
     }
