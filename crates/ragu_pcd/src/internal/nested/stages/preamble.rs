@@ -50,11 +50,12 @@ pub fn num_points<P: Profile>() -> usize {
 /// The initial fields (hashes_1 through compute_v) are the primary
 /// introduction of child circuit commitments into the nested transcript.
 /// The remaining `stashed_*` fields are copies of values the child's nested
-/// unified instance exports, placed here so that loading can enforce them
-/// against [`PointsStage`] and so that this step can compute the child's
-/// expected instance claim value $k(y_n)$ from them. The collapse circuit binds
-/// the copies to the child's instance circuits: it folds the child's
-/// instance-circuit claims with that expected value, outside the base case.
+/// unified instance exports, placed here so that the collapse circuit can
+/// enforce them against [`PointsStage`] and so that this step can compute the
+/// child's expected instance claim value $k(y_n)$ from them. The collapse
+/// circuit binds the copies to the child's instance circuits: it folds the
+/// child's instance-circuit claims with that expected value, outside the base
+/// case.
 #[derive(Clone)]
 pub struct ChildWitness<C: Affine, P: Profile> {
     // The `_10_p` accumulation order is `RxIndex::all`'s, which the `Index`
@@ -549,7 +550,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub online_commitments: FixedVec<Point<'dr, D, C>, online::PolynomialsLen>,
     /// The commitment of the step's own application stage, which the
-    /// `loading` circuit walks with the step's own application trace.
+    /// `collapse` circuit walks with the step's own application trace.
     #[ragu(gadget)]
     pub application_stage: Point<'dr, D, C>,
     /// Output gadget for the left child proof.

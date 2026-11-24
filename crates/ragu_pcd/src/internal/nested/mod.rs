@@ -4,10 +4,9 @@
 //!
 //! - **Endoscaling**: verifies that the commitment accumulation
 //!   in `compute_p` was computed correctly via Horner's rule.
-//! - **Loading**: enforces consistency between [`PointsStage`]
-//!   inputs and the bridge stage commitments for the current step.
-//! - **Collapse**: pins the nested [`unified`] instance to its stages and
-//!   verifies both layers of the children's nested fold.
+//! - **Collapse**: pins the nested [`unified`] instance to its stages,
+//!   holds the [`PointsStage`] inputs to the bridge stage commitments of the
+//!   current step, and verifies both layers of the children's nested fold.
 //! - **Compute v**: recomputes the nested batch evaluation $v_n$, the mirror
 //!   of the native `compute_v`.
 //!
@@ -35,7 +34,6 @@ pub mod circuits {
     pub mod collapse;
     pub mod common;
     pub mod compute_v;
-    pub mod loading;
 }
 
 use crate::{
@@ -172,9 +170,8 @@ pub const NUM_INSTANCE_CIRCUITS: usize = 2;
 pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 12;
 
 /// The nested internal circuits that are not endoscaling steps: the rx
-/// polynomials' circuits and stages, the two final stage masks and the
-/// loading circuit.
-pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 3;
+/// polynomials' circuits and stages, and the two final stage masks.
+pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 2;
 
 /// The minimum groups for the nested quotient fold: eleven groups with
 /// eight claims each provide room for 88 claims, and the twelfth holds the
@@ -192,7 +189,7 @@ pub const FOLD_GROUP_SIZE: usize = 9;
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(true);
     let circuits = 2 + NumSteps::<P>::len() + extension.circuits;
-    let bondings = 15 + extension.bondings;
+    let bondings = 14 + extension.bondings;
     2 + 2 * circuits + bondings
 }
 
@@ -350,8 +347,6 @@ pub enum InternalCircuitIndex {
     /// Final staged mask of the circuits whose last stage is the challenge
     /// stage.
     ChallengeFinalStaged,
-    /// Loading circuit over all nested stages.
-    Loading,
     /// A bonding of the profile's nested extension, a stage's mask or a
     /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
     /// order.
@@ -405,7 +400,6 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::BridgeEval);
         push(&mut slots, &mut c, Self::ChallengeStage);
         push(&mut slots, &mut c, Self::ChallengeFinalStaged);
-        push(&mut slots, &mut c, Self::Loading);
         assert!(c == Self::NUM);
         slots
     }
@@ -473,14 +467,13 @@ impl InternalCircuitIndex {
             BridgeEval => bonding + 11,
             ChallengeStage => bonding + 12,
             ChallengeFinalStaged => bonding + 13,
-            Loading => bonding + 14,
-            ExtensionBonding(i) => bonding + 15 + super::checked_index(i, extension.bondings),
+            ExtensionBonding(i) => bonding + 14 + super::checked_index(i, extension.bondings),
         };
         CircuitIndex::new(pos)
     }
 
-    /// Whether `self` is registered as a bonding, a stage's mask, a final
-    /// mask or the loading circuit's, rather than as a circuit.
+    /// Whether `self` is registered as a bonding, a stage's mask or a final
+    /// mask, rather than as a circuit.
     #[cfg(test)]
     pub fn is_bonding(self) -> bool {
         use InternalCircuitIndex::*;
@@ -488,7 +481,7 @@ impl InternalCircuitIndex {
             EndoscalingStep(_) | Collapse | ComputeV | ExtensionCircuit(_) => false,
             EndoscalarStage | PointsStage | PointsFinalStaged | BridgePreamble | BridgeHash
             | BridgeSPrime | BridgeInnerError | BridgeOuterError | BridgeAB | BridgeQuery
-            | BridgeF | BridgeEval | ChallengeStage | ChallengeFinalStaged | Loading
+            | BridgeF | BridgeEval | ChallengeStage | ChallengeFinalStaged
             | ExtensionBonding(_) => true,
         }
     }
@@ -782,10 +775,6 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 registry.register_bonding(
                     stages::challenges::Stage::<C::HostCurve, R, C::Profile>::final_mask()?,
                 )
-            }
-            Loading => {
-                let circuit = circuits::loading::Circuit::<C::HostCurve, R, C::Profile>::new();
-                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
             ExtensionCircuit(k) => {
                 use crate::profile::online::stages::{self as extension, Nested};

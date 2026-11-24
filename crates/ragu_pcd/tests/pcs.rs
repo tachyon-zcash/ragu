@@ -82,7 +82,6 @@ fn expected_circuit_order() -> Vec<InternalCircuitIndex> {
             BridgeEval,
             ChallengeStage,
             ChallengeFinalStaged,
-            Loading,
         ])
         .collect()
 }

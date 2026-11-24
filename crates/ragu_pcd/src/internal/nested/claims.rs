@@ -10,8 +10,8 @@
 //!   ($k(y) = 1$) and the instance circuits
 //!   ([`INSTANCE`](InternalCircuitIndex::INSTANCE), $k(y)$ the nested
 //!   unified instance's)
-//! - Masking checks (every stage mask, the final staged masks, and the
-//!   loading circuit): $k(y) = 0$
+//! - Masking checks (every stage mask and the final staged masks):
+//!   $k(y) = 0$
 
 use alloc::{borrow::Cow, vec::Vec};
 use core::iter::once;
@@ -103,8 +103,8 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 ///    for each step ($k(y) = 1$), then each instance circuit
 ///    ([`INSTANCE`](InternalCircuitIndex::INSTANCE), $k(y)$ the nested
 ///    unified instance's), each interleaved across proofs
-/// 3. Masking checks ($k(y) = 0$): every stage mask, the final staged masks,
-///    and the loading circuit, each folded across proofs
+/// 3. Masking checks ($k(y) = 0$): every stage mask and the final staged
+///    masks, each folded across proofs
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
 pub fn build<P: Profile, S, Pr>(source: &S, processor: &mut Pr) -> Result<()>
@@ -248,20 +248,6 @@ where
             ChallengeFinalStaged => {
                 let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
                 processor.bonding_claim(id, final_rxs)?;
-            }
-            Loading => {
-                let groups = source
-                    .rx(Rx(RxIndex::PointsStage))
-                    .zip(source.rx(Rx(RxIndex::BridgePreamble)))
-                    .zip(source.rx(Rx(RxIndex::BridgeSPrime)))
-                    .zip(source.rx(Rx(RxIndex::BridgeInnerError)))
-                    .zip(source.rx(Rx(RxIndex::BridgeAB)))
-                    .zip(source.rx(Rx(RxIndex::BridgeQuery)))
-                    .zip(source.rx(Rx(RxIndex::BridgeF)))
-                    .map(|((((((ps, bp), bs), bi), ba), bq), bf)| {
-                        [ps, bp, bs, bi, ba, bq, bf].into_iter()
-                    });
-                processor.grouped_bonding_claim(id, groups)?;
             }
         }
     }

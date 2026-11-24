@@ -679,13 +679,6 @@ fn nested_circuit_counts(variant: nested::InternalCircuitIndex) -> (usize, usize
                 crate::profile::Standard,
             >::new()))
         }
-        nested::InternalCircuitIndex::Loading => {
-            counts(MultiStage::new(nested::circuits::loading::Circuit::<
-                EqAffine,
-                R,
-                crate::profile::Standard,
-            >::new()))
-        }
         _ => panic!("constraint counts only apply to nested circuits"),
     }
 }
@@ -701,7 +694,6 @@ fn nested_circuits() -> impl Iterator<Item = nested::InternalCircuitIndex> {
                 nested::InternalCircuitIndex::EndoscalingStep(_)
                     | nested::InternalCircuitIndex::Collapse
                     | nested::InternalCircuitIndex::ComputeV
-                    | nested::InternalCircuitIndex::Loading
             )
         })
 }
@@ -720,9 +712,8 @@ fn test_nested_circuit_constraint_counts() {
         expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2023, 3501)));
     }
     expected.push((nested::InternalCircuitIndex::EndoscalingStep(steps as u32 - 1), (712, 879)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (1714, 2664)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1588, 1973)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (601,  245)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1713, 2908)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1581, 1961)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -751,10 +742,10 @@ fn test_nested_stage_parameters() {
     check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 399, num = 51);
     check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 450, num = 13);
     check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 463, num = 3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 466, num = 77);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 543, num = 3);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 546, num = 55);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 601, num = 10);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 466, num = 76);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 542, num = 3);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 545, num = 55);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 600, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -922,7 +913,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x0b25bfbf5451f53678d7f1d8f1bfa47deb4724748194bf8253af6a40daaf55e7"
+        "0x26276ff1e6006327a3ff501213fb68404690eedf5bee8dd81c0cb969a85dd710"
     ));
 
     assert_eq!(
@@ -944,7 +935,7 @@ fn test_nested_registry_tag() {
         .unwrap();
 
     let expected = Fq::new(udon::fq_hex!(
-        "0x0755793fce2a98d2239d3cf039f261fcc65d52b2681ad1f36dd4e78e90ca38ca"
+        "0x0f977c1018ab54a1fdffde723e2782406c46e83a93f686a112d22f135f01a8c2"
     ));
 
     assert_eq!(
@@ -1577,7 +1568,7 @@ fn test_fold_groups_follow_the_profile() {
     };
 
     assert_eq!(native::num_claims::<Standard>(), 95);
-    assert_eq!(nested::num_claims::<Standard>(), 83);
+    assert_eq!(nested::num_claims::<Standard>(), 82);
     assert_eq!(
         native::NumFoldGroups::<Standard>::len(),
         native::NUM_FOLD_GROUPS
@@ -1678,11 +1669,6 @@ macro_rules! fuse_gates {
                         $P,
                     >::new()))
                 }
-                Nested::Loading => gates(&MultiStage::new(nested::circuits::loading::Circuit::<
-                    Host,
-                    $R,
-                    $P,
-                >::new())),
                 _ => continue,
             };
             nested_gates.push((alloc::format!("{variant:?}"), gates));

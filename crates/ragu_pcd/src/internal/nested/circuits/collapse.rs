@@ -3,12 +3,20 @@
 //!
 //! It also pins the nested unified instance's lifted x, y and u to the
 //! challenge stage and its exported commitments to their stage copies, and
-//! re-emits the stage contracts the endoscaling walk rests on, which the
-//! loading circuit, a bonding claim, cannot: every point of the points stage
-//! lies on the curve, and the endoscalar stage's
-//! [`HoistedEndoscalar`](ragu_primitives::HoistedEndoscalar) holds boolean
-//! bits and the products of those bits. `compute_v` ties that endoscalar's
-//! lift to the challenge stage's beta lift and computes v_n.
+//! holds the endoscaling walk to the transcript. The walk reads its points
+//! from the points stage, which is committed after the challenge the walk
+//! folds under, so two things are enforced here:
+//!
+//! - **The walked points.** Every point of the points stage equals the copy
+//!   a bridge stage holds, and the transcript absorbed that bridge stage
+//!   before the challenge (see [The walked points](#the-walked-points)).
+//! - **The stage contracts.** Every point of the points stage lies on the
+//!   curve, and the endoscalar stage's
+//!   [`HoistedEndoscalar`](ragu_primitives::HoistedEndoscalar) holds boolean
+//!   bits and the products of those bits.
+//!
+//! `compute_v` ties that endoscalar's lift to the challenge stage's beta
+//! lift and computes v_n.
 //!
 //! ## Operations
 //!
@@ -34,6 +42,25 @@
 //! same stage's copies (see [`Binding`](crate::profile::Binding)); zero
 //! for each bonding claim. The current instance's $y_n$ is equated with
 //! that stage value here.
+//!
+//! ## The walked points
+//!
+//! The walk's inputs are the native batch's commitments, in the order
+//! `compute_p` (`_10_p`) accumulates them. Each one is enforced equal to the
+//! copy a bridge stage holds:
+//!
+//! - each child's native rx commitments, $a$, $b$, `registry_xy` and $p$,
+//!   from the `preamble` stage;
+//! - the step's own commitments, from the `preamble`, `s_prime`,
+//!   `inner_error`, `ab`, `query` and `f` stages;
+//! - the online slots, the children's and then the step's own, from the
+//!   `preamble` stage;
+//! - the step's native online points, from the `preamble`, `s_prime`, `ab`
+//!   and `query` stages.
+//!
+//! The walk's initial point is enforced equal to the `f` stage's copy of
+//! the commitment of $f$. Each equality is two linear constraints, one for
+//! each coordinate, so the equalities add no gates to this circuit.
 //!
 //! ## Base case
 //!
@@ -69,7 +96,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt as _, allocator::Standard, consistent::Consistent, vec::FixedVec,
+    Element, GadgetExt as _, Point, allocator::Standard, consistent::Consistent, vec::FixedVec,
 };
 use udon::curve::EndomorphismAffine as Affine;
 
@@ -78,8 +105,9 @@ use crate::{
     header::NUM_ONLINE_FP_POLYS,
     internal::{
         ky,
+        native::RxIndex,
         nested::{
-            RevdotParameters,
+            Points, RevdotParameters,
             claims::{TwoProofKySource, ky_values},
             stages::{self, challenges},
             unified,
@@ -88,6 +116,110 @@ use crate::{
     },
     profile::Profile,
 };
+
+/// A cursor over the points stage's inputs that enforces each one equal to
+/// the copy a bridge stage holds.
+struct Walker<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    points: &'pts Points<'dr, D, C, P>,
+    index: usize,
+}
+
+impl<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walker<'pts, 'dr, D, C, P> {
+    fn new(points: &'pts Points<'dr, D, C, P>) -> Self {
+        Self { points, index: 0 }
+    }
+
+    /// Enforces that the next input of the points stage equals `point`.
+    fn enforce_equal(&mut self, dr: &mut D, point: &Point<'dr, D, C>) -> Result<()> {
+        self.points.inputs[self.index].enforce_equal(dr, point)?;
+        self.index += 1;
+        Ok(())
+    }
+
+    /// Asserts that every input of the points stage was enforced.
+    fn finish(self) {
+        assert_eq!(
+            self.index,
+            self.points.inputs.len(),
+            "the walk did not consume every input of the points stage"
+        );
+    }
+}
+
+/// Enforces every point of the points stage equal to the copy a bridge
+/// stage holds, in the order `compute_p` (`_10_p`) accumulates them.
+///
+/// The transcript absorbs the bridge stages before the challenge the walk
+/// folds under, and commits the points stage after it. These equalities are
+/// what fixes the walked points before that challenge.
+fn enforce_walked_points<'dr, D, C, P>(
+    dr: &mut D,
+    stages: &common::Loaded<'dr, D, C, P>,
+) -> Result<()>
+where
+    D: Driver<'dr, F = C::Base>,
+    C: Affine,
+    P: Profile,
+{
+    let common::Loaded {
+        points,
+        preamble,
+        s_prime,
+        inner_error,
+        ab,
+        query,
+        f,
+        ..
+    } = stages;
+    let mut walker = Walker::new(points);
+
+    for child in [&preamble.left, &preamble.right] {
+        for id in RxIndex::all::<P>() {
+            walker.enforce_equal(dr, &child[id])?;
+        }
+        walker.enforce_equal(dr, &child.stashed_ab_a)?;
+        walker.enforce_equal(dr, &child.stashed_ab_b)?;
+        walker.enforce_equal(dr, &child.stashed_registry_xy)?;
+        walker.enforce_equal(dr, &child.stashed_p)?;
+    }
+
+    walker.enforce_equal(dr, &s_prime.registry_wx0)?;
+    walker.enforce_equal(dr, &s_prime.registry_wx1)?;
+    walker.enforce_equal(dr, &s_prime.native_application)?;
+    walker.enforce_equal(dr, &preamble.application_stage)?;
+    walker.enforce_equal(dr, &inner_error.registry_wy)?;
+    walker.enforce_equal(dr, &ab.a)?;
+    walker.enforce_equal(dr, &ab.b)?;
+    walker.enforce_equal(dr, &query.registry_xy)?;
+    walker.enforce_equal(dr, &s_prime.randomizer_a)?;
+    walker.enforce_equal(dr, &s_prime.randomizer_b)?;
+    walker.enforce_equal(dr, &f.native_mask)?;
+
+    // The online slots, in slot order: the children's exported polynomials
+    // as the left and right slots, then the step's own.
+    for child in [&preamble.left, &preamble.right] {
+        for point in child.stashed_online_commitments.iter() {
+            walker.enforce_equal(dr, point)?;
+        }
+    }
+    for point in preamble.online_commitments.iter() {
+        walker.enforce_equal(dr, point)?;
+    }
+
+    for point in preamble
+        .online_points
+        .iter()
+        .chain(s_prime.online_points.iter())
+        .chain(ab.online_points.iter())
+        .chain(query.online_points.iter())
+    {
+        walker.enforce_equal(dr, point)?;
+    }
+    walker.finish();
+
+    // The walk starts from the commitment of f.
+    points.initial.enforce_equal(dr, &f.native_f)
+}
 
 /// Circuit binding the nested instance to its stages and verifying the nested fold.
 pub struct Circuit<C: Affine, R: Rank, P: Profile> {
@@ -129,6 +261,9 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // bits, each gadget re-emitted on the stage's wires.
         stages.points.enforce_consistent(dr)?;
         stages.endoscalar.enforce_consistent(dr)?;
+
+        // The walked points: each one is the copy a bridge stage holds.
+        enforce_walked_points(dr, &stages)?;
 
         let allocator = &mut Standard::new();
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));

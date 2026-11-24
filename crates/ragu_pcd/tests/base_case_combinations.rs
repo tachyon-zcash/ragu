@@ -1366,8 +1366,8 @@ fn forged_base_case_under_another_circuit_id_is_rejected() {
 /// folded at. A prover that swaps in the same trace under another alpha
 /// after $y$ is squeezed is rejected. The swapped trace satisfies the
 /// step's circuit as the committed one does, which the same edit made
-/// before the trace is committed shows, so only the `loading` circuit's
-/// hold of the walked commitment to the bridge's copy can reject it.
+/// before the trace is committed shows, so only the nested `collapse`
+/// circuit's hold of the walked commitment to the bridge's copy can reject it.
 #[test]
 fn application_trace_swapped_after_y_is_rejected() {
     support::with_app(|app| {
