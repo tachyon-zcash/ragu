@@ -63,12 +63,12 @@ targets at its fresh $y$ and the nested targets at the lift $y_q$.
 ```mermaid
 flowchart TB
     accTitle: Boundaries of a decompression
-    accDescr: The compressed wallet proof supplies its circuit-field parts to the native chunks and its scalar-field parts to the nested chunks. The native chunks replay the wallet proof's Fuse and compression transcripts. The two sides exchange challenge bits, run commitments and the digits of full-width scalars, and each recomputes the commitments of the other's stages. The enclosing aggregator Fuse fixes its online batches before its own challenge and opens them at that challenge, which gives both sides the registry values and the values of each IPA polynomial. The openings are batched into the step's accumulator with an outgoing source restriction, and the claims of the chunk, statement and binding circuits join the step's frontier. A consumer folds those claims at a fresh challenge of its own and inherits the restriction, or checks both at a root.
+    accDescr: The compressed wallet proof supplies its circuit-field parts to the native chunks and its scalar-field parts to the nested chunks. The native chunks replay the wallet proof's Fuse and compression transcripts. The two sides exchange challenge bits, run commitments and the digits of full-width scalars, and each recomputes the commitments of the other's stages. The enclosing aggregator Fuse fixes its online batches before its own challenge and opens them at that challenge, which gives both sides the registry values and the values of each IPA polynomial. The openings are batched into the step's accumulator with an outgoing source restriction, and the traces of the chunk, statement and binding circuits join the step's pending trace. A consumer folds those claims at a fresh challenge of its own and inherits the restriction, or checks both at a root.
     W["Compressed wallet proof<br/>instance and messages;<br/>its Fuse and compression<br/>challenges are replayed"]
     ON["Online batches of the step<br/>wallet registry restrictions,<br/>s(X) of each IPA;<br/>fixed before w_step,<br/>opened at the fresh w_step"]
     NA["Native chunks<br/>replay both transcripts,<br/>host scalar equations,<br/>nested point arithmetic"]
     NE["Nested chunks<br/>lift the same bits,<br/>nested scalar equations,<br/>host point arithmetic"]
-    FR["Frontier of the step<br/>claims of the chunk,<br/>statement and<br/>binding circuits"]
+    FR["Pending trace of the step<br/>traces of the chunk,<br/>statement and<br/>binding circuits"]
     AC["Accumulator of the step<br/>online openings, batched;<br/>outgoing source restriction"]
     CO["Consumer<br/>a parent Fuse, or the<br/>compressed verifier<br/>at a root"]
     W -->|"circuit-field parts"| NA
@@ -92,7 +92,7 @@ claims. What leaves the step is of two kinds. The online openings, the
 registry values among them, are batched into the step's accumulator, and the
 outgoing source restriction is an obligation that a parent inherits. The
 chunk, statement and binding circuits are internal circuits of the profile,
-so the claims that they are satisfied are in the step's frontier.
+so the claims that they are satisfied are claims of the step's pending trace.
 
 ### Phase 1. Commit the wallet proof in stages {#1-compressed-proof--stages}
 

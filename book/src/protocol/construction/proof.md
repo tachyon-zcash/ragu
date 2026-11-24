@@ -2,11 +2,12 @@
 
 An uncompressed proof stores its polynomials in full, so that a parent can fold
 and open them and the decider can check them directly. Its contents are an
-accumulator, a frontier and auxiliary data.
+accumulator, a pending trace and auxiliary data.
 
 ## Accumulator {#accumulator}
 
-Each side of the cycle has an [accumulator](index.md#accumulator-frontier) with
+Each side of the cycle has an
+[accumulator](index.md#accumulator-pending-trace) with
 three components.
 
 | Component | Native | Nested |
@@ -29,10 +30,10 @@ The two online polynomials $o_0, o_1$ and their commitments $O_0, O_1$ are
 stored with the accumulator. A parent opens them as its left or right slots, and
 they are part of no revdot claim.
 
-## Frontier {#frontier}
+## Pending Trace {#pending-trace}
 
-The [frontier](index.md#accumulator-frontier) holds circuit polynomials and
-stage polynomials.
+The [pending trace](index.md#accumulator-pending-trace) holds circuit
+polynomials and stage polynomials.
 
 | Side | Circuit Polynomials | Stage Polynomials |
 |---|---|---|
@@ -45,25 +46,30 @@ one and $R_q[\cdot] \in \E_p$ for a nested one. A fuse draws the
 those of the three nested stages that the
 [stage table](stage_contents.md#nested-stages) lists with fixed ones.
 
-The [step circuit](setup.md#step-circuit) is not in the frontier. Its trace
+The [step circuit](setup.md#step-circuit) is not in the pending trace. Its trace
 depends on no challenge of the fuse after $w$, so the fuse folds the claim about
 it into its own accumulator, and the proof keeps neither of the two polynomials
 of that trace.
 
 ## Auxiliary Data {#auxiliary}
 
-| Field | Content |
-|---|---|
-| `circuit_id` | native registry index of the step's circuit |
-| challenges | $w, y, z, \mu, \mu', x, \alpha, u, \text{pre\_beta} \in \F_p$ |
-| `nested_challenges_partial` | a point of $\E_p$, defined with the [challenge stage](stage_contents.md#challenge-stage) |
-| `bridge_alpha` | an element of $\F_q$ whose square is the $\v{a}_0$ of the `BridgeAB` stage |
+A parent or the decider computes the target of each claim of the pending
+trace from a public instance. The commitments in an instance and the values
+$c$ and $v$ are derived from the polynomials of the proof. The auxiliary data
+are the other values of the instances, and `bridge_alpha`.
+
+| Field | Content | Part Of |
+|---|---|---|
+| `circuit_id` | native registry index of the step's circuit | the instance of `hashes_1`, as $\omega_{\text{id}}$ |
+| challenges | $w, y, z, \mu, \mu', x, \alpha, u, \text{pre\_beta} \in \F_p$ | the [native unified instance](#native-unified); the [nested](#nested-unified) one holds the lifts of $x$, $y$ and $u$ |
+| `nested_challenges_partial` | a point of $\E_p$, defined with the [challenge stage](stage_contents.md#challenge-stage) | the native unified instance |
+| `bridge_alpha` | an element of $\F_q$ whose square is the $\v{a}_0$ of the `BridgeAB` stage | none; $r_q[\texttt{BridgeAB}]$ is [derived](#stored-derived) from it |
 
 The proof has no field for a header. Its output header is recomputed from the
 data that a `Pcd` carries beside the proof, and its input headers and online
 openings entered the claim about its step circuit, which its own fuse folded.
-The [`preamble`](stage_contents.md#native-preamble) stage, which the frontier
-keeps, still holds a copy of all three headers and of the openings.
+The [`preamble`](stage_contents.md#native-preamble) stage, which the pending
+trace keeps, still holds a copy of all three headers and of the openings.
 
 ## Stored and Derived {#stored-derived}
 

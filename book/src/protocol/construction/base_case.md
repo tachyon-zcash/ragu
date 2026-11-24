@@ -153,7 +153,8 @@ its step circuit enforced, and that circuit fixes both input suffixes to
 
 Two more mechanisms keep the two sides and the two kinds of circuit apart.
 
-6. The nested verdict is the sign that the native binding circuits derive from
-   the same header wires, not a choice of the nested prover.
+6. The nested predicate $\text{base}_q$ reads the sign $\sigma$, and the
+   native binding circuits derive that sign from the same header wires. It is
+   not a choice of the nested prover.
 7. Native internal circuits end their public output in suffix $0$, which no
    header carries, so their claims cannot take the place of a step's.

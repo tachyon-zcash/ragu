@@ -2,10 +2,11 @@
 
 The checks of a fuse are split across fixed internal circuits on each side. A
 circuit reads its inputs from [stages](stage_contents.md) and exposes a
-[unified instance](proof.md#native-unified), and its claim joins the fuse's
-frontier. The one circuit that an application supplies is the
-[step circuit](setup.md#step-circuit), and the fuse folds the claim of that
-circuit itself.
+[unified instance](proof.md#native-unified), and its trace joins the fuse's
+[pending trace](proof.md#pending-trace). The one circuit that an application
+supplies is the [step circuit](setup.md#step-circuit), and the fuse folds the
+claim of that circuit itself. The [overview](index.md#folds-in-detail) calls
+the internal circuits the fold circuits.
 
 Two predicates recur, and each has the value one when it holds and zero
 otherwise. The native [base-case](base_case.md) predicate reads the suffixes of

@@ -73,24 +73,24 @@ owes.
 Each child comes with obligations on each curve: its raw claim
 $(A^{(i)}, B^{(i)};\ c^{(i)})$, its batched opening of $p^{(i)}$ at $u^{(i)}$,
 the identity of its registry candidate, and the claims of its
-[frontier](construction/proof.md#frontier), which say that the circuits of the
-child's own fuse are satisfied. The current step adds the claim of its circuit
-and two bonding claims on the native side. The fuse folds all of the revdot
-claims into one raw claim per curve and batches all of the openings into one
-opening per curve.
+[pending trace](construction/proof.md#pending-trace), which say that the
+circuits of the child's own fuse are satisfied. The current step adds the
+claim of its circuit and two bonding claims on the native side. The fuse folds
+all of the revdot claims into one raw claim per curve and batches all of the
+openings into one opening per curve.
 
 The verifier's [checks](#iop-verifier) of that fold and batch are not run
 during a fuse. In the compiled protocol they are constraints of this fuse's
 own internal circuits, the prover produces the traces of those circuits, and
-the statements that the circuits are satisfied are revdot claims in turn: the
-frontier of the output proof. The output proof therefore owes the new
-accumulator on each curve and the claims of the new frontier.
+the statements that the circuits are satisfied are revdot claims in turn,
+about the pending trace of the output proof. The output proof therefore owes
+the new accumulator on each curve and the claims of the new pending trace.
 
 The reduction is conditional. Valid output accumulators and true claims of the
-new frontier are meant to imply that the children's obligations hold and that
-the step's circuit is satisfied by a trace that was fixed before $y$ and $z$.
-Construction argues each test separately and bounds the probability that it
-passes on a false input: for the
+new pending trace are meant to imply that the children's obligations hold and
+that the step's circuit is satisfied by a trace that was fixed before $y$ and
+$z$. Construction argues each test separately and bounds the probability that
+it passes on a false input: for the
 [fold](construction/claims.md#fold-identity), for the
 [batch](construction/batch.md#batch-structure) and for the
 [registry chain](construction/batch.md#registry-candidates). Nothing in a fuse
@@ -419,8 +419,8 @@ and check 7 holds $P$ to the commitments of the rounds.
 
 During Fuse the prover constructs traces of the
 [circuits that enforce these checks](construction/internal_circuits.md). No
-party evaluates the checks at that time: the claims of those circuits join
-the output's frontier, as the [contract](#iop-contract) describes.
+party evaluates the checks at that time: the traces of those circuits join
+the output's pending trace, as the [contract](#iop-contract) describes.
 The native `hashes_1` and `hashes_2` circuits replay the eight bridge
 commitments. `hashes_1` checks the sponge state saved in `OuterError`
 after `BridgeInnerError`. `hashes_2` resumes there to squeeze $\mu$.
@@ -532,16 +532,16 @@ $[o_0]$ and $[o_1]$.
 
 The uncompressed proof retains the accumulator polynomials on both curves,
 $o_0,o_1$, and the verifier circuits' traces and stages in its
-[frontier](construction/proof.md#frontier). It does not retain
+[pending trace](construction/proof.md#pending-trace). It does not retain
 $r[\texttt{Application}]$, $r[\texttt{ApplicationStage}]$, the restrictions in
 $Y$ and in $X$, $f$, $f_q$ or the randomizers. The
-[figure](construction/index.md#accumulator-frontier) of one generation shows
-where each of these goes.
+[figure](construction/index.md#at-a-glance) of one fuse shows where each of
+these goes.
 
-A parent does not verify the proof. It folds the frontier and raw claims and
-opens the child's batched polynomial and registry candidate on each curve,
-which leaves obligations of the same kinds on the parent's output. They are
-discharged once, at the root. The
+A parent does not verify the proof. It folds the raw claim and the claims of
+the pending trace, and opens the child's batched polynomial and registry
+candidate on each curve, which leaves obligations of the same kinds on the
+parent's output. They are discharged once, at the root. The
 [uncompressed decider](construction/decider.md) checks the retained
 polynomials directly, and is available in tests or with `test-utils`.
 Production compresses the root and uses

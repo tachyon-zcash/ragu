@@ -5,7 +5,7 @@ sending its witness polynomials. This chapter gives the prover's messages
 and the verifier's checks, ending in one inner-product argument (IPA) per
 curve. It is how the [obligations](../iop.md#iop-contract) that the root of a
 proof tree still owes are discharged in production: the root's accumulator on
-each curve and the claims of its frontier.
+each curve and the claims of its pending trace.
 
 ## Preliminaries {#compression-preliminaries}
 

@@ -112,7 +112,7 @@ was reached. The figure below and its tuples describe Ragu at the
 application trace. They are not the implemented protocol. The
 [capability list](#cap) above is the current interface, and the current
 lifecycle of an application claim is in the
-[figure of one fuse](construction/index.md#accumulator-frontier), the
+[figures of one fuse](construction/index.md#at-a-glance), the
 [claim list](construction/claims.md#native-claims) and the
 [Fuse PIOP](iop.md).
 ```
@@ -123,8 +123,8 @@ the variant at the end of this section: the step folds its own application
 trace and stage. Its native `Preamble` holds the six opening pairs, its
 `collapse` computes the application's $k(y)$ over those wires, its
 `compute_v` reads the same wires for the batch, and the parent folds those
-circuits' claims from the step's frontier. The [Fuse PIOP](iop.md) gives the
-implemented rule.
+circuits' claims from the step's pending trace. The [Fuse PIOP](iop.md) gives
+the implemented rule.
 
 The tuples of this section, such as `[app.L, app.R, app.O]`, list header
 fields only. They are projections of the public instances and not the
@@ -225,6 +225,8 @@ The variants are kept in the order in which they were designed, and a
 What a step can rely on is the [capability list](#cap), and the stage contents
 and counts of the implemented protocol are in
 [Construction](construction/stage_contents.md).
+The schedule below is the schedule before V1.
+[Construction](construction/index.md#stages-time) has the current schedule.
 
 A relevant Ragu knowledge we keep referring to is its challenge scheduling among native and nested stages of its folding circuits.
 
@@ -482,7 +484,7 @@ After:
                              Eval (+ f_i(u))
 ```
 
-`Application` is the native trace synthesized by `Step::witness`. `S` folds it and the application stage itself, together with its opening claims. The parent folds `S`'s accumulator, the claims of `S`'s internal circuits from its frontier and the bonding claims over `S`'s polynomials, but not `Application`.
+`Application` is the native trace synthesized by `Step::witness`. `S` folds it and the application stage itself, together with its opening claims. The parent folds `S`'s accumulator, the claims of `S`'s internal circuits from its pending trace and the bonding claims over `S`'s polynomials, but not `Application`.
 
 ### V5: an online $\F_q$ polynomial for the nested `compute_v` {#v5}
 
@@ -512,7 +514,7 @@ Swapping the fields swaps every role of the $\F_p$ slots:
 | slots per step | 6, `[L0, L1, R0, R1, O0, O1]` | `ONLINE_FQ_POLYS` slots, at most 1 |
 
 The difference that matters is the claimant.
-In v4 the circuit that uses an opening (the application) and the circuit that folds it (`compute_v`) are different circuits, so the pair $(x_i, y_i)$ crosses between them through `S`'s native `Preamble` stage: `S`'s `collapse` computes the application's $k(y)$ over the pair's wires and `S`'s `compute_v` reads the same wires, and the parent later folds both circuits' claims from `S`'s frontier.
+In v4 the circuit that uses an opening (the application) and the circuit that folds it (`compute_v`) are different circuits, so the pair $(x_i, y_i)$ crosses between them through `S`'s native `Preamble` stage: `S`'s `collapse` computes the application's $k(y)$ over the pair's wires and `S`'s `compute_v` reads the same wires, and the parent later folds both circuits' claims from `S`'s pending trace.
 Here the claimant is `compute_v` itself, which reads $y_q$ from the `Query` stage it folds and takes the point $\zeta_q$ from its challenge stage.
 The pair never leaves the step's stages, so no instance changes, no $k(y)$ is added, and `MultiStageCircuit` needs no oracle input.
 The commitment needs no copy either: the native walk folds $\cm_{f_q}$ into $P_n$, the point the nested batch's opening is checked against, which is how the two sides already agree on every point the step commits.

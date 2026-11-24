@@ -1,8 +1,8 @@
 # Decider {#decider}
 
 The **decider** checks a root proof, which no parent folds. It holds every
-polynomial of that proof and tests the accumulator and the frontier directly, at
-points that it samples. In the implementation the decider is
+polynomial of that proof and tests the accumulator and the pending trace
+directly, at points that it samples. In the implementation the decider is
 [`Application::verify_uncompressed`](ragu_pcd::Application::verify_uncompressed),
 a test oracle. **Production verification compresses the proof first, which is
 out of scope for this section.**
