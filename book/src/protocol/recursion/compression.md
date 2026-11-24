@@ -91,9 +91,9 @@ absorbs the instance fields and the encoded output header in this order.
    order, one shared value per edge in edge order, then the helper's
    quotient sum and evaluation sum.
 2. The circuit's domain point. If the profile has a statement circuit,
-   append the first output slot's opening point and value, then the left
-   input's first-slot opening point. The verifier derives the decompression
-   flag from the circuit index.
+   append the left input's first-slot opening point. In the decompression
+   step this point is the staged compression transcript digest. The verifier
+   derives the decompression flag from the circuit index.
 3. In one run, $[A_F],[B_F]$, the native proof commitments in
    [rx order](../construction/setup.md#rx-order), $[\widehat m_F]$, $P_F$ and
    the step's two commitments $O_0,O_1$.

@@ -210,13 +210,10 @@ let fresh_pcd = app.rerandomize(pcd, &mut rng)?;
 ```
 
 The full output exposes the input's online polynomial coefficients, and
-compression exposes their deterministic commitments. The application chooses
-whether to publish that state or [publish with padding][padding]. For the
-standard profile, the goal is to hide which valid input was used given the
-same encoded header, online polynomials and shared bootstrap. Joint hiding
-of the output fields remains unproved.
-
-[padding]: ../guide/writing_circuits.md#publishing-with-padding
+compression exposes their deterministic commitments. For the standard
+profile, the goal is to hide which valid input was used given the same
+encoded header, online polynomials and shared bootstrap. Joint hiding of
+the output fields remains unproved.
 
 Internally, rerandomization fuses the input twice through a dedicated
 rerandomization step, each time with the application's bootstrap proof as the

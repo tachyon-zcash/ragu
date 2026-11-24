@@ -314,21 +314,19 @@ and the verifier rejects a proof that a modified prover makes.
 
 A step may leave an output slot's content unconstrained on purpose, as a
 hint for the steps that consume it: it opens the slot once and ignores the
-value, and those steps constrain it themselves. Ragu's own bootstrap step
-leaves both of its output slots as padding, its decompression step keeps
-the first for a polynomial of its own and leaves the last as padding, and
-rerandomization holds its output slots equal to its input's.
+value, and those steps constrain it themselves. Ragu's bootstrap step pads
+both output slots. Rerandomization preserves the input's slots.
 
-A compressed proof's statement carries a header's fields but not its
-polynomials. In a profile that decompresses statements back into proofs, the
-decompressed proof has the original header fields and none of the original
-polynomials, the decompression's own in the first slot and padding in the last,
-and a step consuming it cannot tell it from one a registered step produced.
-Under such a profile, a header that can be compressed and decompressed must
-treat its slots as padding: no step may open them expecting the polynomials
-its fields describe.
+### Decompressing with Online Polynomials
 
-### Publishing with Padding
+Register the wallet's output header type with the aggregator and pass the
+coefficients in slot order to `Application::decompress_with_polynomials`.
+Decompression preserves the header and binds both output commitments to the
+wallet proof. Later fuses can open the polynomials through their input oracles.
+See the [Tachyon Stamp handoff](../protocol/poly-oracle.md#stamp-handoff)
+for an example.
+
+### Publishing Proofs
 
 The encoded header and the proof's online polynomials are separate. The
 application decides which online state it can publish. A full rerandomized
@@ -336,16 +334,8 @@ proof exposes the original coefficients through `Pcd::polynomials()`.
 Compression publishes their deterministic commitments through
 `CompressedPcd::online_commitments()`. For example, a recipient can compare
 commitments for candidate sets even when the encoded header gives only the
-set size.
-
-To keep application polynomials and their commitments out of the published
-proof's output slots, use `Application::fuse` on a final step whose output
-header declares `(Padding, Padding)`. That step can still query its input
-slots. Rerandomize the padded proof, then compress it for publication.
-A recipient enforcing padding calls `Application::verify_compressed` and
-checks both online commitments against the commitment to the constant one.
-Joint hiding of the other proof fields and compression transcript remains
-unproved.
+set size. Joint hiding of the other proof fields and compression transcript
+remains unproved.
 
 ## Working with Headers
 

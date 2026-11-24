@@ -84,6 +84,42 @@ internal circuits.
   - consumers read authenticated staged inputs, opening wires and opposite-field commitment points; the public application API is unchanged
   - source-registry restrictions have an additional identity obligation: a setup-bound mesh carries both children's obligations and reduces all new identities to one outgoing restriction per field, closed at terminal verification
 
+## Tachyon Stamp Handoff {#stamp-handoff}
+
+In Tachyon's intended wallet-to-aggregator flow, a
+`CompressedPcd<Pasta, Stamp>` pairs the Stamp's header data with its
+compressed proof.
+
+| Location | Contents |
+| --- | --- |
+| Stamp header data | Anchor and tachygram-set bridge hash |
+| Compressed proof's online commitment slots | Action-set commitment in `O0` and tachygram-set commitment in `O1` |
+
+The wallet can compress the Stamp directly. The aggregator reconstructs the
+two set polynomials from the covered action digests and tachygrams in the
+transaction data. Each polynomial has the encoded members of its set as
+roots. The aggregator passes their coefficients in slot order to
+`Application::decompress_with_polynomials`. `StampLift` opens the two
+polynomials to carry the sets forward at a new anchor. `StampMerge` opens
+both inputs' polynomials and their products. After the lifts and merges,
+the aggregator compresses the final proof.
+
+The decompression circuits verify the wallet proof and equate the new
+Stamp's two commitment points with the verified wallet points. The
+usual output queries fold claims about the supplied polynomials into the
+polynomial commitment scheme (PCS) accumulator. Terminal verification
+checks the accumulated claims against the carried commitments.
+
+These sets are public like the header fields, so Tachyon uses deterministic,
+unblinded commitments as compact representations of the polynomials. A
+Tachyon verifier can reconstruct the polynomials from transaction data and
+compare the recomputed commitments with the Stamp's certified commitments.
+
+Application steps query the header-associated slots through `Oracles`. The
+aggregator's internal circuits use separate profile slots for the IPA helpers
+and wallet registry restrictions. For what a compressed aggregator proof
+exposes, see [Decompression privacy](recursion/decompression.md#privacy).
+
 ## Changes to Tachyon Proof Tree {#changes}
 
 The [capability list](#cap) above is a delicate balance between protocol complexity, cost, and feature-richness for the application circuit.

@@ -137,8 +137,7 @@ as when a succinct proof must be communicated to a third party.
 [`rerandomize`] produces a fresh proof of the same certified data and preserves
 the input's online polynomials. The full output exposes their coefficients, and
 compression exposes their deterministic commitments. These are separate from
-the encoded header. Applications decide whether to publish that online state
-or use a [final step with padding][publication].
+the encoded header. See [Publishing Proofs][publication].
 
 For the standard profile, the goal is to hide which input proof was used
 given the published application data and a shared bootstrap proof. The
@@ -157,4 +156,4 @@ output fields remains unproved.
 [`fuse`]: ragu_pcd::Application::fuse
 [cryptographic commitments]: https://en.wikipedia.org/wiki/Commitment_scheme
 [`rerandomize`]: ragu_pcd::Application::rerandomize
-[publication]: ../guide/writing_circuits.md#publishing-with-padding
+[publication]: ../guide/writing_circuits.md#publishing-proofs

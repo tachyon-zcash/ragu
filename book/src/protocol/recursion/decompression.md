@@ -344,6 +344,8 @@ proof's output header and commitments, and the supplied polynomial
 coefficients. The decompression step folds the output opening claims into
 its PCS accumulator. A later Fuse can open those polynomials through the
 usual oracle API. The same proof can be compressed at the aggregator rank.
+See the [Tachyon Stamp handoff](../poly-oracle.md#stamp-handoff) for an
+application example.
 
 In the code, decompression is implemented in `ragu_pcd`'s private
 `decompress` module. Its
