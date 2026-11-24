@@ -334,8 +334,8 @@ then $y$ coordinate.
 proof's output header data. It can be used as a child of Fuse or compressed
 with the aggregator's parameters.
 
-In the code, decompression is the `decompress` module of `ragu_pcd`, which is
-private to the crate and behind the `unstable-aggregator` feature. Its
+In the code, decompression is implemented in `ragu_pcd`'s private
+`decompress` module. Its
 `program` module schedules the verifier's arithmetic into chunks, `chunk` has
 the chunk, statement and binding circuits, `stages` has their stages,
 `extension` registers them as the aggregator profile's extension, and `prover`

@@ -525,8 +525,7 @@ where
     ///
     /// # Soundness
     ///
-    /// See [`Aggregator`]'s *Soundness*: the profile is unaudited and
-    /// behind the `unstable-aggregator` feature.
+    /// See the unaudited [`Aggregator`] profile's soundness documentation.
     pub fn decompress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         rng: &mut RNG,

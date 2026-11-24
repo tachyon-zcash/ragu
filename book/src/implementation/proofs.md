@@ -277,8 +277,7 @@ reasons. For instance, in shielded transaction aggregation,
 broadcasting transaction data in compressed mode optimizes for
 bandwidth. A [compressed proof](../protocol/recursion/compression.md) is
 terminal for the application that made it: it can be verified but not folded
-further. An application of the aggregator profile, which is unaudited and
-behind the `unstable-aggregator` feature, can
+further. An application of the unaudited aggregator profile can
 [decompress](../protocol/recursion/decompression.md) a compressed proof of a
 standard application into a proof of its own, and fold that.
 

@@ -79,18 +79,18 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
-#[cfg(feature = "unstable-aggregator")]
-pub use crate::decompress::{
-    aggregator::Aggregator,
-    aggregator::Counts,
-    prover::{Decompressed, Decompression},
-};
-pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
     header::Suffix,
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
+};
+pub use crate::{
+    decompress::{
+        aggregator::{Aggregator, Counts},
+        prover::{Decompressed, Decompression},
+    },
+    internal::nested::online::NUM_ONLINE_FQ_POLYS,
 };
 
 /// The internal circuits a proof carries beyond the fuse's own: an

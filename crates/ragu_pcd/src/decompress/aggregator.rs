@@ -1,8 +1,7 @@
 //! The aggregator profile: the fuse plus the chunk circuits that verify a
 //! wallet's compressed proof, declared as its extension, with the layout
 //! the profile declares to carry them and the hooks that register them.
-//! Public only under the `unstable-aggregator` feature, through
-//! [`profile`](crate::profile).
+//! The public types are re-exported through [`profile`](crate::profile).
 //!
 //! On the native side the extension is the circuit-field side's chunk
 //! circuits, one per group of chunks of its schedule, over its six stages:
@@ -134,9 +133,7 @@ use crate::{
 /// curve's through the step's online Fq polynomial, each over round
 /// challenges the transcript digest that step stages fixes before its
 /// challenge. The decompression module's *Registry evaluations* and *The
-/// step binding* give the arguments. The construction has not been
-/// audited, and the profile is public only under the
-/// `unstable-aggregator` feature.
+/// step binding* give the arguments. The construction is unaudited.
 ///
 /// # Privacy
 ///

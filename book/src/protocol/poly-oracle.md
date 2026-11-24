@@ -689,4 +689,4 @@ Source-mesh preparation adds prover work that the census does not time. Each fus
 
 #### Remaining work {#v6-remaining}
 
-The `Aggregator` profile declares its registry queries as a source mesh of nine introduced restrictions and seven helpers per field (`decompress::online`), and its chunk circuits are the batch's consumers. Using an online commitment as an IPA's folded generator stays with V5's slot and the decompression step's output slot. The profile is unaudited and behind the `unstable-aggregator` feature. Compression-format optimization is separate work.
+The `Aggregator` profile declares its registry queries as a source mesh of nine introduced restrictions and seven helpers per field (`decompress::online`), and its chunk circuits are the batch's consumers. Using an online commitment as an IPA's folded generator stays with V5's slot and the decompression step's output slot. The profile is unaudited. Compression-format optimization is separate work.

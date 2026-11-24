@@ -537,7 +537,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_registry,
             params,
             num_application_steps: self.num_application_steps,
-            #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
@@ -679,7 +678,6 @@ pub struct Application<
     pub(crate) num_application_steps: usize,
     /// The header type each registered step outputs, by suffix, and
     /// whether its proofs carry an online polynomial.
-    #[cfg(feature = "unstable-aggregator")]
     pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
     /// The application stage's size, in values.
     pub(crate) stage_size: usize,
@@ -717,7 +715,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// The header type each registered step outputs, by suffix, and
     /// whether its proofs carry an online polynomial: the headers the
     /// application's statements carry.
-    #[cfg(feature = "unstable-aggregator")]
     pub(crate) fn output_headers(&self) -> &BTreeMap<crate::header::Suffix, (TypeId, bool)> {
         &self.output_headers
     }

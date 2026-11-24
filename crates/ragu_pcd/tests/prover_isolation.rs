@@ -67,12 +67,12 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "profile/mod.rs",
         "decompress::prover::Decompressed",
-        "public under `unstable-aggregator`",
+        "re-exports the aggregator's source type",
     ),
     (
         "profile/mod.rs",
         "decompress::prover::Decompression",
-        "public under `unstable-aggregator`",
+        "re-exports the aggregator's prover context",
     ),
     (
         "decompress/aggregator.rs",

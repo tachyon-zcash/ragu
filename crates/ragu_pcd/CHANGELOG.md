@@ -13,10 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Standard, Aggregator, Shape}`. Profiles declare internal extension circuits,
   stages, statement and cross-cycle bindings, and endoscaling work, and a
   prover context (`ProverContext`) whose `Source` a decompression step supplies
-  in place of the context's proof. The `Aggregator` profile, its
-  `Decompression` context and `Application::decompress` sit behind the
-  `unstable-aggregator` feature: the construction is unaudited. The
-  decompression takes the wallet registry's evaluations as claimed values of
+  in place of the context's proof. The unaudited `Aggregator` profile,
+  its `Decompression` context and `Application::decompress` are public.
+  Decompression takes the wallet registry's evaluations as claimed values of
   the profile's online batches, on restrictions its source meshes hold to
   the wallet application's registries, and holds the proof's circuit to the
   wallet registry's domain; a verifier of aggregator proofs so builds the
