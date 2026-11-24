@@ -3,46 +3,10 @@ use core::borrow::Borrow;
 
 use ragu_backend::Backend;
 use ragu_circuits::polynomials::{Rank, sparse::Polynomial};
-use udon::{
-    fft::{Domain, reference},
-    field::Field,
-};
+use udon::{fft::Domain, field::Field};
 
-#[derive(Clone, Copy)]
-struct Twiddle<F>(F);
-
-impl<F: Field> reference::Twiddle for Twiddle<F> {
-    const ONE: Self = Self(F::ONE);
-
-    fn multiply(&self, rhs: &Self) -> Self {
-        Self(self.0 * rhs.0)
-    }
-
-    fn square(&self) -> Self {
-        Self(self.0.square())
-    }
-}
-
-#[derive(Clone)]
-struct Coefficients<F: Field, R: Rank>(Polynomial<F, R>);
-
-impl<F: Field, R: Rank> reference::Butterfly<Twiddle<F>> for Coefficients<F, R> {
-    fn scaled(&self, by: &Twiddle<F>) -> Self {
-        let mut poly = self.clone();
-        poly.0.scale(by.0);
-        poly
-    }
-
-    fn add(&self, rhs: &Self) -> Self {
-        let mut poly = self.clone();
-        poly.0.add_assign(&rhs.0);
-        poly
-    }
-
-    fn negated(&self) -> Self {
-        self.scaled(&Twiddle(-F::ONE))
-    }
-}
+/// Keep working storage bounded while giving the backend many independent FFTs.
+const COEFFICIENT_PAIRS_PER_BATCH: usize = 256;
 
 /// Evaluates the degree-m-2 quotient at m-1 consecutive new nodes, then
 /// interpolates its coefficients. The input nodes are 0 through m-1.
@@ -98,27 +62,77 @@ impl<F: Field> Quotient<F> {
         })
     }
 
-    fn shift<R: Rank>(&self, input: &[impl Borrow<Polynomial<F, R>>]) -> Vec<Coefficients<F, R>> {
-        let mut values: Vec<_> = input
-            .iter()
-            .zip(&self.barycentric)
-            .map(|(value, &weight)| {
-                let mut value = value.borrow().clone();
-                value.scale(weight);
-                Coefficients(value)
-            })
-            .collect();
-        values.resize_with(self.domain.size(), || Coefficients(Polynomial::default()));
-        reference::transform(&mut values, &Twiddle(self.domain.root()));
-        for (value, &weight) in values.iter_mut().zip(&self.spectrum) {
-            value.0.scale(weight);
+    fn fill_row(&self, row: &mut [F], coefficients: &mut [impl Iterator<Item = F>]) -> bool {
+        let mut nonzero = false;
+        for ((output, coefficient), &weight) in
+            row.iter_mut().zip(coefficients).zip(&self.barycentric)
+        {
+            let value = coefficient.next().expect("coefficient count matches rank");
+            *output = value;
+            if !value.is_zero() {
+                *output *= weight;
+                nonzero = true;
+            }
         }
-        reference::inverse_transform(
-            &mut values,
-            &Twiddle(self.domain.inverse_root()),
-            &Twiddle(self.domain.size_inverse()),
-        );
-        values
+        nonzero
+    }
+
+    fn accumulate<B: Backend>(&self, batch: &mut Vec<F>, products: &mut [F::Accumulator]) {
+        let size = self.domain.size();
+        B::fft_batch(self.domain, batch);
+        for row in batch.chunks_exact_mut(size) {
+            for (coefficient, &kernel) in row.iter_mut().zip(&self.spectrum) {
+                *coefficient *= kernel;
+            }
+        }
+        B::ifft_batch(self.domain, batch);
+
+        // The retained coefficients start at m-1, beyond the reach of
+        // wraparound in the cyclic convolution of length at least 2m-2.
+        let start = self.barycentric.len() - 1;
+        let end = start + products.len();
+        for pair in batch.chunks_exact(2 * size) {
+            let (a, b) = pair.split_at(size);
+            for ((product, a), b) in products.iter_mut().zip(&a[start..end]).zip(&b[start..end]) {
+                F::mul_accumulate(product, a, b);
+            }
+        }
+        batch.clear();
+    }
+
+    fn shifted_products<B: Backend, R: Rank>(
+        &self,
+        a: &[impl Borrow<Polynomial<F, R>>],
+        b: &[impl Borrow<Polynomial<F, R>>],
+    ) -> impl Iterator<Item = F> {
+        let mut a: Vec<_> = a.iter().map(|poly| poly.borrow().iter_coeffs()).collect();
+        let mut b: Vec<_> = b
+            .iter()
+            .map(|poly| poly.borrow().iter_coeffs().rev())
+            .collect();
+        let mut products: Vec<_> = (0..self.vanishing.len())
+            .map(|_| F::Accumulator::default())
+            .collect();
+        let size = self.domain.size();
+        let batch_size = 2 * size * COEFFICIENT_PAIRS_PER_BATCH;
+        let mut batch = Vec::with_capacity(batch_size);
+        let mut pair = vec![F::ZERO; 2 * size];
+        let (left, right) = pair.split_at_mut(size);
+        for _ in 0..R::num_coeffs() {
+            let left_nonzero = self.fill_row(left, &mut a);
+            let right_nonzero = self.fill_row(right, &mut b);
+            if left_nonzero && right_nonzero {
+                batch.extend_from_slice(left);
+                batch.extend_from_slice(right);
+                if batch.len() == batch_size {
+                    self.accumulate::<B>(&mut batch, &mut products);
+                }
+            }
+        }
+        if !batch.is_empty() {
+            self.accumulate::<B>(&mut batch, &mut products);
+        }
+        products.into_iter().map(F::reduce)
     }
 
     pub(super) fn compute<B: Backend, R: Rank>(
@@ -127,26 +141,23 @@ impl<F: Field> Quotient<F> {
         b: &[impl Borrow<Polynomial<F, R>>],
     ) -> Vec<F> {
         let m = self.barycentric.len();
+        let empty = |poly: &Polynomial<F, R>| poly.iter_stored_coeffs().next().is_none();
+        if a.iter().all(|poly| empty(poly.borrow())) || b.iter().all(|poly| empty(poly.borrow())) {
+            return vec![F::ZERO; m - 1];
+        }
         let pairs = a.iter().zip(b).map(|(a, b)| (a.borrow(), b.borrow()));
         let diagonal: Vec<_> = B::map(pairs, |(a, b)| B::sparse_revdot(a, b))
             .zip(&self.barycentric)
             .map(|(value, &weight)| value * weight)
             .collect();
-        let a = self.shift(a);
-        let b = self.shift(b);
-        let products = B::map(m - 1..2 * m - 2, |index| {
-            B::sparse_revdot(&a[index].0, &b[index].0)
-        });
-
         let mut quotient = vec![F::ZERO; m - 1];
-        for (offset, product) in products.enumerate() {
+        for (offset, product) in self.shifted_products::<B, R>(a, b).enumerate() {
             let target: F = diagonal
                 .iter()
                 .enumerate()
                 .map(|(i, &value)| value * self.kernel[m - 1 + offset - i])
                 .sum();
-            // The convolutions yield A(t)/Z(t) and B(t)/Z(t). Their retained
-            // coefficients start at m-1, beyond the reach of wraparound.
+            // The convolutions yield A(t)/Z(t) and B(t)/Z(t).
             let value = self.vanishing[offset] * product - target;
             for (coefficient, &weight) in quotient.iter_mut().zip(&self.output_basis[offset]) {
                 *coefficient += value * weight;

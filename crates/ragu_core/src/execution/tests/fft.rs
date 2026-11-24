@@ -108,6 +108,48 @@ fn pasta_transforms_match_serial_and_horner() {
     check_field::<Fq>();
 }
 
+#[test]
+fn pasta_batches_match_independent_transforms() {
+    fn check<F: Field>() {
+        for log_size in [4, 5] {
+            let domain = F::domain(log_size).unwrap();
+            let input: Vec<_> = (0..17 * domain.size())
+                .map(|i| F::from((i * i + 37) as u64))
+                .collect();
+            let mut expected = input.clone();
+            for coefficients in expected.chunks_exact_mut(domain.size()) {
+                domain.transform(coefficients);
+            }
+            let mut actual = input.clone();
+            assert_pasta_dispatch(false, || crate::fft_batch(domain, &mut actual));
+            assert_eq!(actual, expected);
+            assert_pasta_dispatch(true, || crate::ifft_batch(domain, &mut actual));
+            assert_eq!(actual, input);
+        }
+    }
+    check::<Fp>();
+    check::<Fq>();
+}
+
+#[test]
+fn pasta_batch_uses_the_supplied_executor() {
+    let domain = Domain::<PastaField<PallasBase>>::new(4).unwrap();
+    let options = ExecutionOptions::default().with_task_budget(TaskBudget::new(4).unwrap());
+    let executor = CountingExecutor(AtomicUsize::new(0));
+    let input: Vec<_> = (0..64 * domain.size())
+        .map(|i| PastaField::<PallasBase>::from_u64(i as u64))
+        .collect();
+    let mut actual = input.clone();
+    execute_batch(domain, &mut actual, false, options, &executor);
+    let joins = executor.0.load(Ordering::Relaxed);
+    assert!(joins > 0, "Udon must parallelize the batch across inputs");
+    execute_batch(domain, &mut actual, true, options, &executor);
+    assert!(executor.0.load(Ordering::Relaxed) > joins);
+    for (actual, expected) in actual.iter().zip(&input) {
+        assert_eq!(actual.reduce(), expected.reduce());
+    }
+}
+
 fn planned_fft<M: PrimeModulus>() {
     let domain = Domain::<PastaField<M>>::new(14).unwrap();
     let input: Vec<_> = (0..domain.size())

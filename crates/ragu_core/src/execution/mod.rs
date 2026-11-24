@@ -9,6 +9,6 @@ mod prepared;
 mod tests;
 
 pub use executor::{for_each_chunk_mut, for_each_mut, join, worker_count};
-pub use fft::{fft, ifft};
+pub use fft::{fft, fft_batch, ifft, ifft_batch};
 pub use msm::{MsmWorkspace, msm, msm_batch, msm_many};
 pub use prepared::PreparedMsm;

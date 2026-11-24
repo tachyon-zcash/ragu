@@ -98,6 +98,26 @@ proptests_heavy *ARGS:
 bench *ARGS:
     @just _bench_{{os()}} {{ARGS}}
 
+# compare wallet-rank Fuse against a base revision on the same machine
+bench_fuse_compare BASE='origin/main' FILTER='accelerated':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    base=$(git rev-parse --verify {{quote(BASE)}}'^{commit}')
+    scratch=$(mktemp -d "${TMPDIR:-/tmp}/ragu-fuse-bench.XXXXXXXX")
+    git worktree add --detach "$scratch/base" "$base"
+    trap 'git worktree remove "$scratch/base"; rmdir "$scratch"' EXIT
+    if [[ -f Cargo.lock ]]; then
+        cp Cargo.lock "$scratch/base/Cargo.lock"
+    fi
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+    if [[ "$CARGO_TARGET_DIR" != /* ]]; then
+        export CARGO_TARGET_DIR="$PWD/$CARGO_TARGET_DIR"
+    fi
+    export CRITERION_HOME="$CARGO_TARGET_DIR/criterion/fuse-compare"
+    args=(--locked -p ragu_pcd --features multicore --bench criterion_fuse)
+    (cd "$scratch/base" && cargo bench "${args[@]}" -- {{quote(FILTER)}} --save-baseline before --noplot)
+    cargo bench "${args[@]}" -- {{quote(FILTER)}} --baseline before --noplot
+
 _bench_macos *ARGS:
     #!/bin/sh
     [ -t 1 ] && tty_opt="--tty" # use tty if stdout is a tty

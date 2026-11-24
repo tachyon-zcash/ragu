@@ -334,6 +334,20 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         ragu_core::ifft(domain, values);
     }
 
+    /// Transforms consecutive domain-sized inputs in place.
+    ///
+    /// Overrides must match [`ragu_core::fft_batch`] exactly.
+    fn fft_batch<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
+        ragu_core::fft_batch(domain, values);
+    }
+
+    /// Applies the normalized inverse transform to consecutive domain-sized inputs.
+    ///
+    /// Overrides must match [`ragu_core::ifft_batch`] exactly.
+    fn ifft_batch<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
+        ragu_core::ifft_batch(domain, values);
+    }
+
     /// Computes the multiscalar multiplication
     /// $\langle \mathbf{a}, \mathbf{G} \rangle$.
     ///

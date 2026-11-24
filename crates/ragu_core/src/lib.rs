@@ -45,8 +45,8 @@ pub mod routines;
 pub use drivers::Coeff;
 pub use errors::{Error, Result};
 pub use execution::{
-    MsmWorkspace, PreparedMsm, fft, for_each_chunk_mut, for_each_mut, ifft, join, msm, msm_batch,
-    msm_many, worker_count,
+    MsmWorkspace, PreparedMsm, fft, fft_batch, for_each_chunk_mut, for_each_mut, ifft, ifft_batch,
+    join, msm, msm_batch, msm_many, worker_count,
 };
 /// The `udon` arithmetic crate, so that a caller depending only on Ragu names
 /// the same fields and curves Ragu does. The derive macros resolve `udon`

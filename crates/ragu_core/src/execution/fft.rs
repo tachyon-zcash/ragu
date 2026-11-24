@@ -5,7 +5,7 @@ use core::any::Any;
 
 use udon::{
     exec::{ExecutionOptions, Executor},
-    fft::{Domain, Transform},
+    fft::{Direction, Domain, StorageLayout, Transform, TransformRequest, execution::FftPlan},
     field::{Field, FieldAdapter, PallasBase, PallasScalar, PastaField, PrimeModulus},
 };
 
@@ -26,6 +26,7 @@ use super::executor::{self, PoolExecutor};
 /// Panics before mutation if the input length differs from the domain size
 /// or the scratch size overflows.
 pub fn fft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
+    assert_eq!(values.len(), domain.size(), "transform input length");
     transform(domain, values, false);
 }
 
@@ -39,6 +40,25 @@ pub fn fft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
 /// Panics before mutation if the input length differs from the domain size
 /// or the scratch size overflows.
 pub fn ifft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
+    assert_eq!(values.len(), domain.size(), "transform input length");
+    transform(domain, values, true);
+}
+
+/// Transforms consecutive domain-sized coefficient slices in place.
+///
+/// # Panics
+///
+/// Panics before mutation if the buffer does not contain complete slices.
+pub fn fft_batch<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
+    transform(domain, values, false);
+}
+
+/// Inverts [`fft_batch`] with one normalized inverse per slice.
+///
+/// # Panics
+///
+/// Panics before mutation if the buffer does not contain complete slices.
+pub fn ifft_batch<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
     transform(domain, values, true);
 }
 
@@ -47,17 +67,23 @@ pub fn ifft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
     reason = "checked Any dispatch requires the vector's concrete type"
 )]
 fn transform<F: Field>(domain: Domain<F>, values: &mut Vec<F>, inverse: bool) {
-    assert_eq!(values.len(), domain.size(), "transform input length");
-    if pasta::<PallasBase>(domain.log_size(), values, inverse)
+    assert!(
+        values.len().is_multiple_of(domain.size()),
+        "batch must contain complete transform inputs"
+    );
+    if values.is_empty()
+        || pasta::<PallasBase>(domain.log_size(), values, inverse)
         || pasta::<PallasScalar>(domain.log_size(), values, inverse)
     {
         return;
     }
 
-    if inverse {
-        domain.inverse_transform(values);
-    } else {
-        domain.transform(values);
+    for values in values.chunks_exact_mut(domain.size()) {
+        if inverse {
+            domain.inverse_transform(values);
+        } else {
+            domain.transform(values);
+        }
     }
 }
 
@@ -68,13 +94,13 @@ fn pasta<M: PrimeModulus>(log_size: u32, values: &mut dyn Any, inverse: bool) ->
     // Pasta domains use canonical roots, fixed by their size. Reconstruct
     // the native descriptor after the checked field-type match.
     let domain = Domain::<PastaField<M>>::new(log_size).expect("valid Pasta domain");
-    execute(
-        domain,
-        FieldAdapter::as_slice_mut(values),
-        inverse,
-        executor::options(),
-        &PoolExecutor,
-    );
+    let values = FieldAdapter::as_slice_mut(values);
+    let options = executor::options();
+    if values.len() == domain.size() {
+        execute(domain, values, inverse, options, &PoolExecutor);
+    } else {
+        execute_batch(domain, values, inverse, options, &PoolExecutor);
+    }
     #[cfg(test)]
     tests::record_dispatch(inverse);
     true
@@ -98,6 +124,32 @@ fn execute<M: PrimeModulus, E: Executor>(
         transform.forward(values, options, executor, &mut scratch)
     }
     .expect("scratch was sized for this domain and execution options");
+}
+
+fn execute_batch<M: PrimeModulus, E: Executor>(
+    domain: Domain<PastaField<M>>,
+    values: &mut [PastaField<M>],
+    inverse: bool,
+    options: ExecutionOptions,
+    executor: &E,
+) {
+    let direction = if inverse {
+        Direction::Inverse
+    } else {
+        Direction::Forward
+    };
+    let plan = FftPlan::new(
+        Transform::new(domain.subgroup()),
+        TransformRequest::new(direction),
+        StorageLayout::Contiguous,
+        options,
+    )
+    .expect("valid Pasta FFT batch plan");
+    let required = plan
+        .batch_fields(values.len() / domain.size())
+        .expect("FFT batch scratch size fits");
+    let mut scratch = vec![PastaField::ZERO; required];
+    plan.execute_batch(values, &mut scratch, executor);
 }
 
 #[cfg(test)]
