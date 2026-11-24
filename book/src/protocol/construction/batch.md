@@ -89,12 +89,12 @@ and $\beta_q$ still apply to it.
     are fixed before $\alpha$ when every opening is, and it is nonzero when an
     opening at $\rho$ is false. On the native side $S_\alpha$ and $S_u$ are the
     field, and $Q_\rho$ is at most $72$. On the nested side they have $2^{143}$
-    elements, and $Q_\rho$ is at most $58$. $S_\beta$ has $2^{143}$ elements on
+    elements, and $Q_\rho$ is at most $57$. $S_\beta$ has $2^{143}$ elements on
     both sides, since $\beta$ and $\beta_q$ are lifts of one endoscalar.
 
 | | Native | Nested |
 |---|---|---|
-| $Q$ | 180 | 158 |
+| $Q$ | 180 | 157 |
 | $J$ | 121 | 107 |
 | $\alpha$, $u$ | $\alpha$, $u$ | $\alpha_q$, $u_q$ |
 | $\beta$ | $\text{lift}_p(\text{endo}(\text{pre\_beta}))$ | $\beta_q = \text{lift}_q(\text{endo}(\text{pre\_beta}))$ |
@@ -312,7 +312,7 @@ The claimed values are fields of the
 | 18, 19 | $a_{q,\star}$, $b_{q,\star}$ | $x_q z_q$, $x_q$ | `randomizer_a_at_xz`, `randomizer_b_at_x` |
 | $20 + t$, $t < 45$ | $r_q^{(0)}[\cdot]$ in rx order | $x_q z_q$ | `left.rx` |
 | $65 + t$, $t < 45$ | $r_q^{(1)}[\cdot]$ in rx order | $x_q z_q$ | `right.rx` |
-| $110 + j$, $j < 48$ | $m_q(W, x_q, y_q)$ | $\omega_{q,j}$ | `fixed_registry` |
+| $110 + j$, $j < 47$ | $m_q(W, x_q, y_q)$ | $\omega_{q,j}$ | `fixed_registry` |
 
 The nested list has no opening at the index of a step circuit, because every
 nested circuit has a fixed registry index. It also has no online openings.

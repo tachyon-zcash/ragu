@@ -30,11 +30,9 @@ traces $r_1, r_2, \dots$:
 $$\left( \text{Horner}_z[r_1, r_2, \dots],\ s_j(X, y);\ 0 \right).$$
 
 It holds as an identity in $y$ and $z$ exactly when each entry of the list
-separately satisfies the constraints of $s_j$. An entry may itself be a sum of
-polynomials, in which case the constraints apply to the sum. If some entry of a
-list of $L$ violates a constraint, the claim holds for $y$ and $z$ drawn
-uniformly from a set $S$ with probability at most
-$(4n - 2 + L)/|S|$.[^bonding-bound]
+separately satisfies the constraints of $s_j$. If some entry of a list of $L$
+violates a constraint, the claim holds for $y$ and $z$ drawn uniformly from a
+set $S$ with probability at most $(4n - 2 + L)/|S|$.[^bonding-bound]
 
 [^bonding-bound]: The product of the claim is
     $z^{L-1} \revdot{r_1}{s_j(X, y)} + \dots + \revdot{r_L}{s_j(X, y)}$. Each
@@ -335,14 +333,12 @@ parent to bind in the same way.
 
 The nested list has the same shape: for each child, the raw claim and one
 circuit claim for each of the $33$ nested circuits, and then one bonding claim
-for each of the $15$ nested bonding polynomials.
+for each of the $14$ nested bonding polynomials.
 
 Here the challenges are $y_q$ and $z_q$ and the registry is $m_q$. We abbreviate
-two sums of a child's stage polynomials.
+the sum of a child's stage polynomials.
 
-$$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nested stages } S,$$
-
-$$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\texttt{PointsStage}, \texttt{BridgePreamble}, \texttt{BridgeSPrime}, \texttt{BridgeInnerError}, \texttt{BridgeAB}, \texttt{BridgeQuery}, \texttt{BridgeF}\}.$$
+$$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nested stages } S.$$
 
 | Position $k$ | Kind | Registry Index | $a$ Side | Target |
 |---|---|---|---|---|
@@ -354,14 +350,12 @@ $$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\
 | 70 | bonding | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
 | $71, \dots, 80$ | bonding | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
 | 81 | bonding | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
-| 82 | bonding | 47 | $z_q \, r_q^{(0)}[\text{loading}] + r_q^{(1)}[\text{loading}]$ | $0$ |
-| $83, \dots, 87$ | padding | | $0$ | $0$ |
+| $82, \dots, 87$ | padding | | $0$ | $0$ |
 
 As on the native side, a Horner list takes the left and then the right instance
 of each named polynomial. Row $70$ is the final mask of the endoscaling steps,
-row $81$ is the final mask of the two instance circuits, and row $82$ is the
-[loading](internal_circuits.md#loading) relation. Rows $83$ to $87$ pad the
-list to $11 \cdot 8 = 88$ claims.
+and row $81$ is the final mask of the two instance circuits. Rows $82$ to $87$
+pad the list to $11 \cdot 8 = 88$ claims.
 
 ### Nested Targets {#nested-targets}
 
@@ -384,7 +378,7 @@ and the second that of child $1$, as the two cells marked raw are the raw
 claims of child $0$ and of child $1$. The step circuit and each bonding
 polynomial appear once. The circuits are the indices $0$ to $36$ of the native
 grid and $0$ to $32$ of the nested grid, and the bonding polynomials are the
-indices $37$ to $54$ and $33$ to $47$. A cell marked $\star$ holds the
+indices $37$ to $54$ and $33$ to $46$. A cell marked $\star$ holds the
 randomizer claim, the cell marked half holds the half-claim, and a cell marked
 pad holds the zero claim.
 
@@ -422,7 +416,7 @@ The nested grid has $12$ groups of $9$.
 | $g = 7$ | $27$ | $27$ | $28$ | $28$ | $29$ | $29$ | $30$ | $30$ | $\star$ |
 | $g = 8$ | $31$ | $31$ | $32$ | $32$ | $33$ | $34$ | $35$ | $36$ | $\star$ |
 | $g = 9$ | $37$ | $38$ | $39$ | $40$ | $41$ | $42$ | $43$ | $44$ | $\star$ |
-| $g = 10$ | $45$ | $46$ | $47$ | pad | pad | pad | pad | pad | $\star$ |
+| $g = 10$ | $45$ | $46$ | pad | pad | pad | pad | pad | pad | $\star$ |
 | $g = 11$ | half | pad | pad | pad | pad | pad | pad | pad | pad |
 
 A group is not aligned with the kinds of claim or with the children: the two

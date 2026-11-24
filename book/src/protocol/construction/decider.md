@@ -119,8 +119,8 @@ Check 2 keeps the index that the decider reads, here and in the
 [stage values](#stage-values), inside the domain in which the root's `hashes_1`
 placed its own copy.
 
-The nested list has $49$ claims: the raw claim, the $31$ endoscaling steps,
-`Collapse`, `ComputeV` and the $15$ bondings. The raw claim is included and
+The nested list has $48$ claims: the raw claim, the $31$ endoscaling steps,
+`Collapse`, `ComputeV` and the $14$ bondings. The raw claim is included and
 holds by construction. The target of `Collapse` and `ComputeV` is
 $k_q(\tau_{q,y})$ over the proof's own
 [nested instance](proof.md#nested-unified), with $E_0, \dots, E_{15}$ read from

@@ -14,7 +14,7 @@ before it makes any proof.
 | $K$ | the number of registered application steps |
 | `stage_size` | the largest number of staged values any registered step declares |
 | native [registry](registry.md), tag $\kappa$ | $57 + K$ wiring polynomials over $\F_p$ |
-| nested registry, tag $\kappa_q$ | $48$ wiring polynomials over $\F_q$ |
+| nested registry, tag $\kappa_q$ | $47$ wiring polynomials over $\F_q$ |
 | bootstrap proof | built at finalization; see [the base case](base_case.md) |
 
 ## Headers {#headers}
@@ -201,8 +201,8 @@ stage is the entry of its mask.
 | native circuit | `hashes_1`, `bind_challenges[k]` | `Hashes1`, `BindChallenges(k)` | `Hashes1Circuit` |
 | native stage | `preamble`, `points::BindingStage` | `Preamble`, `PointsBinding` | `PreambleStage`, `PointsBindingStage` |
 
-The nested circuits are written `EndoscalingStep(s)`, `Collapse`, `ComputeV` and
-`Loading` on every page, and a nested stage has one name.
+The nested circuits are written `EndoscalingStep(s)`, `Collapse` and `ComputeV`
+on every page, and a nested stage has one name.
 
 ## Native Registry {#native-registry}
 
@@ -267,7 +267,6 @@ $57 + K \le 4n$, and an application can register at most $4n - 57$ steps.
 | 44 | `BridgeEval` | stage mask |
 | 45 | `ChallengeStage` | stage mask |
 | 46 | `ChallengeFinalStaged` | final mask |
-| 47 | `Loading` | stripped circuit |
 
 The nested registry is the same for every application, and its domain has $64$
 points.
@@ -290,9 +289,9 @@ counts.
 | points of the native walk | $1 + 2 (45 + 4) + 9$ | 108 |
 | native walk steps | $\lceil 107 / 4 \rceil$ | 27 |
 | native claims, of $14 \cdot 7$ places | $2 + 1 + 2 \cdot 37 + 18$ | 95 |
-| nested claims, of $11 \cdot 8$ places | $2 + 2 \cdot 33 + 15$ | 83 |
+| nested claims, of $11 \cdot 8$ places | $2 + 2 \cdot 33 + 14$ | 82 |
 | native openings | $23 + 2 \cdot 48 + 55 + 6$ | 180 |
-| nested openings | $20 + 2 \cdot 45 + 48$ | 158 |
+| nested openings | $20 + 2 \cdot 45 + 47$ | 157 |
 
 In the two rx counts, $27$ and $31$ are the native and nested endoscaling steps,
 and $21$ and $14$ are the other polynomials of the [orders](#rx-order) above.

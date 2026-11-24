@@ -128,10 +128,8 @@ A fuse takes two proofs and a step and produces one proof.
 1. It runs the step and gathers the claims: each child's raw claim, one claim
    for every circuit of the child's frontier, and one claim for every mask,
    which covers both children's polynomials. The native side adds the claim of
-   the step circuit that the fuse just ran, with its two masks. The nested side
-   has one more claim that covers both children, for the
-   [loading relation](internal_circuits.md#loading) of its walk. There are $95$
-   native and $83$ nested claims.
+   the step circuit that the fuse just ran, with its two masks. There are $95$
+   native and $82$ nested claims.
 2. It [folds](claims.md#fold) each list into a new raw claim, in two layers.
    The fold takes in two claims about a [randomizer](claims.md#randomizer) of
    the fuse's own, so that the new raw claim is about uniformly random

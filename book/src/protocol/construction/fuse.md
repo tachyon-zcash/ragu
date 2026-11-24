@@ -70,7 +70,7 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 ### Round 3 {#fuse-round-3}
 
 13. Build the $95$ [native claims](claims.md#native-claims) at $(y, z)$ and the
-    $83$ [nested claims](claims.md#nested-claims) at $(y_q, z_q)$, and lay each
+    $82$ [nested claims](claims.md#nested-claims) at $(y_q, z_q)$, and lay each
     list out over its [grid](claims.md#randomizer) with the randomizer claim
     and the half-claim.
 14. Compute the [first-layer quotients](claims.md#fold-layer-1)
@@ -125,7 +125,7 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 ### Round 7 {#fuse-round-7}
 
 31. Compute $f$ over the $180$ [native openings](batch.md#native-openings) and
-    $f_q$ over the $158$ [nested openings](batch.md#nested-openings), with $[f]$
+    $f_q$ over the $157$ [nested openings](batch.md#nested-openings), with $[f]$
     and $[f_q]$.
 32. Set $r[\texttt{PointsF}]$ to the stage of $[m_q(W, x_q, y_q)]$, $[f_q]$ and
     $[p_{q,\star}]$. Set $r_q[\texttt{BridgeF}]$ to the stage of $[f]$,

@@ -91,7 +91,8 @@ polynomial and the polynomials of the stages that the circuit loads.
 
 The gates that a circuit reserves for a stage carry none of the stage's own
 constraints. A stage that is loaded **enforced** has the contracts of its output
-gadget, such as curve membership of a point, re-emitted in the loading circuit.
+gadget, such as curve membership of a point, re-emitted in the circuit that
+loads it.
 A stage that is loaded **unenforced** has no constraint emitted, which leaves
 those contracts to another circuit. A **skipped** stage only has its gates
 reserved.
@@ -106,7 +107,8 @@ separately.
 
 Wiring polynomials typically verify constraints for circuit traces, but there do
 exist wiring polynomials that only enforce constraints on incomplete traces.
-These exist internally to Ragu and are called **bonding polynomials**.
+These exist internally to Ragu and are called **bonding polynomials**. Every
+bonding polynomial of the scheme is a [mask](#masks).
 
 Unlike circuit wiring polynomials, which are checked with
 $
@@ -194,16 +196,6 @@ positions of its gates.
 A stage mask is claimed against the stage's polynomial. A final mask is claimed
 against the own polynomials of the circuits whose last stage is the mask's
 stage.
-
-### Stripped Circuits {#stripped}
-
-A bonding polynomial need not be a mask. A circuit that has no gates of its own,
-only constraints among the wires of the stages that it loads, has no own
-polynomial to commit, and nothing in it depends on the gate equations. Ragu
-registers the wiring polynomial of such a circuit with its `ONE` constraint
-stripped, so that $s(X, 0) = 0$. The result is a **stripped circuit**, and its
-claim is a bonding claim over the sum of the stage polynomials that the circuit
-loads.
 
 ## Example with Four Gates {#staging-example}
 

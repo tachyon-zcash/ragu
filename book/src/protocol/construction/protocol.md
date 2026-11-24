@@ -107,7 +107,7 @@ A verifier of the interactive protocol would check the following.
 | 4 | On each side, the collapsed values and $c$ satisfy the [fold relations](claims.md#fold). | `collapse`, `Collapse` |
 | 5 | On each side, $v$ is the [batch formula](batch.md#batch-structure) over the claimed values and evaluations, with $A(xz)$ and $B(x)$ recomputed from the children's opened values. | `compute_v`, `ComputeV` |
 | 6 | $P$ and $P_q$ are the outputs of the two [walks](walks.md) over the commitments fixed in earlier rounds. | `endoscaling_step`, `bind_endoscalar`; `EndoscalingStep`, `Collapse`, `ComputeV` |
-| 7 | The native walk consumed, for each child, the nested commitments that the child's native instance fixes, and the nested walk consumed the native commitments that the bridge stages hold. | `bind_beta`; `Loading` |
+| 7 | The native walk consumed, for each child, the nested commitments that the child's native instance fixes, and the nested walk consumed the native commitments that the bridge stages hold. | `bind_beta`; `Collapse` |
 | 8 | The challenge stage holds the lifts of the transcript's challenges. | `bind_challenges`, completed one level up by the [binding chain](stage_contents.md#challenge-stage) |
 | 9 | A fuse that takes the [base case](base_case.md#confinement) has the index of `Bootstrap`, the unit output header and padding output slots. | `collapse` |
 

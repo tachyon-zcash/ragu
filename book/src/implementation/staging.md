@@ -76,9 +76,9 @@ emits are still discarded.
 
 ## Worked example
 
-A small example from `crates/ragu_circuits/src/staging/bonding.rs`
-demonstrates the [`unenforced`][unenforced-method] case. `TwoWireStage` is
-a stage that allocates two [`Element`][element-gadget]s with zero value:
+A small example demonstrates the [`unenforced`][unenforced-method] case.
+`TwoWireStage` is a stage that allocates two [`Element`][element-gadget]s
+with zero value:
 
 ```rust,ignore
 impl Stage<Fp, R> for TwoWireStage {

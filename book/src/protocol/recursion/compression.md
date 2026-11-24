@@ -144,8 +144,8 @@ value of the Fuse, at the Fuse's challenges.
   `Eval` over the nested field with $A_{F,q}(u_{F,q}),B_{F,q}(u_{F,q})$.
 
 In the Standard layout, `Query` has $37+18=55$ fixed registry entries and
-`BridgeQuery` has $33+15=48$. The next wire, the value at $w_F$, takes weight
-$\sigma^{55}$ or $\sigma^{48}$, respectively.
+`BridgeQuery` has $33+14=47$. The next wire, the value at $w_F$, takes weight
+$\sigma^{55}$ or $\sigma^{47}$, respectively.
 
 On each curve, list the raw accumulator, circuit, bonding and selected-wire
 claims in that order. The raw target is $c_F$ or $c_{F,q}$ from the instance.
@@ -157,7 +157,7 @@ selected-wire targets are zero.
 
 The step has already folded its application claim and two bonding claims, and
 its randomizer claims with them. The Standard layout gives $1+37+16+5=59$
-native claims and $1+33+15+3=52$ nested claims.
+native claims and $1+33+14+3=51$ nested claims.
 Complete the fold, opening batch and IPA on the **host curve** before
 repeating them on the **nested curve**, on the same transcript.
 

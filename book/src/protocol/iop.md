@@ -45,9 +45,7 @@ The notation is that of the [curve cycle](construction/cycle.md#notation).
   The trace of a circuit is the sum of its own polynomial and the polynomials
   of the stages that it loads. For a
   [bonding claim](construction/staging.md#bonding), $a$ is a Horner
-  fold of polynomials at $z$, $b=s_j(X,y)$, and the target is zero. For nested
-  `Loading`, let $L_i$ be the sum of child $i$'s seven stage polynomials.
-  Its claim uses $a=z_q L_0+L_1$.
+  fold of polynomials at $z$, $b=s_j(X,y)$, and the target is zero.
 - $\ell^{(M)}_j$ and $V^{(M)}$ are the Lagrange basis and vanishing polynomials
   on the nodes $0, \dots, M - 1$, as in the
   [fold](construction/claims.md#fold).
@@ -233,11 +231,11 @@ instance that the parent binds to `BridgeHash`.
      respectively.
    - Each remaining entry, $95\le k<98$, holds $(0,0;\ 0)$.
 
-   The $83$ [nested claims](construction/claims.md#nested-claims) at
+   The $82$ [nested claims](construction/claims.md#nested-claims) at
    $(y_q,z_q)$ are padded to $88$ entries. The list has the
    raw claims at $k = i$, the circuit claim of child $i$'s nested internal
    circuit $j$ at $k = 2 + 2j + i$ for $j < 33$, the bonding claims at
-   $k = 35 + j$ for $33 \le j < 48$, and five zero claims.
+   $k = 35 + j$ for $33 \le j < 47$, and six zero claims.
 2. Each list is laid out over a [grid](construction/claims.md#randomizer) of
    $N$ groups of $M$ slots, with $(M,N)=(8,15)$ native and $(9,12)$ nested.
    Each group $g<N-1$ takes the next $M-1$ claims of the list in its slots
@@ -303,8 +301,8 @@ instance that the parent binds to `BridgeHash`.
 
 1. Use the [180 native openings](construction/batch.md#native-openings)
    $(\phi_h, \rho_h)_{h < 180}$ and the
-   [158 nested openings](construction/batch.md#nested-openings)
-   $(\phi_{q,h}, \rho_{q,h})_{h < 158}$ in table order. Each opening has a
+   [157 nested openings](construction/batch.md#nested-openings)
+   $(\phi_{q,h}, \rho_{q,h})_{h < 157}$ in table order. Each opening has a
    claimed value $\vartheta_h$ or $\vartheta_{q,h}$. The children's batched
    openings use $v^{(i)}$ and $v_q^{(i)}$ from their instances. The native
    slot openings use the recorded $\eta_s$.
@@ -332,7 +330,7 @@ instance that the parent binds to `BridgeHash`.
    its opening point.
    $$\begin{aligned}
    f(X)&=\sum_{h<180}\alpha^{179-h}\frac{\phi_h(X)-\phi_h(\rho_h)}{X-\rho_h},\\
-   f_q(X)&=\sum_{h<158}\alpha_q^{157-h}
+   f_q(X)&=\sum_{h<157}\alpha_q^{156-h}
      \frac{\phi_{q,h}(X)-\phi_{q,h}(\rho_{q,h})}{X-\rho_{q,h}}.
    \end{aligned}$$
    The verifier uses the claimed values $\vartheta_h,\vartheta_{q,h}$ to
@@ -436,7 +434,7 @@ and that the stage holds the same $[o_1]$ as `BridgePreamble`.
 
 1. Reject if $x = 0$, $z = 0$, or $u = \rho_h$ for some $h < 180$. On the
    nested side, reject if $x_q = 0$, $z_q = 0$, or $u_q = \rho_{q,h}$ for
-   some $h < 158$.
+   some $h < 157$.
 2. Compute the [native](construction/claims.md#native-targets) and
    [nested](construction/claims.md#nested-claims) claim targets. The target
    for the native step circuit is the Horner evaluation, in wire order,
@@ -496,7 +494,7 @@ and that the stage holds the same $[o_1]$ as `BridgePreamble`.
        \frac{\epsilon_{j(h)}-\vartheta_h}{u-\rho_h}
        +\sum_{j<121}\beta^{120-j}\epsilon_j.$$
    Nested `ComputeV` enforces
-   $$v_q=\beta_q^{107}\sum_{h<158}\alpha_q^{157-h}
+   $$v_q=\beta_q^{107}\sum_{h<157}\alpha_q^{156-h}
        \frac{\epsilon_{q,j_q(h)}-\vartheta_{q,h}}{u_q-\rho_{q,h}}
        +\sum_{j<107}\beta_q^{106-j}\epsilon_{q,j}.$$
 7. Compute the commitments to the two batched polynomials in the same order.
@@ -507,11 +505,11 @@ and that the stage holds the same $[o_1]$ as `BridgePreamble`.
    This check belongs to the compiled protocol, where a commitment is a curve
    point and each side's circuits do the other side's group arithmetic.
    For $P$, the [nested walk](construction/walks.md#nested-walk) takes its
-   inputs from `PointsStage`. The `Loading` relation matches every input to
-   its earlier bridge stage. `Collapse` checks curve membership of the
-   walk points and the endoscalar's bits and bit products. `ComputeV` checks
-   that the endoscalar lifts to $\beta_q$. `Collapse` matches $x_q,y_q,u_q$
-   to `ChallengeStage` and all 16 exported points of the
+   inputs from `PointsStage`. `Collapse` matches every input to its earlier
+   bridge stage, and checks curve membership of the walk points and the
+   endoscalar's bits and bit products. `ComputeV` checks that the endoscalar
+   lifts to $\beta_q$. `Collapse` also matches $x_q,y_q,u_q$ to
+   `ChallengeStage` and all 16 exported points of the
    [nested instance](construction/proof.md#nested-unified), including $P$,
    to their stage wires.
 

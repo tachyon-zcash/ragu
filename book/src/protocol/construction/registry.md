@@ -70,8 +70,7 @@ $$
 Every point of the domain therefore holds a wiring polynomial, and each is of
 one of two kinds. The wiring polynomial of a circuit has $s(X, 0) = 1$. A
 bonding polynomial has $s(X, 0) = 0$: the registered [masks](staging.md#masks)
-and [stripped circuits](staging.md#stripped) are of this kind, and so is the
-polynomial at a point with nothing registered.
+are of this kind, and so is the polynomial at a point with nothing registered.
 
 This is why an index only has to name a point of the domain. A claim about a
 circuit has $\v{k}_0 = 1$, which no bonding polynomial can satisfy, so a claim

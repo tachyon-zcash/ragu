@@ -60,16 +60,6 @@ the same mask can share one claim: for two of them,
 $\revdot{z \, r_0 + r_1}{s_{\text{mask}}(X, y)} = 0$ checks both. A fuse uses
 this to cover both children with one claim per mask.
 
-A bonding claim's wiring polynomial does not have to be a mask. A circuit that
-has no gates and no public output of its own, only linear constraints among the
-wires of the stages that it loads, can be registered with its `ONE` constraint
-removed, and it then takes a mask's place. The nested side has one such check,
-[`Loading`](../construction/internal_circuits.md#loading), which
-[rung 14](rung_14.md) uses. Its constraints equate wires of different stages,
-and its claim is about the sum of those stages' polynomials. The separation
-argument below depends only on $s(X, 0) = 0$, so it covers `Loading` as it
-covers the masks.
-
 **Why it holds.** A mask claim is a set of linear constraints batched by $y$, so
 the argument of [rung 1](rung_01.md) applies, and the combination by $z$ fails
 to expose a violation only if $z$ is a root of a low-degree polynomial.

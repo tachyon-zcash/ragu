@@ -31,9 +31,9 @@ The last line takes in the one point that remains after $30$ lines of four.
 
 The `EndoscalarStage` holds $e$, and the `PointsStage` holds every $C_k$ and
 every **interstitial** $I_s$. Both are committed after $\text{pre\_beta}$ is
-drawn, so the [`Loading`](internal_circuits.md#loading) relation binds the
-walk's inputs to earlier commitments: each $C_k$ must equal a field of a bridge
-stage that the transcript absorbed.
+drawn, so [`Collapse`](internal_circuits.md#nested-collapse) binds the walk's
+inputs to earlier commitments: each $C_k$ must equal a field of a bridge stage
+that the transcript absorbed.
 
 | Point $k$ | $C_k$ | Bridge-Stage Field |
 |---|---|---|
@@ -57,8 +57,9 @@ Three kinds of circuit check the walk.
 
 - Each `EndoscalingStep(s)` checks one line of the recurrence.
 - `Collapse` checks that every point of the `PointsStage` is on the curve, that
-  the `EndoscalarStage` holds bits and their products, and that the exported
-  $E_8$ equals $I_{30}$.
+  every $C_k$ equals its bridge-stage field in the table above, that the
+  `EndoscalarStage` holds bits and their products, and that the exported $E_8$
+  equals $I_{30}$.
 - `ComputeV` checks that the lift of the `EndoscalarStage` endoscalar equals the
   $\beta_q$ of the challenge stage.
 
@@ -75,9 +76,9 @@ $$I_{q,26} = \beta_q^3 \cdot I_{q,25} + \beta_q^2 \cdot C_{q,105} + \beta_q \cdo
 The last line takes in the three points that remain after $26$ lines of four.
 
 Unlike the nested walk, the native walk reads its points from the stages in
-which they were first committed, so it needs no loading relation. Each of those
-stages is fixed before the challenges of this fuse at which its points are
-opened, with one exception: $[m_q(W, x_q, y_q)]$ is fixed after $w_q$ and is
+which they were first committed, so it has no second copy to compare. Each of
+those stages is fixed before the challenges of this fuse at which its points
+are opened, with one exception: $[m_q(W, x_q, y_q)]$ is fixed after $w_q$ and is
 opened at $w_q$. A parent opens that commitment at its own $w_q$ instead.
 
 | Point $k$ | $C_{q,k}$ | Held In |

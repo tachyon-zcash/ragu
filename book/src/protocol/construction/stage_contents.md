@@ -217,10 +217,10 @@ The nested stages form one chain.
 | `BridgeInnerError` | 101 | 399 | round 3 | random |
 | `BridgeOuterError` | 25 | 450 | round 4 | random |
 | `BridgeAB` | 6 | 463 | round 5 | $\v{a}_0 = \texttt{bridge\_alpha}^2$, the blind gate zero |
-| `BridgeQuery` | 153 | 466 | round 6 | random |
-| `BridgeF` | 6 | 543 | round 7 | random |
-| `BridgeEval` | 109 | 546 | round 8 | random, drawn again on each attempt at $\text{pre\_beta}$ |
-| `ChallengeStage` | 20 | 601 | final message | zero |
+| `BridgeQuery` | 152 | 466 | round 6 | random |
+| `BridgeF` | 6 | 542 | round 7 | random |
+| `BridgeEval` | 109 | 545 | round 8 | random, drawn again on each attempt at $\text{pre\_beta}$ |
+| `ChallengeStage` | 20 | 600 | final message | zero |
 
 The parent of each stage is the stage above it in the table. The nine stages
 named `Bridge...` are the **bridge stages**. They hold native commitments, and
@@ -332,7 +332,7 @@ challenges at which the claim of the step circuit is folded.
 |---|---|---|---|
 | `native_query` | point | 1 | $R[\texttt{Query}]$ |
 | `registry_xy` | point | 1 | $[m(W, x, y)]$ |
-| `fixed_registry` | element | 48 | $m_q(\omega_{q,j}, x_q, y_q)$ for $j = 0, \dots, 47$ |
+| `fixed_registry` | element | 47 | $m_q(\omega_{q,j}, x_q, y_q)$ for $j = 0, \dots, 46$ |
 | `registry_wxy` | element | 1 | $m_q(w_q, x_q, y_q)$ |
 | `randomizer_a_at_xz`, `randomizer_b_at_x` | element | 2 | $a_{q,\star}(x_q z_q)$, $b_{q,\star}(x_q)$ |
 | `left.rx`, `right.rx` | element | $2 \cdot 45$ | $r_q^{(i)}{[\cdot]}(x_q z_q)$ in nested rx order |
@@ -381,9 +381,9 @@ lifts of the transcript's challenges by recomputing its commitment.
 The stage is committed with its free coefficients zero, so that its commitment
 is a function of its ten values alone and a native circuit can recompute it.
 The value at [position](#challenge-stage-layout) $\iota$ of the stage is the
-wire $\v{a}_{601 + \iota}$, at the coefficient of degree
-$2n - 1 - (601 + \iota) = 2n - 602 - \iota$. With $G$ the generators of $\E_p$,
-we write $\Gamma_\iota = G_{2n - 602 - \iota}$ for the generator of position
+wire $\v{a}_{600 + \iota}$, at the coefficient of degree
+$2n - 1 - (600 + \iota) = 2n - 601 - \iota$. With $G$ the generators of $\E_p$,
+we write $\Gamma_\iota = G_{2n - 601 - \iota}$ for the generator of position
 $\iota$. Then, with
 $(\chi_0, \dots, \chi_7) = (w, y, z, \mu, \mu', x, \alpha, u)$,
 
