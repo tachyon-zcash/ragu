@@ -1476,17 +1476,19 @@ pub trait ProverContext {
     /// to.
     type Source;
 
-    /// The wallet output suffixes its decompression step must reject.
-    /// The application fixes these in the step's circuit at finalization.
-    #[doc(hidden)]
-    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix] {
-        &[]
-    }
+    /// The output header suffixes the decompression step must reject.
+    /// Finalization fixes these exclusions in the step's circuit. Return
+    /// an empty slice when the context has no exclusions.
+    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix];
 }
 
 /// No context, and nothing a step supplies.
 impl ProverContext for () {
     type Source = core::convert::Infallible;
+
+    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix] {
+        &[]
+    }
 }
 
 /// What a step can supply the extension's prover of an application over

@@ -131,9 +131,9 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
-        // Uniform, so that every header type decompresses through the one
-        // registered circuit; the suffix is a witness wire constrained away
-        // from `Dummy` and from zero (see `Encoded::new_uniform`).
+        // Every header type uses the same registered circuit.
+        // `Encoded::new_uniform_excluding` constrains the suffix wire away
+        // from `Dummy`, zero, and each suffix excluded at finalization.
         let (data, _, _) = witness.cast();
         let output =
             Encoded::new_uniform_excluding(dr, allocator, data.clone(), &self.excluded_suffixes)?;

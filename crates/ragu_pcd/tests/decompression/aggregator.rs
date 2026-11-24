@@ -37,7 +37,8 @@ use crate::{
     },
     header::{Dummy, Header, Suffix},
     profile::{
-        Aggregator, BondingSlot, CircuitSlot, Decompression, Profile, Profiled, Shape, Standard,
+        Aggregator, BondingSlot, CircuitSlot, Decompression, Profile, Profiled, ProverContext,
+        Shape, Standard,
     },
     step::{Encoded, Index, Step, internal::decompress::Decompress},
 };
@@ -48,8 +49,8 @@ fn padding() -> [Vec<Fp>; 2] {
     core::array::from_fn(|_| alloc::vec![Fp::ONE])
 }
 
-/// The pinned layouts are the schedules' at the aggregator rank, for the
-/// test headers and the width boundaries, and lay out as the
+/// The pinned layouts match the schedules at the aggregator rank at sampled
+/// header widths and every width-band boundary, and lay out as the
 /// module says: transcript chunks first and digits chunks last, over six
 /// native stages and, on the nested side, a stage per run, the trailing
 /// stage and the lifts, work and digits stages, with the statement and
@@ -66,21 +67,21 @@ fn pinned_layout_is_the_schedules() {
         );
     }
     check_native_counts::<1>();
+    check_native_counts::<2>();
+    check_native_counts::<3>();
     check_native_counts::<HEADER_SIZE>();
+    check_native_counts::<9>();
     check_native_counts::<57>();
     check_native_counts::<58>();
+    check_native_counts::<100>();
     check_native_counts::<153>();
     check_native_counts::<154>();
+    check_native_counts::<CENSUS>();
     check_native_counts::<195>();
     assert_eq!(
         P::NESTED_CIRCUITS,
         nested_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
         "the nested pins"
-    );
-    assert_eq!(
-        Aggregator::<CENSUS>::native_circuits(CENSUS),
-        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap(),
-        "the native pins for the internal tests' header size"
     );
     assert_eq!(
         P::native_extension(),
@@ -1043,6 +1044,30 @@ fn decompression_accepts_a_padded_output_from_a_wallet_with_online_polynomials()
         app.decompress_with_polynomials(&mut rng, &carrying_proof, padding()),
         Err(Error::InvalidWitness(ref reason)) if reason.to_string().contains("did not register this wallet output header")
     ));
+
+    let excluded = app.context().excluded_decompression_suffixes();
+    assert_eq!(excluded, &[Carrying::SUFFIX]);
+    let source = app.context().prepare(&carrying_proof).unwrap();
+    // Exercise the same exclusion list as the registered circuit, below
+    // the decompression API's header check.
+    let rejected = app.fuse_with_source(
+        &mut rng,
+        Decompress::<Carrying>::with_excluded_suffixes(excluded, true),
+        (
+            *carrying_proof.data(),
+            padding(),
+            source.transcript_digest(),
+        ),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+        Some(&source),
+    );
+    assert!(
+        matches!(rejected, Err(Error::InvalidWitness(ref reason)) if reason.to_string() == "division by zero"),
+        "the decompression circuit must reject the excluded suffix, got {:?}",
+        rejected.as_ref().err()
+    );
+
     let decompressed = app.decompress(&mut rng, &padded_proof).unwrap();
     assert_eq!(*decompressed.data(), Fp::from(42));
     let parent = app.rerandomize(decompressed, &mut rng).unwrap();

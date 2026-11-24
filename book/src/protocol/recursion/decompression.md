@@ -59,7 +59,11 @@ header data. The decompression API first runs the wallet verifier on
 $\pi$ while preparing the witness. If it succeeds, the decompression step
 fuses two bootstrap proofs with unit input headers. The step encodes the
 wallet proof's output header data and constrains the encoded header's
-type suffix to differ from `Dummy` and zero.
+type suffix to differ from `Dummy`, zero, and the suffixes of omitted wallet
+output headers that declare online polynomials. Each exclusion adds one
+multiplication gate and two constraints to the decompression step.
+`ApplicationBuilder::finalize_with` rejects a circuit that exceeds its
+rank's gate or constraint budget.
 
 Every aggregator proof carries the chunk, statement and binding circuits.
 For the decompression step the prover supplies $\pi$ to these circuits.

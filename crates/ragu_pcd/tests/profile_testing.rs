@@ -412,6 +412,10 @@ pub(crate) struct StatementContext<F> {
 
 impl<F> ProverContext for StatementContext<F> {
     type Source = core::convert::Infallible;
+
+    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix] {
+        &[]
+    }
 }
 
 impl<F> Default for StatementContext<F> {
@@ -787,6 +791,10 @@ pub(crate) struct CrossingContext<'params, Base: Cycle> {
 
 impl<Base: Cycle> ProverContext for CrossingContext<'_, Base> {
     type Source = core::convert::Infallible;
+
+    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix] {
+        &[]
+    }
 }
 
 /// The signed digits of `bits`: $2b - 1$ each.

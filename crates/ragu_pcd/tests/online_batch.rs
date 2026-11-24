@@ -1099,6 +1099,10 @@ struct LegacyMixed;
 /// anything to its extension.
 impl crate::profile::ProverContext for u64 {
     type Source = core::convert::Infallible;
+
+    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix] {
+        &[]
+    }
 }
 
 impl Profile for LegacyMixed {
