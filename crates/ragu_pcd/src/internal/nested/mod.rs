@@ -38,7 +38,7 @@ pub mod circuits {
 
 use crate::{
     internal::{endoscalar, revdot::Parameters},
-    profile::{BondingSlot, CircuitSlot, Profile, ProfiledCycle, Shape},
+    profile::{CircuitSlot, MaskSlot, Profile, ProfiledCycle, Shape},
 };
 
 /// The number of curve points the nested walk folds for a native batch of
@@ -184,13 +184,13 @@ pub const NUM_FOLD_GROUPS: usize = 12;
 pub const FOLD_GROUP_SIZE: usize = 9;
 
 /// The nested revdot claims of profile `P` the fuse folds: two children's
-/// raw claims, each internal circuit's claim per child, and each bonding's
+/// raw claims, each internal circuit's claim per child, and each mask's
 /// claim across both.
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(true);
     let circuits = 2 + NumSteps::<P>::len() + extension.circuits;
-    let bondings = 14 + extension.bondings;
-    2 + 2 * circuits + bondings
+    let masks = 14 + extension.masks;
+    2 + 2 * circuits + masks
 }
 
 /// Length type for the nested fold's groups in profile `P`: the standard
@@ -347,10 +347,10 @@ pub enum InternalCircuitIndex {
     /// Final staged mask of the circuits whose last stage is the challenge
     /// stage.
     ChallengeFinalStaged,
-    /// A bonding of the profile's nested extension, a stage's mask or a
-    /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
+    /// A mask of the profile's nested extension, a stage's or a final
+    /// one, in [`Extension::masks`](crate::profile::Extension::masks)
     /// order.
-    ExtensionBonding(u32),
+    ExtensionMask(u32),
 }
 
 impl InternalCircuitIndex {
@@ -415,7 +415,7 @@ impl InternalCircuitIndex {
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
     /// profile's extension circuits after the instance circuits and its
-    /// bondings last.
+    /// masks last.
     /// The index tests compare this order with [`Self::circuit_index`].
     pub fn all<P: Profile>() -> Vec<Self> {
         let num_steps = NumSteps::<P>::len();
@@ -434,7 +434,7 @@ impl InternalCircuitIndex {
                 id => all.push(id),
             }
         }
-        all.extend((0..extension.bondings() as u32).map(Self::ExtensionBonding));
+        all.extend((0..extension.masks() as u32).map(Self::ExtensionMask));
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
@@ -447,42 +447,43 @@ impl InternalCircuitIndex {
         use InternalCircuitIndex::*;
         let steps = NumSteps::<P>::len();
         let extension = crate::profile::extension_lengths::<P>(true);
-        let bonding = steps + 2 + extension.circuits;
+        let mask = steps + 2 + extension.circuits;
         let pos = match self {
             EndoscalingStep(i) => super::checked_index(i, steps),
             Collapse => steps,
             ComputeV => steps + 1,
             ExtensionCircuit(i) => steps + 2 + super::checked_index(i, extension.circuits),
-            EndoscalarStage => bonding,
-            PointsStage => bonding + 1,
-            PointsFinalStaged => bonding + 2,
-            BridgePreamble => bonding + 3,
-            BridgeHash => bonding + 4,
-            BridgeSPrime => bonding + 5,
-            BridgeInnerError => bonding + 6,
-            BridgeOuterError => bonding + 7,
-            BridgeAB => bonding + 8,
-            BridgeQuery => bonding + 9,
-            BridgeF => bonding + 10,
-            BridgeEval => bonding + 11,
-            ChallengeStage => bonding + 12,
-            ChallengeFinalStaged => bonding + 13,
-            ExtensionBonding(i) => bonding + 14 + super::checked_index(i, extension.bondings),
+            EndoscalarStage => mask,
+            PointsStage => mask + 1,
+            PointsFinalStaged => mask + 2,
+            BridgePreamble => mask + 3,
+            BridgeHash => mask + 4,
+            BridgeSPrime => mask + 5,
+            BridgeInnerError => mask + 6,
+            BridgeOuterError => mask + 7,
+            BridgeAB => mask + 8,
+            BridgeQuery => mask + 9,
+            BridgeF => mask + 10,
+            BridgeEval => mask + 11,
+            ChallengeStage => mask + 12,
+            ChallengeFinalStaged => mask + 13,
+            ExtensionMask(i) => mask + 14 + super::checked_index(i, extension.masks),
         };
         CircuitIndex::new(pos)
     }
 
-    /// Whether `self` is registered as a bonding, a stage's mask or a final
-    /// mask, rather than as a circuit.
+    /// Whether `self` is registered as a mask, a stage's or a final one,
+    /// rather than as a circuit.
     #[cfg(test)]
-    pub fn is_bonding(self) -> bool {
+    pub fn is_mask(self) -> bool {
         use InternalCircuitIndex::*;
         match self {
             EndoscalingStep(_) | Collapse | ComputeV | ExtensionCircuit(_) => false,
             EndoscalarStage | PointsStage | PointsFinalStaged | BridgePreamble | BridgeHash
             | BridgeSPrime | BridgeInnerError | BridgeOuterError | BridgeAB | BridgeQuery
-            | BridgeF | BridgeEval | ChallengeStage | ChallengeFinalStaged
-            | ExtensionBonding(_) => true,
+            | BridgeF | BridgeEval | ChallengeStage | ChallengeFinalStaged | ExtensionMask(_) => {
+                true
+            }
         }
     }
 }
@@ -703,7 +704,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
 
     let extension = crate::profile::nested_extension::<C::Profile>();
     let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
-    let mut extension_bondings = alloc::vec::Vec::with_capacity(extension.bondings());
+    let mut extension_masks = alloc::vec::Vec::with_capacity(extension.masks());
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
     for id in InternalCircuitIndex::all::<C::Profile>() {
@@ -790,25 +791,25 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 extension_circuits.push(registration);
                 registry
             }
-            ExtensionBonding(j) => {
+            ExtensionMask(j) => {
                 use crate::profile::online::stages::{self as extension, Nested};
-                let slot = BondingSlot::new(registry);
+                let slot = MaskSlot::new(registry);
                 let (registry, registration) =
-                    match extension::bonding::<C::Profile, Nested>(j as usize)? {
-                        extension::Bonding::Online(bonding) => {
-                            bonding.register::<_, R, C::Profile, Nested>(slot)?
+                    match extension::mask::<C::Profile, Nested>(j as usize)? {
+                        extension::Mask::Online(mask) => {
+                            mask.register::<_, R, C::Profile, Nested>(slot)?
                         }
-                        extension::Bonding::User(index) => {
-                            C::Profile::register_nested_bonding::<C::Base, R>(index, slot, params)?
+                        extension::Mask::User(index) => {
+                            C::Profile::register_nested_mask::<C::Base, R>(index, slot, params)?
                         }
                     }
                     .into_parts();
-                extension_bondings.push(registration);
+                extension_masks.push(registration);
                 registry
             }
         };
     }
-    extension.check_registered("nested", &extension_circuits, &extension_bondings)?;
+    extension.check_registered("nested", &extension_circuits, &extension_masks)?;
 
     assert_eq!(
         registry.num_internal_circuits(),
@@ -826,7 +827,7 @@ mod index_positions {
 
     fn check<P: Profile>() {
         let all = InternalCircuitIndex::all::<P>();
-        let circuits = all.iter().filter(|id| !id.is_bonding()).count();
+        let circuits = all.iter().filter(|id| !id.is_mask()).count();
         assert_eq!(num_claims::<P>(), 2 + 2 * circuits + all.len() - circuits);
         for (expected, id) in InternalCircuitIndex::all::<P>().into_iter().enumerate() {
             assert_eq!(usize::from(id.circuit_index::<P>()), expected, "{id:?}");

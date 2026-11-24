@@ -15,7 +15,7 @@
 //! ## Category concatenation order
 //!
 //! `RegistryBuilder::finalize` documents its order — internal circuits,
-//! bonding, internal steps, application steps — and notes that it *must*
+//! mask, internal steps, application steps — and notes that it *must*
 //! match `InternalCircuitIndex::ALL` in `ragu_pcd`, which derives a
 //! `CircuitIndex` from position. The builder therefore has to group by
 //! category, not by call order. Registering the same multiset in two
@@ -126,8 +126,8 @@ fn report() {
 enum Category {
     /// `register_internal_circuit`: system circuits for the PCD construction.
     Internal,
-    /// `register_bonding`: a bonding polynomial, `s(X, 0) = 0`.
-    Bonding,
+    /// `register_mask`: a mask polynomial, `s(X, 0) = 0`.
+    Mask,
     /// `register_internal_step`: rerandomize, trivial, and friends.
     InternalStep,
     /// `register_circuit`: user-defined step circuits.
@@ -137,7 +137,7 @@ enum Category {
 #[derive(Arbitrary, Debug)]
 struct Registration {
     category: Category,
-    /// Bytes decoded into a `Program`. Ignored for `Category::Bonding`,
+    /// Bytes decoded into a `Program`. Ignored for `Category::Mask`,
     /// whose entry is a stage mask rather than a generated program.
     program: Vec<u8>,
 }
@@ -232,7 +232,7 @@ fn run<R: Rank>(input: &Input) {
     for category in [
         Category::Application,
         Category::InternalStep,
-        Category::Bonding,
+        Category::Mask,
         Category::Internal,
     ] {
         for (i, r) in regs.iter().enumerate() {
@@ -249,7 +249,7 @@ fn run<R: Rank>(input: &Input) {
             registry.tag(),
             permuted.tag(),
             "registration order changed the registry: `finalize` is documented to \
-             concatenate by category (internal, bonding, internal steps, application), \
+             concatenate by category (internal, mask, internal steps, application), \
              and `InternalCircuitIndex::ALL` in ragu_pcd derives indices from that order",
         );
     }
@@ -318,7 +318,7 @@ fn run<R: Rank>(input: &Input) {
 fn order_discriminating(regs: &[Registration], programs: &[Program]) -> bool {
     for category in [
         Category::Internal,
-        Category::Bonding,
+        Category::Mask,
         Category::InternalStep,
         Category::Application,
     ] {
@@ -363,18 +363,18 @@ fn build_borrowed<'a, R: Rank>(
             Category::Internal => builder.register_internal_circuit(circuit).ok()?,
             Category::InternalStep => builder.register_internal_step(circuit).ok()?,
             Category::Application => builder.register_circuit(circuit).ok()?,
-            // A bonding entry is a stage mask, not a generated program: the
+            // A mask entry is a stage mask, not a generated program: the
             // category exists in the concatenation order and has to be
             // occupied for the ordering oracle to mean anything, but its
             // contents are structural.
-            Category::Bonding => builder.register_mask(bonding_mask::<R>()?),
+            Category::Mask => builder.register_mask(sample_mask::<R>()?),
         };
     }
     builder.finalize().ok()
 }
 
-/// A bonding object to occupy `RegistryBuilder`'s bonding bucket.
-fn bonding_mask<'a, R: Rank>() -> Option<ragu_circuits::MaskObject<'a, Fp, R>> {
+/// A mask object to occupy `RegistryBuilder`'s mask bucket.
+fn sample_mask<'a, R: Rank>() -> Option<ragu_circuits::MaskObject<'a, Fp, R>> {
     use ragu_circuits::staging::StageExt;
     <stage::Mask2 as StageExt<Fp, R>>::mask().ok()
 }
@@ -422,7 +422,7 @@ fn fill<'a, R: Rank>(
     builder.finalize().ok()
 }
 
-/// A minimal two-wire stage, used only to mint a bonding object.
+/// A minimal two-wire stage, used only to mint a mask object.
 mod stage {
     use core::marker::PhantomData;
 
@@ -446,7 +446,7 @@ mod stage {
 
     /// Two independent witness wires. The smallest thing that is still a
     /// stage; its contents do not matter, only that it produces a valid
-    /// bonding polynomial. Generic over rank so the bonding category is
+    /// mask polynomial. Generic over rank so the mask category is
     /// populated at whichever rank the input chose.
     #[derive(Default)]
     pub struct Mask2;

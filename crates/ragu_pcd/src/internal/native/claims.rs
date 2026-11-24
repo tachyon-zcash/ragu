@@ -101,11 +101,8 @@ pub trait Processor<P: Profile, Rx, AppCircuitId> {
     ///
     /// Returns `Result<()>` because the evaluation context requires fallible
     /// fold operations.
-    fn bonding_claim(
-        &mut self,
-        id: InternalCircuitIndex,
-        rxs: impl Iterator<Item = Rx>,
-    ) -> Result<()>;
+    fn mask_claim(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>)
+    -> Result<()>;
 }
 
 impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
@@ -134,14 +131,14 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
         self.circuit_impl(circuit_id, rx);
     }
 
-    fn bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) -> Result<()> {
         let circuit_id = id.circuit_index::<P>();
-        let folded = self.fold_bonding(rxs);
-        self.bonding_impl(circuit_id, folded);
+        let folded = self.fold_mask(rxs);
+        self.mask_impl(circuit_id, folded);
         Ok(())
     }
 }
@@ -326,14 +323,14 @@ where
                 }
             }
 
-            // An extension bonding: a stage's mask over its rx, or a final
+            // An extension mask: a stage's mask over its rx, or a final
             // mask over its circuits' rxs
-            ExtensionBonding(j) => {
+            ExtensionMask(j) => {
                 let extension = crate::profile::native_extension::<P>();
                 if (j as usize) < extension.stages {
-                    processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
+                    processor.mask_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
-                    processor.bonding_claim(
+                    processor.mask_claim(
                         id,
                         extension
                             .final_mask(j as usize)
@@ -345,49 +342,48 @@ where
 
             // Native stages (aggregated across all proofs)
             PreambleStage => {
-                processor.bonding_claim(id, source.rx(Rx(Preamble)))?;
+                processor.mask_claim(id, source.rx(Rx(Preamble)))?;
             }
             InnerErrorStage => {
-                processor.bonding_claim(id, source.rx(Rx(InnerError)))?;
+                processor.mask_claim(id, source.rx(Rx(InnerError)))?;
             }
             OuterErrorStage => {
-                processor.bonding_claim(id, source.rx(Rx(OuterError)))?;
+                processor.mask_claim(id, source.rx(Rx(OuterError)))?;
             }
             QueryStage => {
-                processor.bonding_claim(id, source.rx(Rx(Query)))?;
+                processor.mask_claim(id, source.rx(Rx(Query)))?;
             }
             EvalStage => {
-                processor.bonding_claim(id, source.rx(Rx(Eval)))?;
+                processor.mask_claim(id, source.rx(Rx(Eval)))?;
             }
             PointsBindingStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsBinding)))?;
+                processor.mask_claim(id, source.rx(Rx(PointsBinding)))?;
             }
             PointsPreambleStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsPreamble)))?;
+                processor.mask_claim(id, source.rx(Rx(PointsPreamble)))?;
             }
             PointsRegistryWxStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsRegistryWx)))?;
+                processor.mask_claim(id, source.rx(Rx(PointsRegistryWx)))?;
             }
             PointsAbStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsAb)))?;
+                processor.mask_claim(id, source.rx(Rx(PointsAb)))?;
             }
             PointsFStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsF)))?;
+                processor.mask_claim(id, source.rx(Rx(PointsF)))?;
             }
             PointsWalkStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsWalk)))?;
+                processor.mask_claim(id, source.rx(Rx(PointsWalk)))?;
             }
 
-            // Final stage bonding claims
+            // Final stage mask claims
             InnerErrorFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(Collapse)))?;
+                processor.mask_claim(id, source.rx(Rx(Collapse)))?;
             }
             OuterErrorFinalStaged => {
-                processor
-                    .bonding_claim(id, source.rx(Rx(Hashes1)).chain(source.rx(Rx(Hashes2))))?;
+                processor.mask_claim(id, source.rx(Rx(Hashes1)).chain(source.rx(Rx(Hashes2))))?;
             }
             PreambleFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(BindBeta)))?;
+                processor.mask_claim(id, source.rx(Rx(BindBeta)))?;
             }
 
             // The application stage stays in its block, and the step's own
@@ -397,16 +393,16 @@ where
             // none.
             ApplicationStage => {
                 for (_, [_, stage]) in source.applications() {
-                    processor.bonding_claim(id, once(stage))?;
+                    processor.mask_claim(id, once(stage))?;
                 }
             }
             ApplicationFinalStaged => {
                 for (_, [own, _]) in source.applications() {
-                    processor.bonding_claim(id, once(own))?;
+                    processor.mask_claim(id, once(own))?;
                 }
             }
             EvalFinalStaged => {
-                processor.bonding_claim(
+                processor.mask_claim(
                     id,
                     source.rx(Rx(ComputeV)).chain(
                         (0..NUM_BINDERS as u32).flat_map(|k| source.rx(Rx(BindChallenges(k)))),
@@ -414,7 +410,7 @@ where
                 )?;
             }
             PointsWalkFinalStaged => {
-                processor.bonding_claim(
+                processor.mask_claim(
                     id,
                     source.rx(Rx(BindEndoscalar)).chain(
                         (0..NumSteps::<P>::len() as u32)

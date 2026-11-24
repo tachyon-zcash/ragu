@@ -47,11 +47,8 @@ pub trait Processor<P: Profile, Rx> {
     ///
     /// Returns `Result<()>` because the evaluation context requires fallible
     /// fold operations.
-    fn bonding_claim(
-        &mut self,
-        id: InternalCircuitIndex,
-        rxs: impl Iterator<Item = Rx>,
-    ) -> Result<()>;
+    fn mask_claim(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>)
+    -> Result<()>;
 }
 
 impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
@@ -72,14 +69,14 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
         self.circuit_impl(circuit_id, rx);
     }
 
-    fn bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) -> Result<()> {
         let circuit_id = id.circuit_index::<P>();
-        let folded = self.fold_bonding(rxs);
-        self.bonding_impl(circuit_id, folded);
+        let folded = self.fold_mask(rxs);
+        self.mask_impl(circuit_id, folded);
         Ok(())
     }
 }
@@ -176,14 +173,14 @@ where
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
-            // An extension bonding: a stage's mask over its rx, or a final
+            // An extension mask: a stage's mask over its rx, or a final
             // mask over its circuits' rxs.
-            ExtensionBonding(j) => {
+            ExtensionMask(j) => {
                 let extension = crate::profile::nested_extension::<P>();
                 if (j as usize) < extension.stages {
-                    processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
+                    processor.mask_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
-                    processor.bonding_claim(
+                    processor.mask_claim(
                         id,
                         extension
                             .final_mask(j as usize)
@@ -193,50 +190,50 @@ where
                 }
             }
             EndoscalarStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
             }
             PointsStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::PointsStage)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::PointsStage)))?;
             }
             PointsFinalStaged => {
                 let num_steps = super::NumSteps::<P>::len();
                 let final_rxs = (0..num_steps)
                     .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step as u32))));
-                processor.bonding_claim(id, final_rxs)?;
+                processor.mask_claim(id, final_rxs)?;
             }
             BridgePreamble => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgePreamble)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgePreamble)))?;
             }
             BridgeHash => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeHash)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeHash)))?;
             }
             BridgeSPrime => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeSPrime)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeSPrime)))?;
             }
             BridgeInnerError => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeInnerError)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeInnerError)))?;
             }
             BridgeOuterError => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeOuterError)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeOuterError)))?;
             }
             BridgeAB => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeAB)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeAB)))?;
             }
             BridgeQuery => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeQuery)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeQuery)))?;
             }
             BridgeF => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeF)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeF)))?;
             }
             BridgeEval => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeEval)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeEval)))?;
             }
             ChallengeStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::ChallengeStage)))?;
+                processor.mask_claim(id, source.rx(Rx(RxIndex::ChallengeStage)))?;
             }
             ChallengeFinalStaged => {
                 let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
-                processor.bonding_claim(id, final_rxs)?;
+                processor.mask_claim(id, final_rxs)?;
             }
         }
     }

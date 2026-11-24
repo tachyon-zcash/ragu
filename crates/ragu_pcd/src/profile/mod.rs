@@ -35,7 +35,7 @@
 //! their polynomials for every proof through its prover hooks, over the
 //! [`Context`](Profile::Context) the application holds. The internal
 //! modules place the circuits after the fuse's endoscaling steps and the
-//! bondings after the fuse's masks, fold a circuit's claim as a step's,
+//! masks after the fuse's masks, fold a circuit's claim as a step's,
 //! and the proof carries the polynomials. An extension may name a
 //! statement circuit, whose claim binds an internal step's output header
 //! to what the extension verified, and a binding circuit, whose claim
@@ -104,7 +104,7 @@ use crate::{
 /// the declaration says: circuit `k` loading exactly the stages
 /// [`Extension::circuits`] lists for it, then each stage's mask, then each
 /// final mask as the final mask of its circuits' last stage. Each hook
-/// fills the slot it is given, a [`CircuitSlot`] or a [`BondingSlot`],
+/// fills the slot it is given, a [`CircuitSlot`] or a [`MaskSlot`],
 /// which takes one entry of its kind and nothing else, and the circuit
 /// slot ends the circuit's public output with a zero, as the fuse's
 /// circuits end theirs (see [`CircuitSlot::register`]). Stage loading and
@@ -328,23 +328,23 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         ))
     }
 
-    /// Registers bonding `bonding` of the native extension, a stage's mask
-    /// or a final mask in [`Extension::bondings`] order, into `slot`.
+    /// Registers mask `mask` of the native extension, a stage's or a
+    /// final one in [`Extension::masks`] order, into `slot`.
     ///
     /// # Errors
     ///
-    /// The default declares no bonding and fails.
-    fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::CircuitField, R>,
+    /// The default declares no mask and fails.
+    fn register_native_mask<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::CircuitField, R>,
         params: &'params Base::Params,
     ) -> Result<Registered<'params, Base::CircuitField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        let _ = (bonding, slot, params);
+        let _ = (mask, slot, params);
         Err(Error::Initialization(
-            "the profile's native extension has no bondings".into(),
+            "the profile's native extension has no masks".into(),
         ))
     }
 
@@ -369,22 +369,22 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 
     /// The nested counterpart of
-    /// [`register_native_bonding`](Self::register_native_bonding).
+    /// [`register_native_mask`](Self::register_native_mask).
     ///
     /// # Errors
     ///
-    /// The default declares no bonding and fails.
-    fn register_nested_bonding<'params, Base, R: Rank>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::ScalarField, R>,
+    /// The default declares no mask and fails.
+    fn register_nested_mask<'params, Base, R: Rank>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::ScalarField, R>,
         params: &'params Base::Params,
     ) -> Result<Registered<'params, Base::ScalarField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        let _ = (bonding, slot, params);
+        let _ = (mask, slot, params);
         Err(Error::Initialization(
-            "the profile's nested extension has no bondings".into(),
+            "the profile's nested extension has no masks".into(),
         ))
     }
 
@@ -944,22 +944,22 @@ impl<'params, F: Field, R: Rank> CircuitSlot<'params, F, R> {
     }
 }
 
-/// A registry slot a profile's bonding hook fills with one bonding, a
-/// stage's mask or a final mask.
+/// A registry slot a profile's mask hook fills with one mask, a stage's
+/// or a final one.
 ///
 /// The hook receives the slot and returns it [`Registered`], which only
 /// [`register_mask`](Self::register_mask) and
 /// [`register_final_mask`](Self::register_final_mask) produce, so a hook
-/// registers one bonding and nothing else.
-pub struct BondingSlot<'params, F: Field, R: Rank>(RegistryBuilder<'params, F, R>);
+/// registers one mask and nothing else.
+pub struct MaskSlot<'params, F: Field, R: Rank>(RegistryBuilder<'params, F, R>);
 
-impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
-    /// The slot of `registry`'s next bonding.
+impl<'params, F: Field, R: Rank> MaskSlot<'params, F, R> {
+    /// The slot of `registry`'s next mask.
     pub(crate) fn new(registry: RegistryBuilder<'params, F, R>) -> Self {
-        BondingSlot(registry)
+        MaskSlot(registry)
     }
 
-    /// Registers stage `S`'s mask as the slot's bonding and records the
+    /// Registers stage `S`'s mask as the slot's mask and records the
     /// stage's gates for the registry to check against the profile's
     /// declaration ([`Extension::stages`]).
     ///
@@ -974,7 +974,7 @@ impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
     }
 
     /// Registers the final mask of the circuits whose last stage is `S` as
-    /// the slot's bonding and records the gate it starts at for the
+    /// the slot's mask and records the gate it starts at for the
     /// registry to check against the profile's declaration
     /// ([`Extension::final_masks`]).
     ///
@@ -1026,9 +1026,9 @@ pub(crate) enum Registration {
     /// order ([`CircuitSlot::register_staged`]).
     Staged(Vec<Range<usize>>),
     /// A stage's mask, over the stage's gates
-    /// ([`BondingSlot::register_mask`]).
+    /// ([`MaskSlot::register_mask`]).
     Mask(Range<usize>),
-    /// A final mask, from a gate on ([`BondingSlot::register_final_mask`]).
+    /// A final mask, from a gate on ([`MaskSlot::register_final_mask`]).
     FinalMask(usize),
 }
 
@@ -1082,7 +1082,7 @@ pub(crate) const NO_NESTED_EXTENSION_PROVER: &str = "the profile's nested extens
 pub(crate) struct ExtensionLengths {
     pub circuits: usize,
     pub stages: usize,
-    pub bondings: usize,
+    pub masks: usize,
 }
 
 /// The lengths of profile `P`'s nested extension when `nested` is set, and
@@ -1096,7 +1096,7 @@ pub(crate) fn extension_lengths<P: Profile>(nested: bool) -> ExtensionLengths {
     ExtensionLengths {
         circuits: extension.circuits.len(),
         stages: extension.stages,
-        bondings: extension.bondings(),
+        masks: extension.masks(),
     }
 }
 
@@ -1123,7 +1123,7 @@ impl<F: Field, R: Rank> Default for ExtensionRxs<F, R> {
 /// the fuse's own and the stages they load.
 ///
 /// The circuits are registered as internal circuits after the fuse's and
-/// the bondings, the stages' masks then the final masks, after the fuse's
+/// its masks, the stages' and then the final ones, after the fuse's
 /// masks, so that the registry's order stays circuits first. Each circuit
 /// and each stage has an rx polynomial in the proof; a final mask, the
 /// final mask of its circuits' last stage, binds the rx polynomials of the
@@ -1268,22 +1268,22 @@ impl Extension {
         self.circuits.len() + self.stages
     }
 
-    /// The bondings the extension registers: the stages' masks, then the
-    /// final masks.
-    pub fn bondings(&self) -> usize {
+    /// The masks the extension registers: the stages', then the final
+    /// masks.
+    pub fn masks(&self) -> usize {
         self.stages + self.final_masks.len()
     }
 
     /// The internal circuits the extension registers: its circuits and its
-    /// bondings.
+    /// masks.
     pub fn internal(&self) -> usize {
-        self.circuits.len() + self.bondings()
+        self.circuits.len() + self.masks()
     }
 
-    /// The circuits a final mask binds, for `bonding` an index among the
-    /// bondings past the stages' masks.
-    pub fn final_mask(&self, bonding: usize) -> &[u32] {
-        &self.final_masks[bonding - self.stages]
+    /// The circuits a final mask binds, for `mask` an index among the
+    /// masks past the stages' own.
+    pub fn final_mask(&self, mask: usize) -> &[u32] {
+        &self.final_masks[mask - self.stages]
     }
 
     /// Whether the declaration is well formed: every index the circuits,
@@ -1353,13 +1353,13 @@ impl Extension {
     }
 
     /// Checks what the profile's hooks registered for this extension
-    /// against the declaration: bonding `j` below [`stages`](Self::stages)
+    /// against the declaration: mask `j` below [`stages`](Self::stages)
     /// is stage `j`'s mask and every later one a final mask; a circuit
     /// declared to load stages was registered as a staged circuit whose
     /// stages are the declared ones in order, each over the gates its mask
     /// covers, under the final mask that starts where its last stage ends;
     /// and a circuit declared to load none loads none. `circuits` and
-    /// `bondings` are the registrations in the declaration's order; `side`
+    /// `masks` are the registrations in the declaration's order; `side`
     /// names the extension in the error.
     ///
     /// What a circuit does with its stages, and whether the statement and
@@ -1373,35 +1373,35 @@ impl Extension {
         &self,
         side: &str,
         circuits: &[Registration],
-        bondings: &[Registration],
+        masks: &[Registration],
     ) -> Result<()> {
         let refuse = |what: alloc::string::String| {
             Err(Error::Initialization(
                 alloc::format!("the profile's {side} extension {what}").into(),
             ))
         };
-        if circuits.len() != self.circuits.len() || bondings.len() != self.bondings() {
+        if circuits.len() != self.circuits.len() || masks.len() != self.masks() {
             return refuse(alloc::format!(
-                "registers {} circuits and {} bondings but declares {} and {}",
+                "registers {} circuits and {} masks but declares {} and {}",
                 circuits.len(),
-                bondings.len(),
+                masks.len(),
                 self.circuits.len(),
-                self.bondings()
+                self.masks()
             ));
         }
-        let mut masks = Vec::with_capacity(self.stages);
-        for (j, registration) in bondings.iter().enumerate() {
+        let mut stage_masks = Vec::with_capacity(self.stages);
+        for (j, registration) in masks.iter().enumerate() {
             match registration {
-                Registration::Mask(gates) if j < self.stages => masks.push(gates.clone()),
+                Registration::Mask(gates) if j < self.stages => stage_masks.push(gates.clone()),
                 Registration::FinalMask(_) if j >= self.stages => {}
                 _ if j < self.stages => {
                     return refuse(alloc::format!(
-                        "registers bonding {j} as something other than stage {j}'s mask"
+                        "registers mask {j} as something other than stage {j}'s mask"
                     ));
                 }
                 _ => {
                     return refuse(alloc::format!(
-                        "registers bonding {j} as something other than a final mask"
+                        "registers mask {j} as something other than a final mask"
                     ));
                 }
             }
@@ -1415,11 +1415,11 @@ impl Extension {
                         "declares that circuit {k} loads stages but registers it as one that loads none"
                     ));
                 }
-                _ => return refuse(alloc::format!("registers circuit {k} as a bonding")),
+                _ => return refuse(alloc::format!("registers circuit {k} as a mask")),
             };
             let mut expected = Vec::with_capacity(declared.len());
             for &stage in declared {
-                match masks.get(stage as usize) {
+                match stage_masks.get(stage as usize) {
                     Some(gates) => expected.push(gates.clone()),
                     None => {
                         return refuse(alloc::format!(
@@ -1443,7 +1443,7 @@ impl Extension {
             else {
                 return refuse(alloc::format!("names circuit {k} in no final mask"));
             };
-            if bondings[self.stages + mask] != Registration::FinalMask(last.end) {
+            if masks[self.stages + mask] != Registration::FinalMask(last.end) {
                 return refuse(alloc::format!(
                     "registers circuit {k}'s final mask elsewhere than at gate {}, where its last stage ends",
                     last.end

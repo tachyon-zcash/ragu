@@ -889,8 +889,7 @@ where
         let kinds: Vec<Kind> = schedule.claims.iter().map(|claim| claim.kind).collect();
         let mut restrictions = Vec::new();
         for (claim, slot) in schedule.claims.iter().zip(&regions.restrictions) {
-            if let (Kind::Circuit(circuit) | Kind::Bonding(circuit), Some(slot)) =
-                (claim.kind, slot)
+            if let (Kind::Circuit(circuit) | Kind::Mask(circuit), Some(slot)) = (claim.kind, slot)
                 && !restrictions.iter().any(|(listed, _)| *listed == circuit)
             {
                 restrictions.push((circuit, self.work(*slot)));

@@ -138,7 +138,7 @@ fn only_raw_and_circuit_claims_take_targets() {
     let circuit = CircuitIndex::new(0);
     let kinds = [
         Kind::Raw,
-        Kind::Bonding(circuit),
+        Kind::Mask(circuit),
         Kind::Circuit(circuit),
         Kind::Masked(0),
         Kind::Circuit(circuit),

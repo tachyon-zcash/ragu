@@ -183,7 +183,7 @@ mod registry {
         Ok(())
     }
 
-    fn bonding_slots() -> Vec<CircuitIndex> {
+    fn mask_slots() -> Vec<CircuitIndex> {
         use InternalCircuitIndex::*;
 
         [
@@ -227,7 +227,7 @@ mod registry {
         }
 
         let registry = &app.native_registry;
-        let bonding = bonding_slots();
+        let mask = mask_slots();
         let domain_size = 1usize << registry.log2_domain();
         let unassigned: Vec<_> = (registry.num_circuits()..domain_size)
             .map(CircuitIndex::new)
@@ -236,7 +236,7 @@ mod registry {
             !unassigned.is_empty(),
             "the fixture needs unassigned domain points"
         );
-        for &id in bonding.iter().chain(&unassigned) {
+        for &id in mask.iter().chain(&unassigned) {
             assert!(registry.circuit_in_domain(id));
             assert_eq!(registry.wxy(id.omega_j(), Fp::from(3), Fp::ZERO), Fp::ZERO);
         }
@@ -244,9 +244,8 @@ mod registry {
         let replacement = other.proof().circuit_id();
         let cases = core::iter::once(("other application".into(), replacement))
             .chain(
-                bonding
-                    .iter()
-                    .map(|&id| (format!("bonding {}", usize::from(id)), id)),
+                mask.iter()
+                    .map(|&id| (format!("mask {}", usize::from(id)), id)),
             )
             .chain(
                 unassigned
@@ -266,7 +265,7 @@ mod registry {
         // the generated selector explores the complete classes across cases.
         for id in [
             replacement,
-            bonding[selector % bonding.len()],
+            mask[selector % mask.len()],
             unassigned[selector % unassigned.len()],
         ] {
             let (mut proof, data) = child.clone().into_parts();
@@ -299,7 +298,7 @@ mod registry {
 
         #[test]
         #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
-        fn circuit_slots_reject_application_bonding_and_unassigned_substitutions(
+        fn circuit_slots_reject_application_mask_and_unassigned_substitutions(
             inputs in support::inputs(),
             selector in any::<usize>(),
         ) {

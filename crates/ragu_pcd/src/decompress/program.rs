@@ -1039,9 +1039,9 @@ impl Planner {
         });
     }
 
-    fn bonding(&mut self, circuit: CircuitIndex, rxs: impl Iterator<Item = usize>) {
+    fn mask(&mut self, circuit: CircuitIndex, rxs: impl Iterator<Item = usize>) {
         self.claims.push(ClaimPlan {
-            kind: Kind::Bonding(circuit),
+            kind: Kind::Mask(circuit),
             groups: rxs.map(|rx| vec![rx]).collect(),
             b: None,
         });
@@ -1083,12 +1083,12 @@ impl native::claims::Processor<Standard, usize, CircuitIndex> for Planner {
         self.circuit(id.circuit_index::<Standard>(), rxs);
     }
 
-    fn bonding_claim(
+    fn mask_claim(
         &mut self,
         id: native::InternalCircuitIndex,
         rxs: impl Iterator<Item = usize>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<Standard>(), rxs);
+        self.mask(id.circuit_index::<Standard>(), rxs);
         Ok(())
     }
 }
@@ -1106,12 +1106,12 @@ impl nested::claims::Processor<Standard, usize> for Planner {
         self.circuit(id.circuit_index::<Standard>(), rxs);
     }
 
-    fn bonding_claim(
+    fn mask_claim(
         &mut self,
         id: nested::InternalCircuitIndex,
         rxs: impl Iterator<Item = usize>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<Standard>(), rxs);
+        self.mask(id.circuit_index::<Standard>(), rxs);
         Ok(())
     }
 }
@@ -1713,7 +1713,7 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
         .scalar_claims
         .iter()
         .map(|claim| match claim.kind {
-            Kind::Circuit(circuit) | Kind::Bonding(circuit) => {
+            Kind::Circuit(circuit) | Kind::Mask(circuit) => {
                 Some(match named.iter().find(|(listed, _)| *listed == circuit) {
                     Some(&(_, slot)) => slot,
                     None => {

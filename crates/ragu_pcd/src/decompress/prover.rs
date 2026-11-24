@@ -964,7 +964,7 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
     // Each distinct circuit in claim order, evaluated together.
     let mut circuits: Vec<CircuitIndex> = Vec::new();
     for kind in &kinds {
-        if let Kind::Circuit(circuit) | Kind::Bonding(circuit) = *kind
+        if let Kind::Circuit(circuit) | Kind::Mask(circuit) = *kind
             && !circuits.contains(&circuit)
         {
             circuits.push(circuit);
@@ -1396,7 +1396,7 @@ fn supply<F: Field, P, Q>(
         work.points[*slot] = *run;
     }
     for (claim, slot) in schedule.claims.iter().zip(&regions.restrictions) {
-        if let (Kind::Circuit(circuit) | Kind::Bonding(circuit), Some(slot)) = (claim.kind, slot) {
+        if let (Kind::Circuit(circuit) | Kind::Mask(circuit), Some(slot)) = (claim.kind, slot) {
             let value = own
                 .restrictions
                 .iter()

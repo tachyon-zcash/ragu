@@ -69,7 +69,7 @@
 //! ```
 //!
 //! where `s_mask(y)` is `Registry::circuit_y(0, y)` for a registry built
-//! from a single `StageType::mask()` bonding object, minus the same
+//! from a single `StageType::mask()` mask object, minus the same
 //! `tag * y^{4n-1}` tag term Invariant B subtracts.
 //!
 //! Invariant A catches sum-preserving bugs that Invariant B misses — e.g.,
@@ -440,7 +440,7 @@ static SINGLE4W_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
 static CHAIN_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
     LazyLock::new(|| build_registry(MultiStage::<Fp, TestRank, _>::new(Chain2x4)));
 
-/// Build a registry containing just one stage's `mask()` as a bonding
+/// Build a registry containing just one stage's `mask()` as a mask
 /// entry. The resulting registry's `circuit_y(0, y)` is the stage's full
 /// mask polynomial (the framework's `RegistryAt::y` adds the global term
 /// for masking circuits, recovering it from the `-notch`-only `sy()` that

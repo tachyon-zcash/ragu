@@ -447,7 +447,7 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Source for EvaluationSource<'a, 'dr, D
 
 /// Builds the `ax` and `bx` vectors the two-layer fold reduces to
 /// $a_n(x_n z_n)$ and $b_n(x_n)$: for a circuit claim `ax` takes the summed
-/// $r_i(x_n z_n)$ and `bx` adds $s_y$ and $t(x_n z_n)$; for a bonding claim
+/// $r_i(x_n z_n)$ and `bx` adds $s_y$ and $t(x_n z_n)$; for a mask claim
 /// `ax` takes the $z_n$-fold of its $r_i(x_n z_n)$ and `bx` is $s_y$ alone; a
 /// raw claim contributes its own evaluations.
 struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>, P: Profile> {
@@ -506,7 +506,7 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>>
         self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
-    fn bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,

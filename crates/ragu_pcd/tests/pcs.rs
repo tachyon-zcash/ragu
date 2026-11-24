@@ -496,15 +496,15 @@ mod folding {
         let (mut nested_claims, children) = child_claims(app, left, right, y, z)?;
 
         // Two raw claims, one circuit claim per endoscaling step and per
-        // instance circuit per child, and one bonding claim per bonding kind
+        // instance circuit per child, and one mask claim per mask
         // folded across both children.
         let steps = crate::internal::endoscalar::num_steps(
             nested::ENDOSCALINGS_PER_STEP,
             nested::NUM_ENDOSCALING_POINTS,
         );
         let circuits = steps + nested::NUM_INSTANCE_CIRCUITS;
-        let bonding_kinds = nested::InternalCircuitIndex::NUM - circuits;
-        assert_eq!(nested_claims.a.len(), 2 + 2 * circuits + bonding_kinds);
+        let mask_kinds = nested::InternalCircuitIndex::NUM - circuits;
+        assert_eq!(nested_claims.a.len(), 2 + 2 * circuits + mask_kinds);
 
         // 1. Every nested claim of the children holds at the derived challenges.
         for (i, (ky, (a, b))) in nested::claims::ky_values::<crate::profile::Standard, _>(&children)

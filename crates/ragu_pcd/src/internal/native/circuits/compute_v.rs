@@ -602,7 +602,7 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
         self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
-    fn bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,

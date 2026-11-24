@@ -65,8 +65,8 @@ use crate::{
     header::{NUM_INTERNAL_SUFFIXES, Suffix},
     ipa::IpaCycle,
     profile::{
-        AGGREGATOR_NAME, Binding, BondingSlot, BuiltIn, CircuitSlot, Extension, ExtensionRxs,
-        Profile, ProfiledCycle, Registered, Standard,
+        AGGREGATOR_NAME, Binding, BuiltIn, CircuitSlot, Extension, ExtensionRxs, MaskSlot, Profile,
+        ProfiledCycle, Registered, Standard,
         online::{Layout, SourceRegistry, circuit::Witness, mesh::Mesh, stages as online_stages},
     },
 };
@@ -411,16 +411,16 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         )
     }
 
-    fn register_native_bonding<'params, Base, R: Rank, const H: usize>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::CircuitField, R>,
+    fn register_native_mask<'params, Base, R: Rank, const H: usize>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::CircuitField, R>,
         _: &'params Base::Params,
     ) -> Result<Registered<'params, Base::CircuitField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(H)?;
-        register_native_bonding::<Base, WalletRank, R, H>(bonding, slot)
+        register_native_mask::<Base, WalletRank, R, H>(mask, slot)
     }
 
     fn register_nested_circuit<'params, Base, R: Rank>(
@@ -440,16 +440,16 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         )
     }
 
-    fn register_nested_bonding<'params, Base, R: Rank>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::ScalarField, R>,
+    fn register_nested_mask<'params, Base, R: Rank>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::ScalarField, R>,
         _: &'params Base::Params,
     ) -> Result<Registered<'params, Base::ScalarField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(HEADER_SIZE)?;
-        register_nested_bonding::<Base, WalletRank, R, HEADER_SIZE>(bonding, slot)
+        register_nested_mask::<Base, WalletRank, R, HEADER_SIZE>(mask, slot)
     }
 
     fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
@@ -927,15 +927,15 @@ where
     }
 }
 
-/// Registers bonding `bonding` of side `S`, by `indices`: the stages'
+/// Registers mask `mask` of side `S`, by `indices`: the stages'
 /// masks in stage order, then the final mask of the chunks whose last
 /// stage is the work stage, on a side with a transcript stage of those
 /// whose last is the transcript stage, of those whose last is the digits
 /// stage, and on a side with a transcript stage of the statement circuit,
 /// whose last is the instance stage.
-fn register_bonding<'params, C, S, K, R, const HEADER_SIZE: usize>(
-    bonding: usize,
-    slot: BondingSlot<'params, S::F, R>,
+fn register_mask<'params, C, S, K, R, const HEADER_SIZE: usize>(
+    mask: usize,
+    slot: MaskSlot<'params, S::F, R>,
     indices: Indices,
 ) -> Result<Registered<'params, S::F, R>>
 where
@@ -949,13 +949,13 @@ where
     type Work<C, S, K, R, const H: usize> = WorkStage<C, S, K, R, H>;
     type Transcript<C, S, K, R, const H: usize> = TranscriptStage<C, S, K, R, H>;
     type Digits<C, S, K, R, const H: usize> = DigitsStage<C, S, K, R, H>;
-    if bonding < indices.front {
-        return S::register_mask(bonding, slot);
+    if mask < indices.front {
+        return S::register_mask(mask, slot);
     }
     let with_transcript = indices.with_transcript;
     let stages = indices.stages() as u32;
     let digits_final = stages + 1 + with_transcript as u32;
-    match bonding as u32 {
+    match mask as u32 {
         index if index == indices.lifts() => slot.register_mask::<Lifts<C, S, K, R, HEADER_SIZE>>(),
         index if index == indices.work() => slot.register_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
         index if with_transcript && index == indices.transcript() => {
@@ -974,7 +974,7 @@ where
         index if with_transcript && index == digits_final + 1 => {
             slot.register_final_mask::<Instance<C, S, K, R, HEADER_SIZE>>()
         }
-        _ => Err(Error::Initialization("no such bonding".into())),
+        _ => Err(Error::Initialization("no such mask".into())),
     }
 }
 
@@ -1008,17 +1008,17 @@ where
     register_circuit::<C, Native, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
 }
 
-/// Registers native bonding `bonding`; see [`native_layout`] for the layout.
-pub(crate) fn register_native_bonding<'params, C, K, R, const HEADER_SIZE: usize>(
-    bonding: usize,
-    slot: BondingSlot<'params, C::CircuitField, R>,
+/// Registers native mask `mask`; see [`native_layout`] for the layout.
+pub(crate) fn register_native_mask<'params, C, K, R, const HEADER_SIZE: usize>(
+    mask: usize,
+    slot: MaskSlot<'params, C::CircuitField, R>,
 ) -> Result<Registered<'params, C::CircuitField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
     R: Rank,
 {
-    register_bonding::<C, Native, K, R, HEADER_SIZE>(bonding, slot, Indices::native())
+    register_mask::<C, Native, K, R, HEADER_SIZE>(mask, slot, Indices::native())
 }
 
 /// Registers nested circuit `circuit` of a side declared at `pinned`
@@ -1044,21 +1044,17 @@ where
     register_circuit::<C, Nested, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
 }
 
-/// Registers nested bonding `bonding`; see [`nested_layout`] for the layout.
-pub(crate) fn register_nested_bonding<'params, C, K, R, const HEADER_SIZE: usize>(
-    bonding: usize,
-    slot: BondingSlot<'params, C::ScalarField, R>,
+/// Registers nested mask `mask`; see [`nested_layout`] for the layout.
+pub(crate) fn register_nested_mask<'params, C, K, R, const HEADER_SIZE: usize>(
+    mask: usize,
+    slot: MaskSlot<'params, C::ScalarField, R>,
 ) -> Result<Registered<'params, C::ScalarField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Runs,
     R: Rank,
 {
-    register_bonding::<C, Nested, K, R, HEADER_SIZE>(
-        bonding,
-        slot,
-        Indices::nested(num_runs::<K>()),
-    )
+    register_mask::<C, Nested, K, R, HEADER_SIZE>(mask, slot, Indices::nested(num_runs::<K>()))
 }
 
 #[cfg(test)]

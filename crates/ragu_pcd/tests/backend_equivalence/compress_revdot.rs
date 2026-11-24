@@ -33,7 +33,7 @@ fn batched_fold_commitments_match_individual_sums() {
                 kind: match i % 4 {
                     0 => Kind::Raw,
                     1 => Kind::Circuit(CircuitIndex::new(0)),
-                    2 => Kind::Bonding(CircuitIndex::new(1)),
+                    2 => Kind::Mask(CircuitIndex::new(1)),
                     _ => Kind::Masked(0),
                 },
                 a: vec![

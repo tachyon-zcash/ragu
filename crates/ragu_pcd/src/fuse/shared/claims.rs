@@ -306,7 +306,7 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
         self.circuit_impl(id.circuit_index::<P>(), TrackedPoly::sum(rxs));
     }
 
-    fn bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
@@ -315,7 +315,7 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
             rxs.map(|rx| TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key)),
             self.z,
         );
-        self.bonding_impl(id.circuit_index::<P>(), folded);
+        self.mask_impl(id.circuit_index::<P>(), folded);
         Ok(())
     }
 }

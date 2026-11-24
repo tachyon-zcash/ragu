@@ -164,11 +164,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // The proof's circuit_id selects which wiring polynomial the proof's
         // own application claim was folded against, and every domain point
         // carries one, so an in-domain id is always well defined. It need not
-        // name a circuit: the domain also holds registered bonding polynomials
+        // name a circuit: the domain also holds registered mask polynomials
         // and, at unassigned points, the zero polynomial, which is itself a
-        // bonding polynomial. Letting the prover choose freely among them is
+        // mask polynomial. Letting the prover choose freely among them is
         // safe because the fold treats the claim as a circuit's and so fixes
-        // k_0 = 1, which no bonding polynomial (s(X, 0) = 0) can satisfy. The
+        // k_0 = 1, which no mask polynomial (s(X, 0) = 0) can satisfy. The
         // proof's `hashes_1` holds its id to the registry domain in-circuit;
         // this check keeps the id the decider reads (for that circuit's k(y)
         // and the mesh claim's m(id, x, y)) inside the same domain.

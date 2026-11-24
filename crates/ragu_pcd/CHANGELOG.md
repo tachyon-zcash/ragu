@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decompression is integrated. `finalize` checks a profile's declaration
   against what its hooks register: a staged circuit through
   `CircuitSlot::register_staged` and a stage's masks through
-  `BondingSlot::register_mask` and `register_final_mask`; a bonding of another
+  `MaskSlot::register_mask` and `register_final_mask`; a mask of another
   shape cannot be registered.
 - Added optional `baked-aggregator` parameters through
   `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank
@@ -149,6 +149,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   158. Both registry tags change, so proofs and compressed proofs from
   earlier versions do not verify. The proof and compressed-proof schemas are
   unchanged.
+- Renamed what the profile API called a bonding to a mask, since a stage
+  mask and a final mask are the only kinds left: `BondingSlot` is `MaskSlot`,
+  `Profile::register_native_bonding` and `register_nested_bonding` are
+  `register_native_mask` and `register_nested_mask`, and
+  `Extension::bondings` is `Extension::masks`.
 - For the Standard profile, the largest `HEADER_SIZE` the wallet rank fits
   drops from 201 to 195 elements, since every circuit holds one gate fewer
   and the stages the challenge binders load carry the randomizers' values.

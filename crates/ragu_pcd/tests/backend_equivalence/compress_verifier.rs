@@ -30,10 +30,10 @@ fn check_public_parts<F: Field, B: Backend>() {
         Kind::Raw,
         Kind::Circuit(CircuitIndex::new(0)),
         Kind::Masked(0),
-        Kind::Bonding(CircuitIndex::new(1)),
+        Kind::Mask(CircuitIndex::new(1)),
         Kind::Circuit(CircuitIndex::new(2)),
         Kind::Masked(1),
-        Kind::Bonding(CircuitIndex::new(2)),
+        Kind::Mask(CircuitIndex::new(2)),
         Kind::Raw,
     ]
     .repeat(4);
@@ -55,7 +55,7 @@ fn check_public_parts<F: Field, B: Backend>() {
             .map(|kind| match *kind {
                 Kind::Raw => (F::ZERO, F::ZERO),
                 Kind::Circuit(circuit) => (F::ZERO, restriction(circuit) + TestRank::tz(z).eval(r)),
-                Kind::Bonding(circuit) => (F::ZERO, restriction(circuit)),
+                Kind::Mask(circuit) => (F::ZERO, restriction(circuit)),
                 Kind::Masked(i) => (
                     -masked[i].expected::<TestRank>().eval(r),
                     masked[i].mask::<TestRank>().eval(r),
@@ -84,7 +84,7 @@ fn check_public_parts<F: Field, B: Backend>() {
             registry_calls.load(Ordering::Relaxed),
             kinds[..len]
                 .iter()
-                .filter(|kind| matches!(kind, Kind::Circuit(_) | Kind::Bonding(_)))
+                .filter(|kind| matches!(kind, Kind::Circuit(_) | Kind::Mask(_)))
                 .count()
         );
     }
@@ -150,7 +150,7 @@ fn selected_registry_queries_match_individual_evaluations() {
             Kind::Circuit(CircuitIndex::new(8)),
             Kind::Raw,
             Kind::Circuit(CircuitIndex::new(0)),
-            Kind::Bonding(CircuitIndex::new(4)),
+            Kind::Mask(CircuitIndex::new(4)),
             Kind::Circuit(CircuitIndex::new(0)),
             Kind::Circuit(CircuitIndex::new(7)),
         ];
@@ -168,7 +168,7 @@ fn selected_registry_queries_match_individual_evaluations() {
                         F::ZERO,
                         registry.wxy(circuit.omega_j(), r, y) + TestRank::tz(z).eval(r),
                     ),
-                    Kind::Bonding(circuit) => (F::ZERO, registry.wxy(circuit.omega_j(), r, y)),
+                    Kind::Mask(circuit) => (F::ZERO, registry.wxy(circuit.omega_j(), r, y)),
                     _ => (F::ZERO, F::ZERO),
                 })
                 .collect();

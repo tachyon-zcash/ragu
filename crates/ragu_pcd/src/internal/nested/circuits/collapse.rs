@@ -40,7 +40,7 @@
 //! step; for a profile whose nested extension has a binding circuit, the
 //! $k(y_n)$ of the child's native extension stages it names, read off the
 //! same stage's copies (see [`Binding`](crate::profile::Binding)); zero
-//! for each bonding claim. The current instance's $y_n$ is equated with
+//! for each mask claim. The current instance's $y_n$ is equated with
 //! that stage value here.
 //!
 //! ## The walked points

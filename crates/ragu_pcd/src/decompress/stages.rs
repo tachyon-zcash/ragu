@@ -102,7 +102,7 @@ use crate::{
     compress::{Messages, instance::OPENED, revdot::fold::Derived},
     internal::nested,
     ipa::IpaCycle,
-    profile::{BondingSlot, Profile, ProfiledCycle, Registered, Standard},
+    profile::{MaskSlot, Profile, ProfiledCycle, Registered, Standard},
 };
 
 /// The nested commitments the instance lists, then the nested registry
@@ -1031,7 +1031,7 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     /// Fails past the last stage.
     fn register_mask<'params>(
         index: usize,
-        slot: BondingSlot<'params, Self::F, R>,
+        slot: MaskSlot<'params, Self::F, R>,
     ) -> Result<Registered<'params, Self::F, R>>;
 
     /// Stage `index`'s mask.
@@ -1115,7 +1115,7 @@ where
 
     fn register_mask<'params>(
         index: usize,
-        slot: BondingSlot<'params, Self::F, R>,
+        slot: MaskSlot<'params, Self::F, R>,
     ) -> Result<Registered<'params, Self::F, R>> {
         match index {
             0 => slot.register_mask::<InstanceStage<C, Native, K, R, HEADER_SIZE>>(),
@@ -1199,7 +1199,7 @@ where
 
     fn register_mask<'params>(
         index: usize,
-        slot: BondingSlot<'params, Self::F, R>,
+        slot: MaskSlot<'params, Self::F, R>,
     ) -> Result<Registered<'params, Self::F, R>> {
         if index < num_runs::<K>() {
             K::Last::register_mask::<C, K, R>(index, slot)
@@ -1446,7 +1446,7 @@ pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
     /// Registers run `index`'s stage's mask, for `index` at most this run's.
     fn register_mask<'params, C, K, R>(
         index: usize,
-        slot: BondingSlot<'params, C::ScalarField, R>,
+        slot: MaskSlot<'params, C::ScalarField, R>,
     ) -> Result<Registered<'params, C::ScalarField, R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -1570,7 +1570,7 @@ impl RunIndex for Z {
 
     fn register_mask<'params, C, K, R>(
         index: usize,
-        slot: BondingSlot<'params, C::ScalarField, R>,
+        slot: MaskSlot<'params, C::ScalarField, R>,
     ) -> Result<Registered<'params, C::ScalarField, R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -1686,7 +1686,7 @@ impl<N: RunIndex> RunIndex for Succ<N> {
 
     fn register_mask<'params, C, K, R>(
         index: usize,
-        slot: BondingSlot<'params, C::ScalarField, R>,
+        slot: MaskSlot<'params, C::ScalarField, R>,
     ) -> Result<Registered<'params, C::ScalarField, R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
