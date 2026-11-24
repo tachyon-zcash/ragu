@@ -136,8 +136,8 @@ The bootstrap statement is fixed by the application's configuration. An
 application can store the proof returned by `Application::bootstrap_proof`
 and supply it to later applications of the same configuration with
 `with_bootstrap`; their finalization then skips the fuse. By default,
-`finalize` uses a fixed `StdRng` seed. The same build and configuration reproduce
-the bootstrap proof, but `StdRng` may vary across versions or platforms. The
+`finalize` uses fixed `ChaCha12Rng` seeds, so the same Ragu version,
+dependency versions and configuration reproduce the bootstrap proof. The
 supplied proof is checked for shape and for coming from the bootstrap step,
 not for validity: a proof from another configuration is installed, and every
 proof built on it then fails verification, so a stored proof must be keyed by

@@ -79,7 +79,7 @@ ragu_backend = { path = "../ragu_backend", version = "0.0.0", default-features =
 maybe-rayon = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
-rand = { workspace = true }
+rand = { workspace = true, features = ["chacha"] }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
 serde = { version = "1", default-features = false, features = ["alloc"], optional = true }
 

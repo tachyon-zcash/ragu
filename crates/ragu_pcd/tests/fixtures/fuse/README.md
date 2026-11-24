@@ -58,9 +58,9 @@ snapshots; the retained parent fixtures pin their effect on the proof.
 
 The `bootstrap` scenario re-proves the bootstrap proof under the fixture
 randomness and installs it in the application, since `finalize` proves it
-under `StdRng`, whose output `Cargo.lock` pins but `rand`'s API does not, and
-every seed fuses it as both children. A rerandomization is two fuses, each
-against the bootstrap proof, and the `rerandomize` tape covers both.
+under a seed of its own, outside the fixture tape, and every seed fuses it as
+both children. A rerandomization is two fuses, each against the bootstrap
+proof, and the `rerandomize` tape covers both.
 
 ## Honest files
 
