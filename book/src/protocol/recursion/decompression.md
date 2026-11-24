@@ -1,29 +1,36 @@
 # Decompression
 
-Decompression takes a [compressed wallet proof](compression.md) and produces
-an aggregator proof of the same output header and online commitments. The
-aggregator runs the wallet verifier's equations inside a new
-[Fuse proof](../iop.md), which can then be used as a child.
+Decompression takes a [compressed rank-13 wallet proof](compression.md) and
+produces a rank-15 aggregator [Fuse proof](../iop.md) with the same output
+header and online commitments. The result can be used as a child in another
+aggregator Fuse.
 
 ## Preliminaries {#decompression-preliminaries}
 
-- The wallet application supplies the two source registries and the header
-  types. The implementation uses the wallet rank $k=13$ of
-  [Compression](compression.md#compression-preliminaries) and the aggregator
-  rank $15$. Both applications use the same header size and share one
-  parameter instance. The aggregator supports sizes from 1 through 195
-  field elements, including the suffix. The Standard wallet's
+- The wallet and aggregator have separate registries and can register
+  different application steps. Step indices are local to each application.
+  Ragu registers the internal `Decompress` step and its circuits in the
+  aggregator. These circuits verify the incoming proof using the native and
+  nested registries of the wallet application supplied to `Decompression::new`.
+  The resulting proof uses the aggregator's registries.
+- Both applications use the same header size and share one parameter
+  instance. The aggregator supports sizes from 1 through 195 field elements,
+  including the suffix. The Standard wallet's
   [gate budget](../../guide/configuration.md#header-size-trade-offs)
   limits a wallet and aggregator pair to at most 194. On each curve the
   wallet's generators are a prefix of the aggregator's.
-- The aggregator registers the wallet's exact header type for each
-  supported output. For an output with online polynomial slots, the prover
-  supplies their coefficients to `Application::decompress_with_polynomials`.
+- Registering a step records the header type and suffix of its `Left`,
+  `Right`, and `Output`. For each imported application-defined header, one
+  of the aggregator's registered steps must declare the same type and suffix.
+  Setup requires this declaration for all padding-only application-defined
+  wallet output headers. The decompression circuit excludes the suffixes of
+  omitted wallet output headers that declare online polynomials.
+- For an output with online polynomial slots, the prover supplies their
+  coefficients to `Application::decompress_with_polynomials`.
   `Application::decompress` supplies the padding polynomials for padding-only
   outputs.
   The decompression proof binds both output commitments to the wallet
-  proof's commitments. Unregistered polynomial-bearing output suffixes are
-  excluded in the decompression circuit.
+  proof's commitments.
 - The aggregator divides the wallet verifier's arithmetic into *chunks* and
   packs them into internal circuits at the aggregator rank. Native chunks run
   over the

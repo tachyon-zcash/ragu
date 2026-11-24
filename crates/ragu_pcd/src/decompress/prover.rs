@@ -155,15 +155,25 @@ where
     /// Prepares the canonical decompression of `wallet`'s proofs: its
     /// bootstrap proof, compressed and run through both sides' chunks.
     ///
-    /// `wallet` must be the network's wallet application, built from the
-    /// same steps as every wallet's and finalized over the aggregator's own
-    /// parameters, whose tables reach rank `R`, such as
-    /// `baked_aggregator()`: their prefix is the Standard tables, so its
-    /// proofs are those of a wallet over `baked()`. `finalize_with` holds
-    /// the aggregator's parameters and header types to its and refuses
-    /// source registries other than the wallet's. The online meshes hold
-    /// the decompression's registry evaluations to those registries. The
-    /// caller must still select the network's intended wallet application.
+    /// The wallet and aggregator have separate registries and can register
+    /// different application steps. Step indices are local to each application.
+    /// Pass the network's wallet application as `wallet`, with the native
+    /// and nested registries used to produce incoming wallet proofs. Ragu
+    /// registers the internal `Decompress` step and its circuits in the
+    /// aggregator. The [`Aggregator`] profile verifies rank-13 wallet
+    /// proofs in rank-15 circuits and produces a proof under the
+    /// aggregator's registries.
+    ///
+    /// Finalize the wallet over the aggregator's parameters, whose tables
+    /// reach rank `R`. For example, the prefix of `baked_aggregator()` is
+    /// the Standard table used by `baked()`. At `finalize_with`, the
+    /// aggregator must share the wallet's parameters. For each imported
+    /// application-defined header, a registered aggregator step must
+    /// declare the same type and suffix. Setup requires this declaration
+    /// for all padding-only application-defined wallet output headers.
+    /// The decompression circuit excludes the suffixes of omitted wallet
+    /// output headers that declare online polynomials. The online meshes
+    /// bind decompression to the wallet's registry evaluations.
     ///
     /// # Errors
     ///
@@ -557,9 +567,10 @@ where
     }
 
     /// Decompresses a wallet proof with the supplied online polynomial
-    /// coefficients, in slot order and ascending degree. The aggregator
-    /// must register the same output header type as the wallet. Supply the
-    /// constant one for an unused slot.
+    /// coefficients, in slot order and ascending degree. For an
+    /// application-defined header, a registered aggregator step must
+    /// declare the wallet's output header type at the same suffix.
+    /// Supply the constant one for an unused slot.
     ///
     /// The decompression proof binds both output commitments to the ones
     /// verified in the compressed wallet proof. Later fuses can open them
