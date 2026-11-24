@@ -36,7 +36,9 @@ jobs:
           cache-suffix: release
           ci-release-profile: true
           save-dependencies: false
-          cache-compiler: true
+          # The runner has repeatedly shut down while compiling the fixture
+          # target through sccache. Build this target directly.
+          cache-compiler: false
       - name: Check the fuse and verifier fixtures
         env:
           RAGU_FIXTURES: check
