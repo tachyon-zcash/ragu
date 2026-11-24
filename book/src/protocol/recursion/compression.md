@@ -129,7 +129,7 @@ value of the Fuse, at the Fuse's challenges.
 
 - `Preamble` holds $x^{(0)},y^{(0)},x^{(1)},y^{(1)}$.
 - `Query` holds $m(\omega_j,x_F,y_F)$ in registry index order (internal
-  circuits, then bonding polynomials), $m(w_F,x_F,y_F)$, then
+  circuits, then masks), $m(w_F,x_F,y_F)$, then
   $m(\omega_{\rm id},x_F,y_F)$ at the proof's own circuit. The last four
   wires are $m(w_F,x^{(0)},y^{(0)}),m(w_F,x^{(0)},y_F)$ followed by
   $m(w_F,x^{(1)},y^{(1)}),m(w_F,x^{(1)},y_F)$.
@@ -147,15 +147,15 @@ In the Standard layout, `Query` has $37+18=55$ fixed registry entries and
 `BridgeQuery` has $33+14=47$. The next wire, the value at $w_F$, takes weight
 $\sigma^{55}$ or $\sigma^{47}$, respectively.
 
-On each curve, list the raw accumulator, circuit, bonding and selected-wire
+On each curve, list the raw accumulator, circuit, mask and selected-wire
 claims in that order. The raw target is $c_F$ or $c_{F,q}$ from the instance.
 The verifier computes each circuit target at that curve's fresh $y$ from
 the instance and encoded output header, as in the
 [decider](../construction/decider.md#single-proof).
-`hashes_1` binds that header and the circuit index. Bonding and
+`hashes_1` binds that header and the circuit index. Mask and
 selected-wire targets are zero.
 
-The step has already folded its application claim and two bonding claims, and
+The step has already folded its application claim and two mask claims, and
 its randomizer claims with them. The Standard layout gives $1+37+16+5=59$
 native claims and $1+33+14+3=51$ nested claims.
 Complete the fold, opening batch and IPA on the **host curve** before
@@ -340,7 +340,7 @@ nested counterparts contribute three.
    registry point $\omega_j$ contributes $(0,m(\omega_j,r,y)+t(r,z))$,
    where $t$ is the
    [gate correction](../construction/arithmetization.md#combinedcheck).
-   A bonding claim contributes $(0,m(\omega_j,r,y))$ and a selected-wire
+   A mask claim contributes $(0,m(\omega_j,r,y))$ and a selected-wire
    claim contributes $(-E(r),M(r))$. The weighted sums give
    $$
    A(r)=A_c(r)+A_{\rm pub}(r),\qquad

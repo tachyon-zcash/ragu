@@ -226,7 +226,7 @@ claim, with $s_j(x, y)$ taken from `fixed_registry`, or from
 |---|---|---|
 | raw | $A^{(i)}(xz)$ | $B^{(i)}(x)$ |
 | circuit at index $j$ | as above | $\text{ax}_k + s_j(x, y) + t(x, z)$ |
-| bonding at index $j$ | as above | $s_j(x, y)$ |
+| mask at index $j$ | as above | $s_j(x, y)$ |
 
 The two values are
 

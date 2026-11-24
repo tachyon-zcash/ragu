@@ -17,7 +17,7 @@ associated `OutputKind` names the gadget type the slice's wires populate;
 its `witness` method produces an instance of that gadget. Stages define
 no gate constraints of their own — the trace each commits to carries
 only wire assignments, with well-formedness checked separately by a
-bonding polynomial obtained via [`StageExt::mask`][stagemask].
+mask obtained via [`StageExt::mask`][stagemask].
 
 A [`MultiStageCircuit`][multistage-trait] composes a sequence of stages
 plus a final-trace body. Its `witness` method receives a

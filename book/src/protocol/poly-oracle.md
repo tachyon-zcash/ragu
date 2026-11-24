@@ -402,12 +402,12 @@ After:
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 ```
 
-Like any staged circuit, this needs bonding polynomials in the registry sized by the stage.
+Like any staged circuit, this needs masks in the registry sized by the stage.
 In theory, we don't know the degree of our private polynomial, thus the stage size is only known at registry-time.
-To avoid overcrowding the registry, we enforce a universal, max size at `registry.finalize()`-time (the largest `Step::NUM_STAGED` registered), and only register two new bonding polynomials.
+To avoid overcrowding the registry, we enforce a universal, max size at `registry.finalize()`-time (the largest `Step::NUM_STAGED` registered), and only register two new masks.
 In practice, Tachyon's current proof tree only needs degree-$1$ private polynomials: only a single-element stage is needed.
 
-The stage is not a type-level stage of the step circuit: every step circuit reserves $\lceil K/2 \rceil$ gates after the SYSTEM gate for the largest staged count $K$, the committed stage polynomial supplies those wires, and the two bonding polynomials hold the stage to its block and the step's own trace to zero there.
+The stage is not a type-level stage of the step circuit: every step circuit reserves $\lceil K/2 \rceil$ gates after the SYSTEM gate for the largest staged count $K$, the committed stage polynomial supplies those wires, and the two masks hold the stage to its block and the step's own trace to zero there.
 The step binds its staged values to the first wires of the block; its trace is folded in the parent as before, together with the stage, until [v4](#v4) moves both folds into `S` itself and drops the stage's export.
 The extra revdot claims are few, and they fit into the buffer of the native `inner_error`, `outer_error`, and `compute_v` stage.
 
@@ -480,7 +480,7 @@ After:
                              Eval (+ f_i(u))
 ```
 
-`Application` is the native trace synthesized by `Step::witness`. `S` folds it and the application stage itself, together with its opening claims. The parent folds `S`'s accumulator, the claims of `S`'s internal circuits from its frontier and the bonding claims over `S`'s polynomials, but not `Application`.
+`Application` is the native trace synthesized by `Step::witness`. `S` folds it and the application stage itself, together with its opening claims. The parent folds `S`'s accumulator, the claims of `S`'s internal circuits from its frontier and the mask claims over `S`'s polynomials, but not `Application`.
 
 ### V5: an online $\F_q$ polynomial for the nested `compute_v` {#v5}
 

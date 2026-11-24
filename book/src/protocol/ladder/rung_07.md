@@ -22,7 +22,7 @@ and each kind supplies its terms differently.
 | --- | --- | --- | --- |
 | Raw | a child's accumulated $A$ | the same child's accumulated $B$ | that child's $c$ |
 | Circuit | the trace $r_i$ of an internal circuit that a child ran, or of the fuse's own step circuit | $r_i(zX) + s_i(X, y) + t(X, z)$ | the circuit's $k(y)$ |
-| Bonding ([rung 12](rung_12.md)) | the polynomials held to one linear check, such as a mask, combined by powers of $z$ | that check's $s_i(X, y)$ | $0$ |
+| Mask ([rung 12](rung_12.md)) | the polynomials held to one mask, combined by powers of $z$ | the mask's $s_i(X, y)$ | $0$ |
 
 For a circuit claim, $b_i(x) = r_i(xz) + s_i(x, y) + t(x, z)$. This is why $A$
 is tested at $xz$ and not at $x$: both identities then consume the same

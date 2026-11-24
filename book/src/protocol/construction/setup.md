@@ -149,11 +149,11 @@ Finalizing with
 then runs in this order.
 
 1. Construct every application step circuit with the final `stage_size`.
-2. Register the native internal circuits and bonding polynomials. The `hashes_1`
+2. Register the native internal circuits and masks. The `hashes_1`
    circuit takes the base-two logarithm of the native domain size as a
    parameter, which its [domain check](internal_circuits.md#hashes-1) uses.
 3. Register the internal steps `Rerandomize` and `Bootstrap`.[^rerandomize]
-4. Register the nested internal circuits and bonding polynomials.
+4. Register the nested internal circuits and masks.
 5. Finalize both registries, which derives the [tags](registry.md#tag) $\kappa$
    and $\kappa_q$.
 6. Unless a bootstrap proof was supplied, fuse two dummy proofs through
@@ -206,8 +206,8 @@ on every page, and a nested stage has one name.
 
 ## Native Registry {#native-registry}
 
-Each entry is a circuit or a [bonding polynomial](registry.md#registry-kinds),
-and the steps are circuits. Each [mask](staging.md#masks) belongs to the
+Each entry is a circuit or a [mask](registry.md#registry-kinds), and the steps
+are circuits. Each [mask](staging.md#masks) belongs to the
 [stage](stage_contents.md) that it is named after.
 
 | Registry Index | Entry | Kind |

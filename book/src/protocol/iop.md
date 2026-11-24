@@ -44,7 +44,7 @@ The notation is that of the [curve cycle](construction/cycle.md#notation).
   [gate correction polynomial](construction/arithmetization.md#combinedcheck).
   The trace of a circuit is the sum of its own polynomial and the polynomials
   of the stages that it loads. For a
-  [bonding claim](construction/staging.md#bonding), $a$ is a Horner
+  [mask claim](construction/staging.md#masks), $a$ is a Horner
   fold of polynomials at $z$, $b=s_j(X,y)$, and the target is zero.
 - $\ell^{(M)}_j$ and $V^{(M)}$ are the Lagrange basis and vanishing polynomials
   on the nodes $0, \dots, M - 1$, as in the
@@ -73,7 +73,7 @@ $(A^{(i)}, B^{(i)};\ c^{(i)})$, its batched opening of $p^{(i)}$ at $u^{(i)}$,
 the identity of its registry candidate, and the claims of its
 [frontier](construction/proof.md#frontier), which say that the circuits of the
 child's own fuse are satisfied. The current step adds the claim of its circuit
-and two bonding claims on the native side. The fuse folds all of the revdot
+and two mask claims on the native side. The fuse folds all of the revdot
 claims into one raw claim per curve and batches all of the openings into one
 opening per curve.
 
@@ -125,7 +125,7 @@ The verifier has oracle access to the children's polynomials. Each instance
 supplies that child's accumulator values $c,v$ and points $u,x,y$ on its side.
 
 Fuse folds the children's claims on both curves. The native fold also includes
-the current step's circuit claim and its two bonding claims. Fuse outputs the
+the current step's circuit claim and its two mask claims. Fuse outputs the
 step's header and one accumulator per curve.
 
 On each **Challenge** line, $\mathcal{V}$ sends the indicated field elements,
@@ -224,7 +224,7 @@ instance that the parent binds to `BridgeHash`.
      $k_{\text{app}}(y)$.
    - $k=3+2j+i$ holds child $i$'s circuit claim for internal circuit $j<37$.
      Its trace is the circuit's own polynomial plus the stages it loads.
-   - $k=40+j$ holds the bonding claim at index $37\le j<55$, with target zero.
+   - $k=40+j$ holds the mask claim at index $37\le j<55$, with target zero.
      For $j<53$, take each polynomial in the list for $j$ from the left child
      and then the right. Indices $53$ and $54$
      constrain $r[\texttt{ApplicationStage}]$ and $r[\texttt{Application}]$,
@@ -234,7 +234,7 @@ instance that the parent binds to `BridgeHash`.
    The $82$ [nested claims](construction/claims.md#nested-claims) at
    $(y_q,z_q)$ are padded to $88$ entries. The list has the
    raw claims at $k = i$, the circuit claim of child $i$'s nested internal
-   circuit $j$ at $k = 2 + 2j + i$ for $j < 33$, the bonding claims at
+   circuit $j$ at $k = 2 + 2j + i$ for $j < 33$, the mask claims at
    $k = 35 + j$ for $33 \le j < 47$, and six zero claims.
 2. Each list is laid out over a [grid](construction/claims.md#randomizer) of
    $N$ groups of $M$ slots, with $(M,N)=(8,15)$ native and $(9,12)$ nested.
@@ -474,7 +474,7 @@ and that the stage holds the same $[o_1]$ as `BridgePreamble`.
    $$\text{bx}_k=\begin{cases}
      B^{(i)}(x) & \text{raw claim of child }i,\\
      \text{ax}_k+s_j(x,y)+t(x,z) & \text{circuit claim at }j,\\
-     s_j(x,y) & \text{bonding claim at }j,\\
+     s_j(x,y) & \text{mask claim at }j,\\
      0 & \text{padding}.
    \end{cases}$$
    Here $B^{(i)}(x)$ and $s_j(x,y)=m(\omega_j,x,y)$ are claimed openings.

@@ -79,7 +79,7 @@ retried. If one of them is $2^{254}$ or more, the fuse fails.[^large]
 |---|---|---|
 | $w$ | the point at which the registry is restricted and the children's $m(W, x^{(i)}, y^{(i)})$ are opened; the step's $\zeta$ | every commitment of the children, and the step's own online polynomials and staged values |
 | $y$ | combines the constraints of every claim; the point at which `registry_wx` is opened | $m(w, x^{(i)}, Y)$, the step circuit's polynomial, the `preamble` stage and the fold randomizers |
-| $z$ | combines the gate equations of every circuit claim and the polynomials of every bonding claim | the same |
+| $z$ | combines the gate equations of every circuit claim and the polynomials of every mask claim | the same |
 | $\mu$ | first-layer fold | the first-layer quotients and the target $c_\star$ |
 | $\mu'$ | second-layer fold | the second-layer quotients and collapsed values |
 | $x$ | $B$, the children's $B^{(i)}$ and $b_\star$ are opened at $x$, and $A$, $A^{(i)}$, $a_\star$, every child rx polynomial and the two polynomials of the step circuit at $xz$; `registry_wy` is opened at $x$ | $A$, $B$ and $m(w, X, y)$ |

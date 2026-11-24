@@ -23,7 +23,7 @@ loads stages is the [sum](staging.md#stage-polynomial) of its own polynomial and
 the polynomials of those stages, so the $a$ side of a circuit claim is in
 general a sum.
 
-A **bonding claim** is the check of a [bonding polynomial](staging.md#bonding).
+A **mask claim** is the check of a [mask](staging.md#masks).
 It has no gate equations to enforce, so one claim serves a whole list of partial
 traces $r_1, r_2, \dots$:
 
@@ -32,9 +32,9 @@ $$\left( \text{Horner}_z[r_1, r_2, \dots],\ s_j(X, y);\ 0 \right).$$
 It holds as an identity in $y$ and $z$ exactly when each entry of the list
 separately satisfies the constraints of $s_j$. If some entry of a list of $L$
 violates a constraint, the claim holds for $y$ and $z$ drawn uniformly from a
-set $S$ with probability at most $(4n - 2 + L)/|S|$.[^bonding-bound]
+set $S$ with probability at most $(4n - 2 + L)/|S|$.[^mask-bound]
 
-[^bonding-bound]: The product of the claim is
+[^mask-bound]: The product of the claim is
     $z^{L-1} \revdot{r_1}{s_j(X, y)} + \dots + \revdot{r_L}{s_j(X, y)}$. Each
     $\revdot{r}{s_j(X, Y)}$ is a polynomial in $Y$ of degree at most $4n - 1$
     whose coefficients are the values of the constraints on $r$. The product
@@ -242,8 +242,8 @@ registry, and a position is a claim's place in its list.
 
 The native list has the raw claim of each child, then the claim of the fuse's
 own step circuit, then one circuit claim for each of the $37$ internal circuits
-of each child's [frontier](proof.md#frontier). It ends with one bonding claim
-for each of the $18$ native bonding polynomials. Sixteen of these cover both
+of each child's [frontier](proof.md#frontier). It ends with one mask claim
+for each of the $18$ native masks. Sixteen of these cover both
 children, and the two of the application stage cover the fuse's own polynomials.
 
 In each row, $i$ ranges over the children, left before right. We abbreviate the
@@ -263,14 +263,14 @@ $$r^{(i)}[\text{points}] = r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{Poi
 | $19 + i$ | circuit | 8 | $r^{(i)}[\texttt{BindBeta}] + r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{Preamble}]$ | $k^{(i)}_{\text{uni}}(y)$ |
 | $21 + i$ | circuit | 9 | $r^{(i)}[\texttt{BindEndoscalar}] + r^{(i)}[\text{points}]$ | $k^{(i)}_{\text{uni}}(y)$ |
 | $23 + 2s + i$, $s < 27$ | circuit | $10 + s$ | $r^{(i)}[\texttt{EndoscalingStep}(s)] + r^{(i)}[\text{points}]$ | $1$ |
-| $77, \dots, 87$ | bonding | $37, \dots, 47$ | $z \, r^{(0)}[S] + r^{(1)}[S]$ for the stage $S$ of the mask: `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | $0$ |
-| 88 | bonding | 48 | $z \, r^{(0)}[\texttt{Collapse}] + r^{(1)}[\texttt{Collapse}]$ | $0$ |
-| 89 | bonding | 49 | $\text{Horner}_z$ of `Hashes1` then `Hashes2` | $0$ |
-| 90 | bonding | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..=3)` | $0$ |
-| 91 | bonding | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..=26)` | $0$ |
-| 92 | bonding | 52 | $z \, r^{(0)}[\texttt{BindBeta}] + r^{(1)}[\texttt{BindBeta}]$ | $0$ |
-| 93 | bonding | 53 | $r[\texttt{ApplicationStage}]$ | $0$ |
-| 94 | bonding | 54 | $r[\texttt{Application}]$ | $0$ |
+| $77, \dots, 87$ | mask | $37, \dots, 47$ | $z \, r^{(0)}[S] + r^{(1)}[S]$ for the stage $S$ of the mask: `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | $0$ |
+| 88 | mask | 48 | $z \, r^{(0)}[\texttt{Collapse}] + r^{(1)}[\texttt{Collapse}]$ | $0$ |
+| 89 | mask | 49 | $\text{Horner}_z$ of `Hashes1` then `Hashes2` | $0$ |
+| 90 | mask | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..=3)` | $0$ |
+| 91 | mask | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..=26)` | $0$ |
+| 92 | mask | 52 | $z \, r^{(0)}[\texttt{BindBeta}] + r^{(1)}[\texttt{BindBeta}]$ | $0$ |
+| 93 | mask | 53 | $r[\texttt{ApplicationStage}]$ | $0$ |
+| 94 | mask | 54 | $r[\texttt{Application}]$ | $0$ |
 | $95, 96, 97$ | padding | | $0$ | $0$ |
 
 In rows $89$ to $91$, each named polynomial contributes its left and then its
@@ -332,8 +332,8 @@ parent to bind in the same way.
 ## Nested Claims {#nested-claims}
 
 The nested list has the same shape: for each child, the raw claim and one
-circuit claim for each of the $33$ nested circuits, and then one bonding claim
-for each of the $14$ nested bonding polynomials.
+circuit claim for each of the $33$ nested circuits, and then one mask claim
+for each of the $14$ nested masks.
 
 Here the challenges are $y_q$ and $z_q$ and the registry is $m_q$. We abbreviate
 the sum of a child's stage polynomials.
@@ -346,10 +346,10 @@ $$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nest
 | $2 + 2s + i$, $s < 31$ | circuit | $s$ | $r_q^{(i)}[\texttt{EndoscalingStep}(s)] + r_q^{(i)}[\texttt{EndoscalarStage}] + r_q^{(i)}[\texttt{PointsStage}]$ | $1$ |
 | $64 + i$ | circuit | 31 | $r_q^{(i)}[\texttt{Collapse}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
 | $66 + i$ | circuit | 32 | $r_q^{(i)}[\texttt{ComputeV}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
-| 68, 69 | bonding | 33, 34 | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for `EndoscalarStage`, `PointsStage` | $0$ |
-| 70 | bonding | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
-| $71, \dots, 80$ | bonding | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
-| 81 | bonding | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
+| 68, 69 | mask | 33, 34 | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for `EndoscalarStage`, `PointsStage` | $0$ |
+| 70 | mask | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
+| $71, \dots, 80$ | mask | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
+| 81 | mask | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
 | $82, \dots, 87$ | padding | | $0$ | $0$ |
 
 As on the native side, a Horner list takes the left and then the right instance
@@ -375,9 +375,9 @@ the registry index of the claim's wiring polynomial, with $\text{id}$ for the
 fuse's own step circuit. An index that appears twice is an internal circuit,
 which is claimed once for each child: the first cell is the claim of child $0$
 and the second that of child $1$, as the two cells marked raw are the raw
-claims of child $0$ and of child $1$. The step circuit and each bonding
+claims of child $0$ and of child $1$. The step circuit and each mask
 polynomial appear once. The circuits are the indices $0$ to $36$ of the native
-grid and $0$ to $32$ of the nested grid, and the bonding polynomials are the
+grid and $0$ to $32$ of the nested grid, and the masks are the
 indices $37$ to $54$ and $33$ to $46$. A cell marked $\star$ holds the
 randomizer claim, the cell marked half holds the half-claim, and a cell marked
 pad holds the zero claim.

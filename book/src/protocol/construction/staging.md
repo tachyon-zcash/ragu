@@ -1,4 +1,4 @@
-# Stages and Bonding Polynomials {#staging}
+# Stages and Masks {#staging}
 
 The [combined check](arithmetization.md#combinedcheck) takes the trace of a
 circuit as one polynomial $r(X)$. There are two situations in which a prover
@@ -103,35 +103,30 @@ wire outside its gates would add to wires that the circuit or another stage
 holds. Each stage polynomial and each own polynomial is therefore checked
 separately.
 
-## Bonding Polynomials {#bonding}
+## Masks {#masks}
 
 Wiring polynomials typically verify constraints for circuit traces, but there do
 exist wiring polynomials that only enforce constraints on incomplete traces.
-These exist internally to Ragu and are called **bonding polynomials**. Every
-bonding polynomial of the scheme is a [mask](#masks).
+These exist internally to Ragu and are called **masks**. A mask constrains a
+partial trace polynomial so that nonzero wire assignments appear only at
+designated gate positions.
 
 Unlike circuit wiring polynomials, which are checked with
 $
 \revdot{\v{r}}{\v{r} \circ \v{z^{4n}} + \v{t} + \v{s}} = \dot{\v{k}}{\v{y^{4n}}}
 $,
-bonding polynomials instead appear in claims of the form
+masks instead appear in claims of the form
 $\revdot{\v{r}}{\v{s}} = 0$, which do not enforce the gate equations on the
 trace and permit batching.[^batching]
 
 [^batching]: As an example, if two separate $\v{r_0}$ and $\v{r_1}$ must satisfy
-a bonding revdot claim then $\revdot{z \v{r_0} + \v{r_1}}{\v{s}} = 0$ for a
+the claim of one mask then $\revdot{z \v{r_0} + \v{r_1}}{\v{s}} = 0$ for a
 random $z$ suffices to check both at once.
 
 In order to distinguish these polynomials from ordinary circuit wiring
-polynomials, the $0$th constraint is not emitted in bonding polynomials, forcing
+polynomials, the $0$th constraint is not emitted in masks, forcing
 $k(0) = s(X, 0) = 0$. The verifier enforces the kind of wiring polynomial by
 choosing $\v{k}_0$, since the revdot claim alone does not distinguish the two.
-
-### Masking Polynomials {#masks}
-
-Masking polynomials are bonding polynomials used to constrain partial trace
-polynomials so that nonzero wire assignments appear only at designated gate
-positions.
 
 The simplest theoretical mask $s_{\max}(X, Y) = \sum_{i=0}^{4n-1}(XY)^i$ would
 zero every wire of every gate. Since `SYSTEM` gate wires are either unused or
@@ -254,10 +249,10 @@ $r_{\text{own}}$ and forces its four wires of gate $1$ to zero. Without the
 second, the prover could add to $\v{a}_1$ in its own polynomial, and the trace
 would no longer hold the committed $\nu_0$ there.
 
-## Layout of the Stage-Mask Bonding Polynomial {#mask-layout}
+## Layout of the Stage Mask {#mask-layout}
 
-For the stage-mask bonding polynomial $s_{\text{mask}}(X, Y)$ defined above,
-its coefficient matrix has the following four diagonal blocks:
+For the stage mask $s_{\text{mask}}(X, Y)$ defined above, its coefficient
+matrix has the following four diagonal blocks:
 
 | reversed trace | monomials          | $Y^0..Y^{n-1}$ | $Y^n..Y^{2n-1}$ | $Y^{2n}..Y^{3n-1}$ | $Y^{3n}..Y^{4n-1}$ |
 |:--------:|:------------------:|:--------------:|:---------------:|:------------------:|:------------------:|
@@ -344,7 +339,7 @@ The bottom-right of $D_{\rv{c}}$ holds $\color{#7e22ce}{\kappa}$ rather than
 $0$: $\v{c}_0$'s `SYSTEM` exemption would put a $0$ at $(X^{4n-1}, Y^{4n-1})$,
 but the registry adds $\kappa \cdot (XY)^{4n-1}$ at exactly that slot (see the
 [`SYSTEM` gate](wiring.md#system-gate)), so the effective coefficient once the
-bonding polynomial is assembled into the [registry polynomial](registry.md) is
+mask is assembled into the [registry polynomial](registry.md) is
 $\kappa$. The other three `SYSTEM` corners stay $0$ — $\kappa$ touches only the
 $\v{c}_0$ slot.
 

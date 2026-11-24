@@ -30,7 +30,7 @@
   - [Construction](protocol/construction/index.md)
     - [Arithmetization](protocol/construction/arithmetization.md)
       - [Wiring and Instance Polynomials](protocol/construction/wiring.md)
-      - [Stages and Bonding Polynomials](protocol/construction/staging.md)
+      - [Stages and Masks](protocol/construction/staging.md)
       - [Registry](protocol/construction/registry.md)
     - [Curve Cycle](protocol/construction/cycle.md)
     - [Setup](protocol/construction/setup.md)

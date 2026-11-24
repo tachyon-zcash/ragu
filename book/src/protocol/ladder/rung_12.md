@@ -52,9 +52,9 @@ which no circuit uses, and each committed polynomial may carry arbitrary values
 on those two wires. The summands overlap there too, and nothing reads the sum.
 
 The mask checks enter the fold as the
-[**bonding claims**](../construction/staging.md#bonding) of
+[**mask claims**](../construction/staging.md#masks) of
 [rung 7](rung_07.md). They differ from circuit claims in ways that make them
-cheap. A bonding claim has no dilated copy of the trace and no gate correction,
+cheap. A mask claim has no dilated copy of the trace and no gate correction,
 so it is linear in the trace, and its target is zero. Several polynomials owed
 the same mask can share one claim: for two of them,
 $\revdot{z \, r_0 + r_1}{s_{\text{mask}}(X, y)} = 0$ checks both. A fuse uses
@@ -78,9 +78,9 @@ nothing was registered carry no wiring except the tag term of
 claim the same way. This is what makes it safe for a proof to name any point of
 the domain as its step's circuit.
 
-The reverse substitution is not excluded, and does not need to be. A bonding
+The reverse substitution is not excluded, and does not need to be. A mask
 claim is homogeneous, so nonzero polynomials can satisfy it against a circuit's
-wiring polynomial. The polynomial a bonding claim uses is fixed by the protocol,
+wiring polynomial. The polynomial a mask claim uses is fixed by the protocol,
 though, and never chosen by the prover.
 
 A mask constrains where a stage's values sit, not what they are. Conditions on

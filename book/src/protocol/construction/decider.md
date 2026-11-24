@@ -68,7 +68,7 @@ that is bounded as follows.
   holds at the sampled point with probability at most $(4n - 1)/|\F|$, the
   bound of the [combined check](arithmetization.md#combinedcheck), with $\F$
   the field of the side.
-- A bonding claim over a list of $L$ polynomials, one of which violates a
+- A mask claim over a list of $L$ polynomials, one of which violates a
   constraint, holds with probability at most
   [$(4n - 2 + L)/|\F|$](claims.md#claims). The longest list has $28$ entries on
   the native side and $31$ on the nested side.
@@ -91,8 +91,8 @@ of two children. A sum on an $a$ side is unchanged, and a Horner list has one
 entry per named polynomial instead of two.
 
 The native list has $53$ claims: the $37$ internal circuits and $16$ of the
-$18$ bondings. It has no claim for the step circuit and none for the two
-bonding polynomials of the application stage. The proof's own fuse folded those
+$18$ masks. It has no claim for the step circuit and none for the two
+masks of the application stage. The proof's own fuse folded those
 three claims, and the proof does not hold their polynomials. The same is true
 of the fuse's [randomizer claims](claims.md#randomizer) on both sides. The
 native raw claim is omitted as well, because its target $c$ is derived from
@@ -113,14 +113,14 @@ the decider stands where a parent would, with its own copy of each.
 The target of each of the other nine circuits with the
 [unified instance](proof.md#native-unified), `compute_v` among them, is
 $k_{\text{uni}}(\tau_y)$. The target of each `endoscaling_step` is $1$, and the
-target of each bonding claim is $0$.
+target of each mask claim is $0$.
 
 Check 2 keeps the index that the decider reads, here and in the
 [stage values](#stage-values), inside the domain in which the root's `hashes_1`
 placed its own copy.
 
 The nested list has $48$ claims: the raw claim, the $31$ endoscaling steps,
-`Collapse`, `ComputeV` and the $14$ bondings. The raw claim is included and
+`Collapse`, `ComputeV` and the $14$ masks. The raw claim is included and
 holds by construction. The target of `Collapse` and `ComputeV` is
 $k_q(\tau_{q,y})$ over the proof's own
 [nested instance](proof.md#nested-unified), with $E_0, \dots, E_{15}$ read from

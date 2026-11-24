@@ -102,7 +102,7 @@ $\text{tgt}_0, \dots, \text{tgt}_{97}$ be the
 [native targets](claims.md#native-claims) in claim order, built from the wires
 $c^{(i)}$ of the `preamble` stage, the value of item 1 and the target wires of
 the `outer_error` stage, with ones at the endoscaling positions and zeros at
-the bonding and padding positions.
+the mask and padding positions.
 
 1. Equate the two coordinates of $R_q[\texttt{BridgeHash}]$ in the unified
    instance with their copy in the `preamble` stage, which `BridgeSPrime`
