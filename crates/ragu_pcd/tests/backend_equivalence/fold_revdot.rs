@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
 use ragu_backend::{Backend, ReferenceBackend};
-use ragu_circuits::polynomials::{Rank, TestRank, sparse};
+use ragu_circuits::polynomials::{Rank, TestRank, WalletRank, sparse};
 use ragu_core::pasta::{Fp, Fq};
 use ragu_primitives::vec::ConstLen;
 use udon::field::Field;
@@ -22,9 +22,9 @@ impl<const N: usize, const M: usize> Parameters for TestParams<N, M> {
 
 /// Check Z(r) Q(r) = revdot(A(r), B(r)) - K(r) using dense coefficients.
 /// The m distinct non-node points determine the quotient of degree at most m-2.
-fn check_quotient<F: Field>(
-    a: &[sparse::Polynomial<F, TestRank>],
-    b: &[sparse::Polynomial<F, TestRank>],
+fn check_quotient<F: Field, R: Rank>(
+    a: &[sparse::Polynomial<F, R>],
+    b: &[sparse::Polynomial<F, R>],
     quotient: &[F],
     m: usize,
 ) {
@@ -42,8 +42,8 @@ fn check_quotient<F: Field>(
                     .product::<F>()
             })
             .collect();
-        let mut a_fold = vec![F::ZERO; TestRank::num_coeffs()];
-        let mut b_fold = vec![F::ZERO; TestRank::num_coeffs()];
+        let mut a_fold = vec![F::ZERO; R::num_coeffs()];
+        let mut b_fold = vec![F::ZERO; R::num_coeffs()];
         let mut target = F::ZERO;
         for ((a, b), weight) in a.iter().zip(b).zip(weights) {
             for (sum, coefficient) in a_fold.iter_mut().zip(a.iter_coeffs()) {
@@ -135,6 +135,50 @@ fn parallel_quotients_match_dense_oracle_with_padding() {
                 check::<Fq>();
             });
     }
+}
+
+#[test]
+fn sparse_quotients_match_dense_oracle_across_fft_batches() {
+    fn check<F: Field>() {
+        type P = TestParams<2, 4>;
+        let poly = |salt: usize, ranges: [core::ops::Range<usize>; 2], reversed| {
+            let mut coefficients = vec![F::ZERO; WalletRank::num_coeffs()];
+            for index in ranges.into_iter().flatten() {
+                // Short zero runs can stay inside a sparse block.
+                if index % 37 != 1 {
+                    let degree = if reversed {
+                        WalletRank::num_coeffs() - 1 - index
+                    } else {
+                        index
+                    };
+                    coefficients[degree] = F::from((31 * salt + index * (salt + 3) + 1) as u64);
+                }
+            }
+            sparse::Polynomial::from_coeffs(coefficients)
+        };
+        let a = [
+            poly(1, [8..144, 167..458], false),
+            poly(2, [45..192, 410..490], false),
+            poly(3, [0..8, 500..512], false),
+        ];
+        let b = [
+            poly(4, [0..8, 500..512], true),
+            poly(5, [80..200, 216..487], true),
+            poly(6, [33..49, 250..270], true),
+        ];
+
+        // The first pair has disjoint mirrored supports. The full partial
+        // group spans multiple batches, with a block crossing a boundary.
+        for count in [1, 3] {
+            let a = &a[..count];
+            let b = &b[..count];
+            let q = inner_error_terms_with_backend::<AcceleratedBackend, F, WalletRank, P>(a, b);
+            check_quotient(a, b, &q[0], 4);
+            assert!(q[1].iter().all(Field::is_zero));
+        }
+    }
+    check::<Fp>();
+    check::<Fq>();
 }
 
 static SCHEDULE_CALLS: AtomicUsize = AtomicUsize::new(0);

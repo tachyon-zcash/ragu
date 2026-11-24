@@ -220,6 +220,18 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 }
 
 impl<T, R: Rank> Polynomial<T, R> {
+    /// Iterates over stored coefficient blocks in ascending degree order.
+    ///
+    /// Each pair gives the degree of the block's first coefficient and its
+    /// contiguous coefficients. A block may contain zeros in short gaps.
+    pub fn iter_stored_blocks(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (usize, &[T])> + ExactSizeIterator + Clone {
+        self.blocks
+            .iter()
+            .map(|(start, coefficients)| (*start, coefficients.as_slice()))
+    }
+
     /// Applies a closure to every stored element.
     fn apply_all(&mut self, mut op: impl FnMut(&mut T)) {
         for (_, data) in &mut self.blocks {
@@ -249,10 +261,10 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// The iterator may include zero coefficients retained inside short gaps,
     /// but never yields coefficients from implicit gaps between blocks.
     pub fn iter_stored_coeffs(&self) -> impl Iterator<Item = (usize, &F)> + Clone + Sync {
-        self.blocks.iter().flat_map(|(start, data)| {
+        self.iter_stored_blocks().flat_map(|(start, data)| {
             data.iter()
                 .enumerate()
-                .map(move |(offset, coefficient)| (*start + offset, coefficient))
+                .map(move |(offset, coefficient)| (start + offset, coefficient))
         })
     }
 
