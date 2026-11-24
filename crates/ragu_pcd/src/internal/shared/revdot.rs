@@ -34,11 +34,12 @@
 //!
 //! The saving is in what is carried and checked: a reduction of $m$ claims
 //! commits $m - 1$ quotient coefficients, and the collapse circuits fold those
-//! with the claims' targets. The prover still forms every revdot product of
-//! each group, the diagonal included, to assemble
-//! $\operatorname{revdot}(A, B) - K$ before dividing by $Z$, so its product
-//! count grows with the square of the group size while the carried count
-//! depends only on the slot budget.
+//! with the claims' targets. The prover can construct the quotient by
+//! evaluating it at consecutive points outside the interpolation nodes.
+//! An FFT convolution extends $A$ and $B$ to those points, so only their
+//! revdot at each new point and the original diagonal products are needed.
+//! The pairwise construction supports fields without the domain or
+//! inverses needed by the convolution.
 //!
 //! If any claim is false, then for the committed $Q$ the residual
 //! $\operatorname{revdot}(A, B) - K - Z \cdot Q$ is nonzero at that claim's
@@ -113,6 +114,8 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 use udon::field::Field;
+
+mod quotient_fft;
 
 /// Sum an iterator of polynomials, borrowing if only one element.
 ///
@@ -417,9 +420,8 @@ pub(crate) fn fold<T: Foldable<F>, F: Field>(
 ///
 /// For a fixed slot budget $b = n \cdot m$, the carried coefficient count
 /// $n \cdot (m - 1) + n - 1 = b - 1$ is the same whatever the split. The
-/// prover's revdot product count $n \cdot m^2 + n^2 = b \cdot m + (b / m)^2$
-/// is not monotonic in $m$: it is smallest near $m = (2b)^{1/3}$ and grows
-/// on either side. The native split of fifteen groups of eight ($b = 120$)
+/// pairwise construction's revdot count $n \cdot m^2 + n^2$ is smallest near
+/// $m = (2b)^{1/3}$. The native split of fifteen groups of eight ($b = 120$)
 /// sits near that minimum.
 pub trait Parameters: 'static + Send + Sync + Copy + Default {
     type NumGroups: Len;
@@ -701,15 +703,16 @@ fn multiply<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
     result
 }
 
-fn bases<F: Field>(m: usize) -> (Vec<Vec<F>>, Vec<F>) {
-    let z = (0..m).fold(vec![F::ONE], |p, i| {
+fn bases<F: Field>(nodes: core::ops::Range<usize>) -> (Vec<Vec<F>>, Vec<F>) {
+    let z = nodes.clone().fold(vec![F::ONE], |p, i| {
         multiply(&p, &[-F::from(i as u64), F::ONE])
     });
-    let basis = (0..m)
+    let basis = nodes
+        .clone()
         .map(|i| {
             let mut p = vec![F::ONE];
             let mut denominator = F::ONE;
-            for j in 0..m {
+            for j in nodes.clone() {
                 if i != j {
                     p = multiply(&p, &[-F::from(j as u64), F::ONE]);
                     denominator *= F::from(i as u64) - F::from(j as u64);
@@ -728,9 +731,8 @@ fn bases<F: Field>(m: usize) -> (Vec<Vec<F>>, Vec<F>) {
 /// Divides each group's $\operatorname{revdot}(A, B) - K$ by $Z$, one quotient
 /// per group.
 ///
-/// Every revdot product of a group is formed, the diagonal included, so the
-/// prover's product count is quadratic in the group size; only the quotient
-/// coefficients are committed.
+/// Uses the FFT extension when the field supports it, with pairwise revdots
+/// as the fallback. Both paths produce the same monomial coefficients.
 fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
     a: &[impl Borrow<sparse::Polynomial<F, R>>],
     b: &[impl Borrow<sparse::Polynomial<F, R>>],
@@ -738,10 +740,19 @@ fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
     assert_eq!(a.len(), b.len());
     assert!(a.len() <= Outer::len() * Inner::len());
     let m = Inner::len();
-    let (basis, z) = bases::<F>(m);
+    let fft = quotient_fft::Quotient::<F>::new::<B>(m);
+    let pairwise = fft.is_none().then(|| bases::<F>(0..m));
     a.chunks(m)
         .zip(b.chunks(m))
         .map(|(a, b)| {
+            if let Some(fft) = &fft {
+                return fft
+                    .compute::<B, R>(a, b)
+                    .into_iter()
+                    .collect_fixed()
+                    .expect("fixed quotient length");
+            }
+            let (basis, z) = pairwise.as_ref().expect("pairwise interpolation basis");
             // Honest inputs use their actual diagonal targets. The recursive
             // verifier independently uses the public k(y) targets, so false
             // input claims cannot be hidden by this prover-side construction.
