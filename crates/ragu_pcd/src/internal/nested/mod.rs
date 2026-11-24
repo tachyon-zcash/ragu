@@ -723,56 +723,53 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 let circuit = circuits::compute_v::Circuit::<C::HostCurve, R, C::Profile>::new();
                 registry.register_internal_circuit(MultiStage::new(circuit))?
             }
-            EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),
+            EndoscalarStage => registry.register_mask(endoscalar::EndoscalarStage::mask()?),
             PointsStage => {
-                registry.register_bonding(self::PointsStage::<C::HostCurve, C::Profile>::mask()?)
+                registry.register_mask(self::PointsStage::<C::HostCurve, C::Profile>::mask()?)
             }
-            PointsFinalStaged => registry
-                .register_bonding(self::PointsStage::<C::HostCurve, C::Profile>::final_mask()?),
+            PointsFinalStaged => {
+                registry.register_mask(self::PointsStage::<C::HostCurve, C::Profile>::final_mask()?)
+            }
             BridgePreamble => {
-                registry.register_bonding(
-                    stages::preamble::Stage::<C::HostCurve, R, C::Profile>::mask()?,
-                )
+                registry
+                    .register_mask(stages::preamble::Stage::<C::HostCurve, R, C::Profile>::mask()?)
             }
             BridgeHash => {
-                registry.register_bonding(stages::bridge_hash::Stage::<C::HostCurve>::mask()?)
+                registry.register_mask(stages::bridge_hash::Stage::<C::HostCurve>::mask()?)
             }
-            BridgeSPrime => registry.register_bonding(stages::s_prime::Stage::<
-                C::HostCurve,
-                R,
-                C::Profile,
-            >::mask()?),
+            BridgeSPrime => {
+                registry
+                    .register_mask(stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::mask()?)
+            }
             BridgeInnerError => {
-                registry.register_bonding(
+                registry.register_mask(
                     stages::inner_error::Stage::<C::HostCurve, R, C::Profile>::mask()?,
                 )
             }
             BridgeOuterError => {
-                registry.register_bonding(
+                registry.register_mask(
                     stages::outer_error::Stage::<C::HostCurve, R, C::Profile>::mask()?,
                 )
             }
             BridgeAB => {
-                registry.register_bonding(stages::ab::Stage::<C::HostCurve, R, C::Profile>::mask()?)
+                registry.register_mask(stages::ab::Stage::<C::HostCurve, R, C::Profile>::mask()?)
             }
             BridgeQuery => {
-                registry
-                    .register_bonding(stages::query::Stage::<C::HostCurve, R, C::Profile>::mask()?)
+                registry.register_mask(stages::query::Stage::<C::HostCurve, R, C::Profile>::mask()?)
             }
             BridgeF => {
-                registry.register_bonding(stages::f::Stage::<C::HostCurve, R, C::Profile>::mask()?)
+                registry.register_mask(stages::f::Stage::<C::HostCurve, R, C::Profile>::mask()?)
             }
             BridgeEval => {
-                registry
-                    .register_bonding(stages::eval::Stage::<C::HostCurve, R, C::Profile>::mask()?)
+                registry.register_mask(stages::eval::Stage::<C::HostCurve, R, C::Profile>::mask()?)
             }
             ChallengeStage => {
-                registry.register_bonding(
+                registry.register_mask(
                     stages::challenges::Stage::<C::HostCurve, R, C::Profile>::mask()?,
                 )
             }
             ChallengeFinalStaged => {
-                registry.register_bonding(
+                registry.register_mask(
                     stages::challenges::Stage::<C::HostCurve, R, C::Profile>::final_mask()?,
                 )
             }

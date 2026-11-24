@@ -367,14 +367,14 @@ fn build_borrowed<'a, R: Rank>(
             // category exists in the concatenation order and has to be
             // occupied for the ordering oracle to mean anything, but its
             // contents are structural.
-            Category::Bonding => builder.register_bonding(bonding_mask::<R>()?),
+            Category::Bonding => builder.register_mask(bonding_mask::<R>()?),
         };
     }
     builder.finalize().ok()
 }
 
 /// A bonding object to occupy `RegistryBuilder`'s bonding bucket.
-fn bonding_mask<'a, R: Rank>() -> Option<ragu_circuits::BondingObject<'a, Fp, R>> {
+fn bonding_mask<'a, R: Rank>() -> Option<ragu_circuits::MaskObject<'a, Fp, R>> {
     use ragu_circuits::staging::StageExt;
     <stage::Mask2 as StageExt<Fp, R>>::mask().ok()
 }

@@ -46,8 +46,8 @@
 //! In order for this to work, each of the individual stages (including the
 //! final stage) of the trace must be constrained to be well-formed, meaning
 //! that their wire assignments cannot overlap. These well-formedness checks
-//! use [bonding polynomials](crate::BondingObject), the stage masks, whose
-//! traces can be folded and checked in a single batched revdot claim.
+//! use [mask polynomials](crate::MaskObject), whose traces can be folded and
+//! checked in a single batched revdot claim.
 //!
 //! ## Usage
 //!
@@ -71,7 +71,7 @@
 //!
 //! // Register the mask alone, so its circuit index is zero.
 //! let registry = RegistryBuilder::<Fp, R>::new()
-//!     .register_bonding(MyStage::mask()?)
+//!     .register_mask(MyStage::mask()?)
 //!     .finalize()?;
 //! let mask_index = CircuitIndex::new(0);
 //!
@@ -97,7 +97,7 @@
 //! combined.add_assign(&b);
 //!
 //! let registry = RegistryBuilder::<Fp, R>::new()
-//!     .register_bonding(MyStage::mask()?)
+//!     .register_mask(MyStage::mask()?)
 //!     .finalize()?;
 //! let mask_index = CircuitIndex::new(0);
 //!
@@ -173,7 +173,7 @@ use rx_driver::RxDriver;
 use udon::field::Field;
 
 use crate::{
-    Blind, BondingObject, Circuit, WithAux,
+    Blind, Circuit, MaskObject, WithAux,
     polynomials::{Rank, sparse},
 };
 
@@ -364,7 +364,7 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
     /// # Errors
     ///
     /// Propagates any error from [`StageExt::final_mask`].
-    pub fn final_mask<'a>(&self) -> Result<BondingObject<'a, F, R>> {
+    pub fn final_mask<'a>(&self) -> Result<MaskObject<'a, F, R>> {
         S::Last::final_mask()
     }
 }
@@ -452,7 +452,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         Self::default().rx_configured(blind, witness)
     }
 
-    /// Creates a bonding polynomial that enforces well-formedness checks on
+    /// Creates a mask polynomial that enforces well-formedness checks on
     /// this stage's partial trace.
     ///
     /// Staging circuits do not behave like normal circuits because their
@@ -463,18 +463,18 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// # Errors
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
-    fn mask<'a>() -> Result<BondingObject<'a, F, R>> {
+    fn mask<'a>() -> Result<MaskObject<'a, F, R>> {
         stage_mask(Self::skip_gates(), Self::num_gates())
     }
 
-    /// Creates a bonding polynomial that can be used to enforce well-formedness
+    /// Creates a mask polynomial that can be used to enforce well-formedness
     /// checks on any final trace (stage) that has this stage as its
     /// [`MultiStageCircuit::Last`] stage.
     ///
     /// # Errors
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
-    fn final_mask<'a>() -> Result<BondingObject<'a, F, R>> {
+    fn final_mask<'a>() -> Result<MaskObject<'a, F, R>> {
         final_stage_mask(Self::skip_gates() + Self::num_gates())
     }
 
@@ -582,9 +582,9 @@ pub fn stage_rx<F: Field, R: Rank>(
 pub fn stage_mask<'a, F: Field, R: Rank>(
     skip_gates: usize,
     num_gates: usize,
-) -> Result<BondingObject<'a, F, R>> {
+) -> Result<MaskObject<'a, F, R>> {
     check_stage_bounds::<R>(skip_gates, num_gates)?;
-    Ok(BondingObject::new(Box::new(mask::StageMask::new(
+    Ok(MaskObject::new(Box::new(mask::StageMask::new(
         skip_gates, num_gates,
     )?)))
 }
@@ -597,11 +597,9 @@ pub fn stage_mask<'a, F: Field, R: Rank>(
 ///
 /// Returns a capacity error if `skip_gates` is past the blind gate, or an
 /// initialization error if it is zero.
-pub fn final_stage_mask<'a, F: Field, R: Rank>(
-    skip_gates: usize,
-) -> Result<BondingObject<'a, F, R>> {
+pub fn final_stage_mask<'a, F: Field, R: Rank>(skip_gates: usize) -> Result<MaskObject<'a, F, R>> {
     check_stage_bounds::<R>(skip_gates, 0)?;
-    Ok(BondingObject::new(Box::new(mask::StageMask::new_final(
+    Ok(MaskObject::new(Box::new(mask::StageMask::new_final(
         skip_gates,
     )?)))
 }

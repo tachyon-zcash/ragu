@@ -968,7 +968,7 @@ impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
     /// Propagates [`StageExt::mask`]'s error.
     pub fn register_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
         Ok(Registered {
-            registry: self.0.register_bonding(S::mask()?),
+            registry: self.0.register_mask(S::mask()?),
             registration: Registration::Mask(stage_gates::<F, R, S>()),
         })
     }
@@ -983,7 +983,7 @@ impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
     /// Propagates [`StageExt::final_mask`]'s error.
     pub fn register_final_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
         Ok(Registered {
-            registry: self.0.register_bonding(S::final_mask()?),
+            registry: self.0.register_mask(S::final_mask()?),
             registration: Registration::FinalMask(stage_gates::<F, R, S>().end),
         })
     }

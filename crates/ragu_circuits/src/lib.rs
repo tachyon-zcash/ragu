@@ -335,12 +335,12 @@ where
     Ok(Box::new(Processed { circuit, metrics }))
 }
 
-/// An evaluable bonding object $s(X, Y)$ used to enforce well-formedness of a
-/// staged trace.
+/// An evaluable mask polynomial $s(X, Y)$ used to enforce well-formedness of
+/// a staged trace.
 ///
-/// A bonding polynomial is a stage mask: a wiring polynomial that holds
-/// wires of a trace to zero and has neither gates nor an instance. This gives
-/// bonding polynomials three properties that circuit wiring polynomials lack:
+/// A mask is a wiring polynomial that holds wires of a trace to zero and has
+/// neither gates nor an instance. This gives masks three properties that
+/// circuit wiring polynomials lack:
 ///
 /// 1. **No dilation term.** Because a mask has no gates there is no $t(z)$,
 ///    and the revdot identity simplifies to
@@ -353,7 +353,7 @@ where
 ///    which gives $s(X, 0) = 0$. A circuit wiring polynomial instead has
 ///    $s(X, 0) = 1$, because the verifier sets $\mathbf{k}_0 = 1$ in any
 ///    circuit wiring claim regardless of public inputs. This distinction can be
-///    used to prevent substitution attacks (a bonding polynomial used where a
+///    used to prevent substitution attacks (a mask polynomial used where a
 ///    circuit wiring polynomial is expected) when the verifier does not have a
 ///    fixed choice of the wiring polynomial.
 ///
@@ -365,11 +365,11 @@ where
 /// [`StageExt::final_mask`]: crate::staging::StageExt::final_mask
 /// [`stage_mask`]: crate::staging::stage_mask
 /// [`final_stage_mask`]: crate::staging::final_stage_mask
-pub struct BondingObject<'a, F: Field, R: Rank> {
+pub struct MaskObject<'a, F: Field, R: Rank> {
     inner: Box<dyn WiringObject<F, R> + 'a>,
 }
 
-impl<'a, F: Field, R: Rank> BondingObject<'a, F, R> {
+impl<'a, F: Field, R: Rank> MaskObject<'a, F, R> {
     pub(crate) fn new(inner: Box<dyn WiringObject<F, R> + 'a>) -> Self {
         Self { inner }
     }

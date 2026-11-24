@@ -516,13 +516,12 @@ mod tests {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
-            let endo_mask_h = builder.register_bonding(EndoscalarStage::mask()?);
+            let endo_mask_h = builder.register_mask(EndoscalarStage::mask()?);
             let pts_mask_h =
-                builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+                builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
             let final_mask_h =
-                builder.register_bonding(
-                    PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?,
-                );
+                builder
+                    .register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
@@ -596,10 +595,9 @@ mod tests {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
-            builder.register_bonding(EndoscalarStage::mask()?);
-            builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
-            builder
-                .register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
+            builder.register_mask(EndoscalarStage::mask()?);
+            builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+            builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
@@ -642,9 +640,9 @@ mod tests {
 
         let mut builder = TestRegistryBuilder::new();
         let staged_h = builder.register_circuit(MultiStage::new(step.clone()))?;
-        builder.register_bonding(EndoscalarStage::mask()?);
-        builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
-        builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
+        builder.register_mask(EndoscalarStage::mask()?);
+        builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+        builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
         let registry = builder.finalize()?;
         let staged = MultiStage::new(step);
         let y = Fp::from(7);

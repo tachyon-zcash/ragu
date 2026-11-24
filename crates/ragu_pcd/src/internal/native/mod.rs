@@ -1008,81 +1008,79 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 registry
             }
             PreambleStage => {
-                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_mask(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
             ApplicationStage => {
-                registry.register_bonding(ragu_circuits::staging::stage_mask(1, stage_gates)?)
+                registry.register_mask(ragu_circuits::staging::stage_mask(1, stage_gates)?)
             }
-            ApplicationFinalStaged => registry
-                .register_bonding(ragu_circuits::staging::final_stage_mask(1 + stage_gates)?),
-            InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
+            ApplicationFinalStaged => {
+                registry.register_mask(ragu_circuits::staging::final_stage_mask(1 + stage_gates)?)
+            }
+            InnerErrorStage => registry.register_mask(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
             >::mask()?),
-            OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
+            OuterErrorStage => registry.register_mask(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
             >::mask()?),
             QueryStage => {
-                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_mask(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
-            EvalStage => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
-            }
-            InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
+            EvalStage => registry.register_mask(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?),
+            InnerErrorFinalStaged => registry.register_mask(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
             >::final_mask()?),
-            OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
+            OuterErrorFinalStaged => registry.register_mask(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
             >::final_mask()?),
             EvalFinalStaged => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry.register_mask(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
             PreambleFinalStaged => {
-                registry
-                    .register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry.register_mask(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
-            PointsBindingStage => registry.register_bonding(<stages::points::BindingStage<
+            PointsBindingStage => registry.register_mask(<stages::points::BindingStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsPreambleStage => registry.register_bonding(<stages::points::PreambleStage<
+            PointsPreambleStage => registry.register_mask(<stages::points::PreambleStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsRegistryWxStage => registry.register_bonding(<stages::points::RegistryWxStage<
+            PointsRegistryWxStage => registry.register_mask(<stages::points::RegistryWxStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsAbStage => registry.register_bonding(<stages::points::AbStage<
+            PointsAbStage => registry.register_mask(<stages::points::AbStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsFStage => registry.register_bonding(<stages::points::FStage<
+            PointsFStage => registry.register_mask(<stages::points::FStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsWalkStage => registry.register_bonding(<stages::points::WalkStage<
+            PointsWalkStage => registry.register_mask(<stages::points::WalkStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsWalkFinalStaged => registry.register_bonding(<stages::points::WalkStage<
+            PointsWalkFinalStaged => registry.register_mask(<stages::points::WalkStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::final_mask(

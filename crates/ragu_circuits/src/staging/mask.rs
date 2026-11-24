@@ -27,7 +27,7 @@ use crate::{
 /// and scales by the sum of Lagrange coefficients for all masking polynomials,
 /// rather than letting each mask evaluate it redundantly.
 ///
-/// Returns [`Field::ZERO`] when `x == 0` or `y == 0` (bonding polynomials
+/// Returns [`Field::ZERO`] when `x == 0` or `y == 0` (mask polynomials
 /// have zero constant term in $Y$).
 ///
 /// [`Registry`]: crate::registry::Registry

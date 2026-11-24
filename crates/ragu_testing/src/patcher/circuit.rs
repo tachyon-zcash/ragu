@@ -55,7 +55,7 @@ pub struct Capture<F> {
     /// numbering `StageGuard` injects into the stage gadgets. Empty for a
     /// plain circuit.
     ///
-    /// Reserved wires are free by contract — constrained by the bonding masks
+    /// Reserved wires are free by contract — constrained by the stage masks
     /// and by whichever sibling circuit *checks* them, never by reservation —
     /// so a soundness oracle must declare every one: as an input it pins, or,
     /// for the stage values this circuit is responsible for checking, as an

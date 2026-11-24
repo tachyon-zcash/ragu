@@ -11,7 +11,7 @@ use alloc::{format, string::String, sync::Arc, vec::Vec};
 
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    BondingObject, CircuitExt,
+    CircuitExt, MaskObject,
     polynomials::{AggregatorRank, Rank, sparse},
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
@@ -130,8 +130,8 @@ fn check<S: Side<Pasta>, R: Rank, X>(
     circuit: MultiStage<S::F, R, X>,
     prepared: &Prepared<Pasta, S>,
     stages: Vec<sparse::Polynomial<S::F, R>>,
-    masks: Vec<BondingObject<'static, S::F, R>>,
-    final_mask: BondingObject<'static, S::F, R>,
+    masks: Vec<MaskObject<'static, S::F, R>>,
+    final_mask: MaskObject<'static, S::F, R>,
     rng: &mut StdRng,
 ) -> ragu_core::Result<Report>
 where
@@ -144,9 +144,9 @@ where
     let handle = builder.register_circuit(circuit.clone())?;
     let mask_handles: Vec<_> = masks
         .into_iter()
-        .map(|mask| builder.register_bonding(mask))
+        .map(|mask| builder.register_mask(mask))
         .collect();
-    let final_handle = builder.register_bonding(final_mask);
+    let final_handle = builder.register_mask(final_mask);
     let registry = builder.finalize()?;
     let y = S::F::random(|bytes| rng.fill_bytes(bytes));
     let mut satisfied = true;
@@ -170,7 +170,7 @@ fn online_stages<S: Side<Pasta>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
 ) -> ragu_core::Result<(
     Vec<sparse::Polynomial<S::F, R>>,
-    Vec<BondingObject<'static, S::F, R>>,
+    Vec<MaskObject<'static, S::F, R>>,
 )> {
     type Input<S, R> = OnlineInputStage<Pasta, S, R>;
     type Query<S, R> = OnlineQueryStage<Pasta, S, R>;
@@ -195,7 +195,7 @@ fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
 ) -> ragu_core::Result<(
     Vec<sparse::Polynomial<S::F, R>>,
-    Vec<BondingObject<'static, S::F, R>>,
+    Vec<MaskObject<'static, S::F, R>>,
 )> {
     type Lifts<S, R> = LiftsStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Work<S, R> = WorkStage<Pasta, S, TestR, R, HEADER_SIZE>;
@@ -1016,10 +1016,9 @@ fn statement_circuit_exposes_the_output_header() {
     let trace = circuit.trace(prepared).unwrap().into_parts().0;
     let mut builder = TestRegistryBuilder::<Fp, AggregatorRank>::new();
     let handle = builder.register_circuit(circuit.clone()).unwrap();
-    let mask =
-        builder.register_bonding(<Instance as StageExt<Fp, AggregatorRank>>::mask().unwrap());
+    let mask = builder.register_mask(<Instance as StageExt<Fp, AggregatorRank>>::mask().unwrap());
     let final_mask =
-        builder.register_bonding(<Instance as StageExt<Fp, AggregatorRank>>::final_mask().unwrap());
+        builder.register_mask(<Instance as StageExt<Fp, AggregatorRank>>::final_mask().unwrap());
     let registry = builder.finalize().unwrap();
     let mut rng = StdRng::seed_from_u64(13);
     let y = Fp::random(|bytes| rng.fill_bytes(bytes));
@@ -1141,8 +1140,7 @@ fn binding_circuits_expose_the_other_sides_commitments() {
     let trace = circuit.trace(prepared).unwrap().into_parts().0;
     let mut builder = TestRegistryBuilder::<Fp, R>::new();
     let handle = builder.register_circuit(circuit.clone()).unwrap();
-    let final_mask =
-        builder.register_bonding(<NativeWork as StageExt<Fp, R>>::final_mask().unwrap());
+    let final_mask = builder.register_mask(<NativeWork as StageExt<Fp, R>>::final_mask().unwrap());
     let registry = builder.finalize().unwrap();
     let mut rng = StdRng::seed_from_u64(17);
     let y = Fp::random(|bytes| rng.fill_bytes(bytes));

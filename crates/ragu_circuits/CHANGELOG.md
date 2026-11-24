@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Renamed `registry::Key` to `registry::Tag` and `Registry::digest()` to
   `Registry::tag()`.
+- Renamed `BondingObject` to `MaskObject` and
+  `RegistryBuilder::register_bonding` to `register_mask`. Every such
+  polynomial is a stage mask or a final mask.
 
 ## [0.0.0] - 2025-07-29
 
