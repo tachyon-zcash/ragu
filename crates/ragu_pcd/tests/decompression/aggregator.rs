@@ -1040,8 +1040,8 @@ fn decompression_accepts_a_padded_output_from_a_wallet_with_online_polynomials()
         .finalize_with(pasta, Decompression::new(wallet, &mut rng).unwrap())
         .unwrap();
     assert!(matches!(
-        app.decompress(&mut rng, &carrying_proof),
-        Err(Error::InvalidWitness(ref reason)) if reason.to_string().contains("padding slots")
+        app.decompress_with_polynomials(&mut rng, &carrying_proof, padding()),
+        Err(Error::InvalidWitness(ref reason)) if reason.to_string().contains("did not register this wallet output header")
     ));
     let decompressed = app.decompress(&mut rng, &padded_proof).unwrap();
     assert_eq!(*decompressed.data(), Fp::from(42));

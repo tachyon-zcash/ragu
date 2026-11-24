@@ -71,7 +71,7 @@ use crate::{
         },
         transcript as compression_transcript,
     },
-    header::{Header, NUM_ONLINE_FP_POLYS, OnlinePolyCommit, Suffix},
+    header::{Header, NUM_ONLINE_FP_POLYS, Padding, Suffix},
     internal::{ky, native, nested},
     ipa::{IpaCycle, IpaTranscript, MSM, Params},
     profile::{
@@ -543,22 +543,20 @@ where
     ///
     /// # Errors
     ///
-    /// Fails if the output header names an application polynomial, if the
-    /// wallet application's verifier rejects `pcd`, or if proving fails.
+    /// Fails if the output header is not registered for decompression, the
+    /// wallet application's verifier rejects `pcd`, or proving fails.
     ///
     /// # Soundness
     ///
     /// See the unaudited [`Aggregator`] profile's soundness documentation.
-    pub fn decompress<RNG: CryptoRng, H: Header<C::CircuitField>>(
+    pub fn decompress<RNG: CryptoRng, H>(
         &self,
         rng: &mut RNG,
         pcd: &CompressedPcd<C, H>,
-    ) -> Result<Pcd<Profiled<C, Aggregator<HEADER_SIZE>>, R, H>> {
-        if !H::OnlinePolyCommit::is_padding() {
-            return Err(Error::InvalidWitness(
-                "decompression requires a wallet output header with two padding slots".into(),
-            ));
-        }
+    ) -> Result<Pcd<Profiled<C, Aggregator<HEADER_SIZE>>, R, H>>
+    where
+        H: Header<C::CircuitField, OnlinePolyCommit = (Padding, Padding)>,
+    {
         self.decompress_with_polynomials(
             rng,
             pcd,
