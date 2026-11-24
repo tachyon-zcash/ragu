@@ -464,10 +464,10 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     /// of the step that proves the chunks.
     const EXPOSED_ELEMENTS: usize = 2;
 
-    /// The circuit-field side's digits stage, then the commitment of the
-    /// first output slot of the step that proves the chunks.
+    /// The other side's digits stage, the two application output
+    /// commitments and the host IPA helper's native batch commitment.
     fn exposed<K: Rank>() -> usize {
-        2
+        2 + crate::header::NUM_ONLINE_FP_POLYS
     }
 
     fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {

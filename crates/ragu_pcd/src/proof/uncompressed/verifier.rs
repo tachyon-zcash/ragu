@@ -234,6 +234,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let native_bound = ky::nested_bound::<C::Profile, _>(
                 |index| pcd.proof().native_rx_commitment(index),
                 |slot| pcd.proof().online_commitments()[slot],
+                |slot| pcd.proof().native_online_commitments[slot],
             );
             let (compute_v, online_helper) = proof_check!(ky::nested_online_ky_of::<C>(
                 &proof_check!(pcd.proof().nested_instance()),

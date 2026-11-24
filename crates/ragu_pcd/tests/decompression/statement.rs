@@ -104,6 +104,10 @@ fn statement(value: Fp) -> Vec<Fp> {
 
 /// A stand-in for the transcript digest the decompression step stages: the
 /// stand-in statement circuit exposes whatever the step staged.
+fn padding() -> [Vec<Fp>; NUM_ONLINE_FP_POLYS] {
+    core::array::from_fn(|_| alloc::vec![Fp::ONE])
+}
+
 fn digest() -> Fp {
     Fp::from(0x00d1_6e57)
 }
@@ -142,17 +146,16 @@ fn a_decompression_exposing_its_output_header_verifies() -> Result<()> {
     app.context().expose(Some(statement(value)));
     let (decompressed, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (value, Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (value, padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
     assert_eq!(*decompressed.data(), value);
     check_both(&app, &decompressed, true, &mut rng, "decompression")?;
 
-    // The statement binds the header's fields only: whatever polynomials
-    // the compressed proof carried, the decompressed proof's slots are the
-    // padding the step pins, so a `Value` header's slots must mean nothing.
+    // The stand-in statement only binds the header and the digest. This
+    // test supplies the padding expected by the Value header.
     let padding = app.commit(&[Fp::ONE])?;
     assert_eq!(
         decompressed.polynomials(),
@@ -187,8 +190,8 @@ fn a_decompression_exposing_another_statement_is_rejected() -> Result<()> {
     app.context().expose(Some(statement(Fp::from(7))));
     let (relabelled, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (Fp::from(8), Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (Fp::from(8), padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -198,8 +201,8 @@ fn a_decompression_exposing_another_statement_is_rejected() -> Result<()> {
     app.context().expose(None);
     let (unverified, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (Fp::from(7), Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (Fp::from(7), padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -227,8 +230,8 @@ fn an_ordinary_step_exposing_a_statement_is_rejected() -> Result<()> {
     app.context().expose(Some(statement(value)));
     let (decompressed, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (value, Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (value, padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -272,12 +275,11 @@ fn a_flag_other_than_the_steps_is_rejected() -> Result<()> {
     let value = Fp::from(7);
 
     app.context().expose(Some(statement(value)));
-    app.context()
-        .expose_binding([Some(Fp::ZERO), None, None, None]);
+    app.context().expose_binding([Some(Fp::ZERO), None]);
     let (cleared, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (value, Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (value, padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -292,7 +294,7 @@ fn a_flag_other_than_the_steps_is_rejected() -> Result<()> {
     // The parent's own statement circuit is honest: its child's claim is
     // what fails.
     app.context().expose(None);
-    app.context().expose_binding([None; 4]);
+    app.context().expose_binding([None; 2]);
     let (parent, ()) = app.fuse(&mut rng, Consume, (), cleared, app.bootstrap_pcd())?;
     check_both(
         &app,
@@ -305,16 +307,15 @@ fn a_flag_other_than_the_steps_is_rejected() -> Result<()> {
     app.context().expose(Some(statement(value)));
     let (decompressed, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (value, Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (value, padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
     check_both(&app, &decompressed, true, &mut rng, "decompression")?;
 
     app.context().expose(None);
-    app.context()
-        .expose_binding([Some(Fp::ONE), None, None, None]);
+    app.context().expose_binding([Some(Fp::ONE), None]);
     let (set, ()) = app.fuse(&mut rng, Consume, (), decompressed, app.bootstrap_pcd())?;
     check_both(
         &app,
@@ -326,8 +327,7 @@ fn a_flag_other_than_the_steps_is_rejected() -> Result<()> {
 }
 
 /// The step binding is the step's own: a decompression whose statement
-/// circuit exposes another digest, or another point for the opening, than
-/// the step made is rejected, and so is an ordinary step whose circuit
+/// circuit exposes another digest than the step staged is rejected, and so is an ordinary step whose circuit
 /// exposes a digest beside the unit header, where the binding is all zero.
 #[test]
 fn a_step_binding_other_than_the_steps_is_rejected() -> Result<()> {
@@ -337,11 +337,11 @@ fn a_step_binding_other_than_the_steps_is_rejected() -> Result<()> {
 
     app.context().expose(Some(statement(value)));
     app.context()
-        .expose_binding([None, None, None, Some(digest() + Fp::ONE)]);
+        .expose_binding([None, Some(digest() + Fp::ONE)]);
     let (redigested, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (value, Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (value, padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -353,38 +353,18 @@ fn a_step_binding_other_than_the_steps_is_rejected() -> Result<()> {
         "decompression exposing another digest",
     )?;
 
-    // The step opens its slot at its own challenge, which no fixed value
-    // equals but with negligible probability.
-    app.context()
-        .expose_binding([None, Some(Fp::from(3)), None, None]);
-    let (reopened, ()) = app.fuse(
-        &mut rng,
-        Decompress::<Value>::new(),
-        (value, Vec::new(), digest()),
-        app.bootstrap_pcd(),
-        app.bootstrap_pcd(),
-    )?;
-    check_both(
-        &app,
-        &reopened,
-        false,
-        &mut rng,
-        "decompression exposing another opening point",
-    )?;
-
-    app.context().expose_binding([None; 4]);
+    app.context().expose_binding([None; 2]);
     let (decompressed, ()) = app.fuse(
         &mut rng,
-        Decompress::<Value>::new(),
-        (value, Vec::new(), digest()),
+        Decompress::<Value>::new(false),
+        (value, padding(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
     check_both(&app, &decompressed, true, &mut rng, "decompression")?;
 
     app.context().expose(None);
-    app.context()
-        .expose_binding([None, None, None, Some(digest())]);
+    app.context().expose_binding([None, Some(digest())]);
     let (bound, ()) = app.fuse(&mut rng, Consume, (), decompressed, app.bootstrap_pcd())?;
     check_both(
         &app,

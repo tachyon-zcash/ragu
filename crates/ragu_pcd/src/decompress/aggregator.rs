@@ -112,7 +112,8 @@ use crate::{
 ///
 /// # Soundness
 ///
-/// The decompression step's public statement is the wallet's output header.
+/// The decompression step's public statement includes the wallet's output
+/// header and both online polynomial commitments.
 /// The compressed proof's fields are witnesses for the chunk circuits. The
 /// consumer binds each run commitment the transcript absorbs to the stage
 /// holding the values the chunks check. Honest proofs use the same run
@@ -129,7 +130,7 @@ use crate::{
 /// meshes hold to the wallet registries the [`Decompression`] carries. The
 /// proof's own circuit is held to the wallet registry's domain. Both IPAs'
 /// final generators are bound: the host curve's through the polynomial
-/// the decompression step commits in its first output slot, the nested
+/// the decompression step commits in its native online batch, the nested
 /// curve's through the step's online Fq polynomial, each over round
 /// challenges the transcript digest that step stages fixes before its
 /// challenge. The decompression module's *Registry evaluations* and *The
@@ -224,12 +225,13 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
 
     // One online Fq polynomial per step: the nested IPA's s(X).
     const ONLINE_FQ_POLYS: usize = 1;
+    const DECOMPRESS_ONLINE_POLYNOMIALS: bool = true;
 
     // The wallet registry's evaluations the chunks read, as openings of
     // its restrictions, which the meshes hold to the registry.
     const NATIVE_ONLINE: Layout = online::NATIVE;
     const NESTED_ONLINE: Layout = online::NESTED;
-    const NATIVE_MESH: Option<Mesh> = Some(online::MESH);
+    const NATIVE_MESH: Option<Mesh> = Some(online::NATIVE_MESH);
     const NESTED_MESH: Option<Mesh> = Some(online::MESH);
     // The proof's own circuit is one of the wallet registry's: its domain
     // point, at which the claims' restriction is opened, is held to that
@@ -258,16 +260,11 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     /// application's, so the two must be the same parameters. A
     /// decompressed statement is the wallet's output header, which this
     /// application reads through the header type it registers at the
-    /// statement's suffix: it must be the wallet's own type, so that the
-    /// two assign the statement the same encoding and meaning, field order
-    /// and padding included. The unit header is the crate's. A decompressed
-    /// proof's slots hold the host IPA's $s(X)$ and padding, not the
-    /// polynomials the wallet's proof carried, so every header the wallet's
-    /// steps output must leave its slots to padding, which no step can
-    /// open: a step of this application could otherwise open one as the
-    /// polynomial its header names.
+    /// statement's suffix. The aggregator registers the same header type
+    /// for each accepted output. Unregistered polynomial-bearing wallet
+    /// outputs are excluded by the decompression step.
     fn check_context<'params, Base, R, B>(
-        context: &Self::Context<'params, Base, R, B>,
+        context: &mut Self::Context<'params, Base, R, B>,
         params: &Base::Params,
         headers: &BTreeMap<Suffix, TypeId>,
     ) -> Result<()>
@@ -282,18 +279,10 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
                     .into(),
             ));
         }
+        let mut excluded = alloc::vec::Vec::new();
         for (suffix, &(wallet, carries_polynomial)) in context.wallet().output_headers() {
             if suffix.get() < u64::from(NUM_INTERNAL_SUFFIXES) {
                 continue;
-            }
-            if carries_polynomial {
-                return Err(Error::Initialization(
-                    alloc::format!(
-                        "the wallet application outputs a header at suffix {} whose proofs carry an online polynomial: a decompressed proof's slots hold the host IPA's challenge polynomial and padding, so a header a decompressed statement can carry must leave its slots to padding",
-                        suffix.get()
-                    )
-                    .into(),
-                ));
             }
             match headers.get(suffix) {
                 Some(ours) if *ours == wallet => {}
@@ -306,6 +295,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
                         .into(),
                     ));
                 }
+                None if carries_polynomial => excluded.push(*suffix),
                 None => {
                     return Err(Error::Initialization(
                         alloc::format!(
@@ -317,6 +307,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
                 }
             }
         }
+        context.excluded_suffixes = excluded;
         Ok(())
     }
 
@@ -354,6 +345,27 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         B: SelectableBackend,
     {
         Ok(context.native_online_inputs(source))
+    }
+
+    fn native_online_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+        phase: crate::profile::online::Phase,
+        _: &[Base::CircuitField],
+        _: crate::profile::online::PreparationChallenges<Base::CircuitField>,
+    ) -> Result<
+        alloc::vec::Vec<ragu_circuits::polynomials::sparse::Polynomial<Base::CircuitField, R>>,
+    >
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        Ok(if phase == crate::profile::online::Phase::BeforeY {
+            alloc::vec![context.host_ipa_polynomial(source)]
+        } else {
+            alloc::vec::Vec::new()
+        })
     }
 
     fn nested_online_inputs<'params, Base, R, B>(
@@ -520,6 +532,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         online_fq_openings: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         online: Option<&Witness<'_, Base::ScalarField, Self, online_stages::Nested>>,
+        native_online_commitments: &[Base::HostCurve],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
     where
@@ -532,7 +545,8 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
         context.nested_rxs::<Self>(
             source,
-            output_commitments,
+            *output_commitments,
+            native_online_commitments[online::HOST_IPA],
             online_fq_openings,
             registry,
             online::stages(online),
@@ -702,6 +716,7 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
             // The step's online Fq polynomial, which holds the nested
             // IPA's s(X): its commitment is that IPA's G'.
             online: vec![0],
+            native_online: Vec::new(),
             openings: Vec::new(),
         }),
     }
@@ -714,7 +729,8 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
 /// stage after them, and the binding circuit the same stages as the rest,
 /// under the work stage's final mask then the digits stage's. The binding
 /// circuit recomputes the native extension's digits stage and exposes, after
-/// it, the commitment of the proof's first output slot, then, as elements,
+/// it, both application commitments and the host IPA helper's commitment,
+/// then, as elements,
 /// the point and value at which the proof opened its online Fq polynomial.
 ///
 /// # Panics
@@ -755,9 +771,8 @@ pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
         binding: Some(Binding {
             circuit: binding,
             stages: vec![Indices::native().digits()],
-            // The first output slot, where the decompression step commits
-            // the host IPA's s(X).
-            online: vec![0],
+            online: vec![0, 1],
+            native_online: vec![online::HOST_IPA as u32],
             // The step's online Fq polynomial, which holds the nested
             // IPA's s(X): the chunks hold its opening to s at that point.
             openings: vec![0],

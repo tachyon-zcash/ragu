@@ -1,27 +1,36 @@
 # Decompression
 
-Decompression takes a [compressed wallet proof](compression.md) and produces
-an aggregator proof of the same output header. The aggregator runs the wallet
-verifier's equations inside a new [Fuse proof](../iop.md), which can then be
-used as a child.
+Decompression takes a [compressed rank-13 wallet proof](compression.md) and
+produces a rank-15 aggregator [Fuse proof](../iop.md) with the same output
+header and online commitments. The result can be used as a child in another
+aggregator Fuse.
 
 ## Preliminaries {#decompression-preliminaries}
 
-- The wallet application supplies the two source registries and the header
-  types. The implementation uses the wallet rank $k=13$ of
-  [Compression](compression.md#compression-preliminaries) and the aggregator
-  rank $15$. Both applications use the same header size and share one
-  parameter instance. The aggregator supports sizes from 1 through 195
-  field elements, including the suffix. The Standard wallet's
+- The wallet and aggregator have separate registries and can register
+  different application steps. Step indices are local to each application.
+  Ragu registers the internal `Decompress` step and its circuits in the
+  aggregator. These circuits verify the incoming proof using the native and
+  nested registries of the wallet application supplied to `Decompression::new`.
+  The resulting proof uses the aggregator's registries.
+- Both applications use the same header size and share one parameter
+  instance. The aggregator supports sizes from 1 through 195 field elements,
+  including the suffix. The Standard wallet's
   [gate budget](../../guide/configuration.md#header-size-trade-offs)
   limits a wallet and aggregator pair to at most 194. On each curve the
   wallet's generators are a prefix of the aggregator's.
-- For each application-defined output suffix a wallet step uses, the
-  aggregator must register the wallet's own header type. That type must
-  leave both output slots to padding. The decompression step uses the first
-  slot for the host IPA's challenge polynomial and the second for padding.
-  `finalize_with` checks the header types, slot declarations and shared
-  parameters.
+- Registering a step records the header type and suffix of its `Left`,
+  `Right`, and `Output`. For each imported application-defined header, one
+  of the aggregator's registered steps must declare the same type and suffix.
+  Setup requires this declaration for all padding-only application-defined
+  wallet output headers. The decompression circuit excludes the suffixes of
+  omitted wallet output headers that declare online polynomials.
+- For an output with online polynomial slots, the prover supplies their
+  coefficients to `Application::decompress_with_polynomials`.
+  `Application::decompress` supplies the padding polynomials for padding-only
+  outputs.
+  The decompression proof binds both output commitments to the wallet
+  proof's commitments.
 - The aggregator divides the wallet verifier's arithmetic into *chunks* and
   packs them into internal circuits at the aggregator rank. Native chunks run
   over the
@@ -36,7 +45,7 @@ used as a child.
   |---|---|---|
   | the Fuse that produced the wallet proof | $F$ | replayed by the chunks: raw squeezes on the native side, their lifts on the nested side and for both $\beta$ |
   | the compression of the wallet proof | $C$ | replayed by the chunks: each is the lift of a squeeze, with squeezes of its own for each curve |
-  | the Fuse of the aggregator step that carries the chunks | $\text{step}$ | fresh: $w_{\rm step}$ is the point of the step's online openings |
+  | the Fuse of the aggregator step that carries the chunks | $\text{step}$ | fresh: application slots open at $w_{\rm step}$ and the host IPA helper opens at $y_{\rm step}$ |
   | a Fuse that takes the result as a child | $\text{parent}$ | fresh: its $y$ is the point at which the claim targets are evaluated |
 
   The sequence diagrams below show what the prover commits and what the
@@ -46,11 +55,15 @@ used as a child.
 ## Protocol in Detail {#decompression-protocol}
 
 The prover $\mathcal P$ has a compressed wallet proof $\pi$ and its output
-header data. `Application::decompress` first runs the wallet verifier on
+header data. The decompression API first runs the wallet verifier on
 $\pi$ while preparing the witness. If it succeeds, the decompression step
 fuses two bootstrap proofs with unit input headers. The step encodes the
 wallet proof's output header data and constrains the encoded header's
-type suffix to differ from `Dummy` and zero.
+type suffix to differ from `Dummy`, zero, and the suffixes of omitted wallet
+output headers that declare online polynomials. Each exclusion adds one
+multiplication gate and two constraints to the decompression step.
+`ApplicationBuilder::finalize_with` rejects a circuit that exceeds its
+rank's gate or constraint budget.
 
 Every aggregator proof carries the chunk, statement and binding circuits.
 For the decompression step the prover supplies $\pi$ to these circuits.
@@ -66,9 +79,9 @@ targets at its fresh $y$ and the nested targets at the lift $y_q$.
 ```mermaid
 flowchart TB
     accTitle: Boundaries of a decompression
-    accDescr: The compressed wallet proof supplies its circuit-field parts to the native chunks and its scalar-field parts to the nested chunks. The native chunks replay the wallet proof's Fuse and compression transcripts. The two sides exchange challenge bits, run commitments and the digits of full-width scalars, and each recomputes the commitments of the other's stages. The enclosing aggregator Fuse fixes its online batches before its own challenge and opens them at that challenge, which gives both sides the registry values and the values of each IPA polynomial. The openings are batched into the step's accumulator with an outgoing source restriction, and the claims of the chunk, statement and binding circuits join the step's frontier. A consumer folds those claims at a fresh challenge of its own and inherits the restriction, or checks both at a root.
+    accDescr: The compressed wallet proof supplies its circuit-field parts to the native chunks and its scalar-field parts to the nested chunks. The native chunks replay the wallet proof's Fuse and compression transcripts. The two sides exchange challenge bits, run commitments and the digits of full-width scalars, and each recomputes the commitments of the other's stages. The enclosing aggregator Fuse supplies the registry and IPA polynomial evaluations through its own online batches. The openings are batched into the step's accumulator with an outgoing source restriction, and the claims of the chunk, statement and binding circuits join the step's frontier. A consumer folds those claims at a fresh challenge of its own and inherits the restriction, or checks both at a root.
     W["Compressed wallet proof<br/>instance and messages;<br/>its Fuse and compression<br/>challenges are replayed"]
-    ON["Online batches of the step<br/>wallet registry restrictions,<br/>s(X) of each IPA;<br/>fixed before w_step,<br/>opened at the fresh w_step"]
+    ON["Online batches of the step<br/>wallet registry restrictions,<br/>s(X) of each IPA;<br/>host s(X) opened at y_step"]
     NA["Native chunks<br/>replay both transcripts,<br/>host scalar equations,<br/>nested point arithmetic"]
     NE["Nested chunks<br/>lift the same bits,<br/>nested scalar equations,<br/>host point arithmetic"]
     FR["Frontier of the step<br/>claims of the chunk,<br/>statement and<br/>binding circuits"]
@@ -77,7 +90,7 @@ flowchart TB
     W -->|"circuit-field parts"| NA
     W -->|"scalar-field parts"| NE
     NA <-->|"challenge bits,<br/>run commitments,<br/>digits of scalars"| NE
-    ON -->|"registry values,<br/>s at w_step"| NA
+    ON -->|"registry values,<br/>s at y_step"| NA
     ON -->|"registry values,<br/>s at the lift of w_step"| NE
     ON --> AC
     NA --> FR
@@ -120,8 +133,8 @@ has zeros in every unused coefficient.
 1. **Native.** The host commitments $[\mathrm{instance}]$ and
    $[\mathrm{messages}]$ hold the circuit-field parts of the instance and
    the compression messages, respectively. The instance stage also holds
-   the wallet proof's encoded output header, followed by a flag and three
-   opening fields for the enclosing step's statement claim.
+   the wallet proof's encoded output header, followed by the flag and staged digest
+   for the enclosing step's statement claim.
 2. **Nested.** Each scalar-field run of the compression transcript has its
    own nested stage commitment $[\mathrm{run}_i]$. The nested IPA's final
    scalar $c$ is checked after the last squeeze and occupies a separate
@@ -266,11 +279,10 @@ $G'$ points, one on each curve.
    with the last squeeze they replayed. This fixes both IPAs' round
    challenges before $w_{\rm step}$ under the sponge's collision and
    preimage resistance.
-2. **Host IPA.** The decompression step commits $s$ in its first output
-   slot before $w_{\rm step}$ and opens it at $w_{\rm step}$. Under
-   the flag, the native chunks check the opened value against
-   $s(w_{\rm step})$ and the nested chunks equate the host $G'$ with the
-   slot commitment.
+2. **Host IPA.** The decompression step commits $s$ in the native online
+   batch before $y_{\rm step}$ and opens it at $y_{\rm step}$. Under
+   the flag, the native chunks check the opening against $s(y_{\rm step})$
+   and the nested chunks hold the host $G'$ to that batch commitment.
 3. **Nested IPA.** Every step commits the nested $s$ as its
    online polynomial for polynomial oracle access over $\F_q$ before
    $w_{\rm step}$. Its nested `compute_v` folds the opening at the lift
@@ -279,13 +291,13 @@ $G'$ points, one on each curve.
    The native chunks' $G'$ must equal that commitment, and the nested
    chunks check the opening value against $s(w_{{\rm step},q})$.
 
-For a decompression step, both $s$ and the slot polynomial are fixed before
-$w_{\rm step}$. If they differ, they agree only at a root of their
+For a decompression step, both polynomials in each equality are fixed
+before its opening challenge. If they differ, they agree only at a root of their
 difference. At aggregator rank a uniform nested lift hits such a root with
 probability at most $2^{15}/2^{143}=2^{-128}$. The host check uses the
 larger range of the raw challenge.
 
-In an ordinary step the flag disables the host slot check. The nested
+In an ordinary step the flag disables the host IPA helper check. The nested
 opening check still runs, but the wallet IPA challenges can depend on
 $w_{\rm step}$ because the step stages no digest. The wallet statement in
 this case is the unit header.
@@ -310,29 +322,28 @@ by $0,1$. A point contributes its affine $x$
 then $y$ coordinate.
 
 1. **Native statement.** The circuit index determines the flag. For the
-   decompression step, start with its encoded output header, then $1$, the
-   first output slot's opening point and value, and the left input's
-   first-slot opening point (the digest).
-   The statement circuit exposes the wallet proof's encoded output header
-   and the four fields from $[\mathrm{instance}]$. The step's `hashes_1`
-   exports the three opening fields after its output header and circuit index.
-   For an ordinary step the extension targets the canonical wallet proof's
-   unit header and four zeros. The application step has its own output header.
+   decompression step, the claim takes the encoded output header, then $1$
+   and the digest exposed as the left input's first opening point.
+   For an ordinary step the claim targets the canonical wallet proof's
+   unit header and two zeros. The application step has its own output header.
 2. **Native binding.** Match the run commitments absorbed in replay and the
    recomputed nested $[\mathrm{lifts}]$ and $[\mathrm{digits}]$ commitments
    against the nested stages. Match the nested IPA's $G'$ against the
    step's exported $\F_q$ commitment.
 3. **Nested binding.** Match the recomputed native $[\mathrm{digits}]$
-   commitment against its stage and the exposed slot point against the
-   first output slot's commitment. Under the flag this point also equals
-   the host IPA's $G'$. Match the exposed $\F_q$ opening point and value
-   against the opening folded by nested `compute_v`.
+   commitment against its stage. Match the next three points against the
+   two application output commitments and the host IPA batch commitment.
+   Under the flag the chunks equate the two application commitments with
+   the wallet proof's slots and the batch commitment with the host $G'$.
+   Match the exposed $\F_q$ opening against the one nested `compute_v` folded.
 
 ### Output {#decompression-output}
 
-`Application::decompress` returns an aggregator-rank proof with the wallet
-proof's output header data. It can be used as a child of Fuse or compressed
-with the aggregator's parameters.
+The decompression API returns an aggregator-rank proof with the wallet
+proof's output header and commitments, and the supplied polynomial
+coefficients. The decompression step folds the output opening claims into
+its PCS accumulator. A later Fuse can open those polynomials through the
+usual oracle API. The same proof can be compressed at the aggregator rank.
 
 In the code, decompression is implemented in `ragu_pcd`'s private
 `decompress` module. Its

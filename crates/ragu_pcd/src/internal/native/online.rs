@@ -154,13 +154,6 @@ pub(crate) struct QueryOutput<'dr, D: Driver<'dr>> {
 /// A step's online openings, as wires, in slot order.
 pub(crate) type QueriesOutput<'dr, D> = FixedVec<QueryOutput<'dr, D>, QueriesLen>;
 
-/// The slot whose opening a step exposes for the step binding, the point
-/// and the value: its first output slot, where the decompression step
-/// commits the host IPA's $s(X)$ and opens it at $\zeta$ (see
-/// [`decompress`](crate::step::internal::decompress)).
-pub(crate) const STEP_OPENING: usize =
-    OUTPUT_SLOTS.start + crate::step::internal::decompress::S_SLOT;
-
 /// The slot whose opening's point a step exposes for the step binding: its
 /// left input's first, which the decompression step opens at the transcript
 /// digest it staged.
@@ -189,28 +182,16 @@ impl<P: Profile> Len for StepBindingLen<P> {
     }
 }
 
-/// The step binding's openings among a step's `queries`, in profile `P`:
-/// the [`STEP_OPENING`] slot's point and value, then the [`STEP_DIGEST`]
-/// slot's point; none for a profile without a statement circuit.
+/// The step's staged digest, exposed as the left opening's point.
 pub(crate) fn step_binding<P: Profile, F: Copy>(queries: &Queries<F>) -> Vec<F> {
-    let binding = [
-        queries[STEP_OPENING].x,
-        queries[STEP_OPENING].y,
-        queries[STEP_DIGEST].x,
-    ];
-    binding[..StepBindingLen::<P>::len()].to_vec()
+    [queries[STEP_DIGEST].x][..StepBindingLen::<P>::len()].to_vec()
 }
 
-/// [`step_binding`] over the openings' wires.
+/// [`step_binding`] over the opening's point wire.
 pub(crate) fn step_binding_wires<'dr, D: Driver<'dr>, P: Profile>(
     queries: &QueriesOutput<'dr, D>,
 ) -> FixedVec<Element<'dr, D>, StepBindingLen<P>> {
-    let binding = [
-        &queries[STEP_OPENING].x,
-        &queries[STEP_OPENING].y,
-        &queries[STEP_DIGEST].x,
-    ];
-    FixedVec::from_fn(|i| binding[i].clone())
+    FixedVec::from_fn(|_| queries[STEP_DIGEST].x.clone())
 }
 
 /// Allocates the openings' wires from their values.
@@ -248,6 +229,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             Phase::BeforeW,
             PreparationChallenges::default(),
             Some(children),
+            source,
             builder,
         )
     }
@@ -258,9 +240,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         &self,
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        self.supply_native_online(phase, challenges, None, builder)
+        self.supply_native_online(phase, challenges, None, source, builder)
     }
 
     /// Supplies the polynomials the profile and the mesh fix at `phase`,
@@ -270,10 +253,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
         children: Option<[&Proof<C, R>; 2]>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let supplied = C::Profile::native_online_polynomials::<C::Base, R, B>(
             &self.context,
+            source,
             phase,
             builder.native_online().early_values(),
             challenges,

@@ -536,6 +536,7 @@ impl<C: ProfiledCycle> Instance<C> {
         let native_bound = ky::nested_bound::<C::Profile, _>(
             |index| self.native_commitment(native::RxComponent::Rx(index)),
             |slot| self.online_commitments[slot],
+            |slot| self.native_online_commitments[slot],
         );
         let (compute_v, online_helper) = ky::nested_online_ky_of::<C>(
             &self.nested_unified(challenges)?,

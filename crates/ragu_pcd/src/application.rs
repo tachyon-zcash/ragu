@@ -358,10 +358,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     pub fn finalize_with(
         mut self,
         params: &'params C::Params,
-        context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
+        mut context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
-        C::Profile::check_context(&context, params, &self.header_map)?;
+        C::Profile::check_context(&mut context, params, &self.header_map)?;
 
         // The decompression step, which a profile with a statement circuit
         // registers below, stages a value: the application stage, which
@@ -486,7 +486,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // proof's statement (see `step::internal::decompress`).
         if decompresses {
             self = self.register_internal_step(
-                crate::step::internal::decompress::Decompress::<()>::new(),
+                crate::step::internal::decompress::Decompress::<()>::with_excluded_suffixes(
+                    crate::profile::ProverContext::excluded_decompression_suffixes(&context),
+                    C::Profile::DECOMPRESS_ONLINE_POLYNOMIALS,
+                ),
             )?;
         }
 

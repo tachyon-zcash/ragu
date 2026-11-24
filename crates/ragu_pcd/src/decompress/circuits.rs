@@ -342,9 +342,7 @@ chunk_circuit!(
 /// output is a claim on the decompressed proof's statement, which the
 /// decompression step's verifier makes through the circuit's $k(y)$ (see
 /// [`statement_ky`](crate::internal::native::stages::preamble::ProofInputs::statement_ky)).
-/// The same claim sets the step binding: the flag to whether the proof is
-/// the decompression step's, and the opening to that step's own, which the
-/// chunks check the IPA's $s(X)$ against.
+/// The same claim binds the decompression flag and staged transcript digest.
 pub(crate) struct StatementCircuit<C: Cycle, S, K, R, const HEADER_SIZE: usize> {
     schedule: Arc<Schedule>,
     _marker: PhantomData<fn() -> (C, S, K, R)>,
@@ -956,18 +954,18 @@ where
             .iter()
             .map(|&slot| self.lift(slot))
             .collect();
-        // The step binding: in the decompression step, the polynomial the
-        // step committed in its first output slot takes the value of s(X)
-        // at the point the step opened it. The slot's commitment is then
-        // that of s(X), the IPA's G', which the other side holds its G' to.
+        // The batch opens the host IPA helper at y. The other side binds
+        // the helper's commitment to G' under the same flag.
         let step = self.schedule.layout.instance.step;
         if step.len != 0 {
             let elements = self.loaded.instance.elements;
             let flag = &elements[step.at(stages::step::FLAG)];
-            let x = &elements[step.at(stages::step::X)];
-            let y = &elements[step.at(stages::step::Y)];
-            let expected = ipa::s_at(dr, &rounds, x)?;
-            let gap = y.sub(dr, &expected);
+            let query = self.loaded.online_query.elements;
+            let point = &query[super::online::QUERY_Y];
+            let opening =
+                &query[super::online::Values::value_at(super::online::Values::NATIVE.host_ipa())];
+            let expected = ipa::s_at(dr, &rounds, point)?;
+            let gap = opening.sub(dr, &expected);
             flag.mul(dr, &gap)?.enforce_zero(dr)?;
             // And the digest the step staged before its challenge is the
             // transcript's last squeeze: the round messages of both
@@ -1327,23 +1325,19 @@ where
                 ctx.element(dr, src)?.enforce_equal(dr, wire)?;
             }
         }
-        Chunk::EqualIf {
-            flag,
-            left,
-            right,
-            bind,
-        } => {
-            // The flag's bit is the chunk's own witness, held to the other
-            // side's flag by the digit's part of that side's digits stage
-            // commitment below.
+        Chunk::EqualIf { flag, pairs, bind } => {
+            // Bind the flag once to the digit sent by the other side, and
+            // use the same bit for each point comparison.
             let bit = Boolean::alloc(dr, &mut (), ctx.flag(*flag))?;
-            let mut left_coordinates = Vec::with_capacity(2);
-            GadgetExt::write(&ctx.point(dr, *left)?, dr, &mut left_coordinates)?;
-            let mut right_coordinates = Vec::with_capacity(2);
-            GadgetExt::write(&ctx.point(dr, *right)?, dr, &mut right_coordinates)?;
-            for (left, right) in left_coordinates.iter().zip(&right_coordinates) {
-                let gap = left.sub(dr, right);
-                bit.element().mul(dr, &gap)?.enforce_zero(dr)?;
+            for &[left, right] in pairs {
+                let mut left_coordinates = Vec::with_capacity(2);
+                GadgetExt::write(&ctx.point(dr, left)?, dr, &mut left_coordinates)?;
+                let mut right_coordinates = Vec::with_capacity(2);
+                GadgetExt::write(&ctx.point(dr, right)?, dr, &mut right_coordinates)?;
+                for (left, right) in left_coordinates.iter().zip(&right_coordinates) {
+                    let gap = left.sub(dr, right);
+                    bit.element().mul(dr, &gap)?.enforce_zero(dr)?;
+                }
             }
             let digit = Digits::of_flag(bit);
             writes.push(Write::Point(bind.out, bind_sum(dr, ctx, &digit, bind)?));

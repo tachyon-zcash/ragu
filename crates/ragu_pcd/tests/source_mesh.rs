@@ -394,6 +394,7 @@ impl Profile for SourceCapacity {
     }
     fn native_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         _: &[Base::CircuitField],
         _: PreparationChallenges<Base::CircuitField>,

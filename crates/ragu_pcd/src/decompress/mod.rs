@@ -145,58 +145,22 @@
 //! The chunks run in every proof of the profile, and what they verify is
 //! the statement of one step alone, the decompression step, whose output
 //! header the statement circuit's claim holds to the header they verified
-//! ([`statement_ky`]). The same claim carries the step binding, four
-//! values of the instance stage after the header: a flag, one in a proof
-//! of the decompression step and zero in any other, the point and value
-//! at which that step opened its first output slot, and the transcript
-//! digest that step staged, all zero in any other. A step folds its own
-//! application claim, so its openings stay in its own preamble: its
-//! `hashes_1` exports these three after its output header and circuit
-//! id, and the step that consumes its proof holds its copy to that
-//! export
-//! ([`StepBindingLen`](crate::internal::native::online::StepBindingLen)).
-//! Through them both IPAs' round challenges are fixed before the step's
-//! challenge $\zeta = w$, and the host curve's $G'$ is bound:
+//! ([`statement_ky`]). The same claim binds the step's circuit-id flag
+//! and the digest the step staged. The step opens the bootstrap's first
+//! slot at the staged digest and exports the point through `hashes_1`.
+//! The native chunks hold the digest to the compression transcript's
+//! last squeeze, fixing both IPAs' round messages before the step's $w$.
 //!
-//! - The decompression step stages the transcript digest: the last
-//!   squeeze of the compression's transcript over the proof it
-//!   decompresses, taken after every round message of both curves' IPAs
-//!   ([`Regions::digest`](program::Regions::digest)). The application
-//!   stage holds it, so the proof commits it before $w$, and the step
-//!   makes it public as the point at which it opens its left input's
-//!   first slot ([`Decompress`]). Under the flag, the circuit-field side
-//!   holds that value to the last squeeze of the transcript it runs. The
-//!   transcript is one sponge over the statement and both curves'
-//!   messages, and a round challenge is a squeeze of what was absorbed
-//!   before it, so a prover who committed the digest before $w$ fixed
-//!   both IPAs' round challenges then, unless it finds a second
-//!   transcript with the same last squeeze, or the first for a digest it
-//!   chose: a collision or a preimage in the sponge.
-//! - The decompression step commits $s(X)$ of the host curve's IPA, over
-//!   the round challenges of the proof it decompresses, in its first
-//!   output slot, before $\zeta$, and opens the slot at $\zeta$. Its
-//!   fuse proves the opening is of the committed polynomial, as it does
-//!   an application's.
-//! - Under the flag, the circuit-field side holds the opened value to
-//!   [`ipa::s_at`](gadgets::ipa::s_at) at that point over the round
-//!   challenges its transcript squeezed. The committed polynomial and, by
-//!   the digest, the round challenges were fixed before $\zeta$, so the
-//!   two agree at $\zeta$ only if the slot holds that proof's $s(X)$,
-//!   except with the probability that $\zeta$ is a root of their
-//!   difference: at most the rank's coefficient count over the size of the
-//!   challenge's range.
-//! - The flag crosses to the scalar-field side as a digit of the
-//!   circuit-field side's digits stage, which that side's binding circuit
-//!   recomputes. Its binding circuit also exposes a point the proof's
-//!   consumer holds to the commitment of the proof's first output slot
-//!   ([`Binding::online`](crate::profile::Binding::online)), and under
-//!   the flag the side holds its $G'$ to that point. The slot's
-//!   commitment is over the generators the IPA folds, with no other term,
-//!   so it is $\langle s, G \rangle$.
-//!
-//! In any other step the flag is zero and nothing is held: the chunks
-//! verify the canonical proof, whose statement is the unit header's and
-//! binds nothing, and the slot is the application's.
+//! The host IPA's $s(X)$ is a native profile batch polynomial committed
+//! in BridgeSPrime, before the step's $y$, and opened at $y$. The native
+//! chunks hold that PCS opening to [`ipa::s_at`](gadgets::ipa::s_at) over
+//! the previously fixed round challenges. This tests equality of the
+//! polynomials at a fresh point. The nested chunks hold the host IPA's
+//! $G'$ to that batch commitment and hold both application output
+//! commitments to their counterparts in the verified wallet proof.
+//! The nested binding claim ties these points to the ones carried by
+//! the aggregator proof. All three comparisons use the same flag,
+//! bound by the recomputed native digits stage commitment.
 //!
 //! The nested curve's $s(X)$ is over the scalar field, which no output
 //! slot holds, so its $G'$ is bound through the step's online polynomial
@@ -237,9 +201,10 @@
 //! establish that proof's $G'$; nothing rests on it, since that proof's
 //! statement binds nothing.
 //!
-//! A decompressed proof's first output slot therefore holds $s(X)$, not
-//! the constant one; the header types a decompressed statement can carry
-//! leave their slots to padding, which `finalize_with` checks ([`Decompress`]).
+//! The application can supply both polynomials when decompressing a
+//! wallet proof. The output retains the wallet commitments and its
+//! openings are checked by the usual PCS batch. Output suffixes of
+//! unregistered wallet headers are excluded at setup.
 //!
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
 //! [`Decompress`]: crate::step::internal::decompress

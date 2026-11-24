@@ -79,7 +79,8 @@ fn check(schedule: &Schedule) {
         .iter()
         .chain([&regions.g_prime])
         .chain(&regions.runs)
-        .chain(&regions.slot_commitment)
+        .chain(regions.output_commitments.iter().flatten())
+        .chain(&regions.host_ipa_commitment)
         .copied()
         .collect();
     for &slot in &supplied_points {
@@ -289,11 +290,11 @@ fn check(schedule: &Schedule) {
                 );
                 online_chunks += 1;
             }
-            Chunk::EqualIf {
-                left, right, bind, ..
-            } => {
-                read_point(left, &points);
-                read_point(right, &points);
+            Chunk::EqualIf { pairs, bind, .. } => {
+                for [left, right] in pairs {
+                    read_point(left, &points);
+                    read_point(right, &points);
+                }
                 assert_eq!(bind.generators.len(), 1, "a flag has one digit");
                 assert!(bind.init.is_none(), "a flag's part starts its own sum");
                 write_point(bind.out, &mut points);

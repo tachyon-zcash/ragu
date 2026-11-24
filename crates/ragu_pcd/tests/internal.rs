@@ -1542,18 +1542,19 @@ fn test_header_capacity_at_finalize() {
 
     type Extended = Profiled<Pasta, Decompressing>;
     let extended =
-        ApplicationBuilder::<Extended, R, 156>::new().finalize_with(params, Default::default());
+        ApplicationBuilder::<Extended, R, 158>::new().finalize_with(params, Default::default());
     assert!(
         extended.is_ok(),
-        "156 fields must fit: {:?}",
+        "158 fields must fit: {:?}",
         extended.err()
     );
     let oversized =
-        ApplicationBuilder::<Extended, R, 157>::new().finalize_with(params, Default::default());
-    assert!(matches!(
-        oversized,
-        Err(Error::GateBoundExceeded { limit: 2047 })
-    ));
+        ApplicationBuilder::<Extended, R, 159>::new().finalize_with(params, Default::default());
+    assert!(
+        matches!(oversized, Err(Error::GateBoundExceeded { limit: 2047 })),
+        "159 fields must exceed the gate budget, got {:?}",
+        oversized.err()
+    );
 }
 
 /// The fold's groups are the standard profile's for the standard profile,

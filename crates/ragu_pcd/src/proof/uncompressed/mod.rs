@@ -201,13 +201,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// padded with the constant one (see `internal::native::online`). Committed
     /// before `w`; the parent opens them as its left or right slots.
     pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS],
-    /// What the step exposes of its online openings for the statement
-    /// claim's step binding, in a profile with a statement circuit: the
-    /// point and the value at which it opened its first output slot, then
-    /// the point at which it opened its left input's first slot (see
-    /// [`online::step_binding`]). Its `hashes_1` exports them after its
-    /// output header and circuit id, and the parent holds its copy to that
-    /// export. Empty for a profile without a statement circuit.
+    /// In a profile with a statement circuit, the opening point of the
+    /// left input's first slot (see [`online::step_binding`]). That point
+    /// exposes the staged digest in a decompression step. The step's
+    /// `hashes_1` exports the point after the output header and circuit id.
+    /// The parent binds its copy to that export. Empty for a profile without
+    /// a statement circuit.
     pub(crate) step_binding: Vec<C::CircuitField>,
     /// The commitments of the step's online Fq polynomials the profile's
     /// native binding names, in its order: what the step's

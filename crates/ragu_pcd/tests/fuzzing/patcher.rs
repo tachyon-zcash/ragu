@@ -483,7 +483,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             y: None,
             x: None,
         };
-        self.prepare_native_online(Phase::BeforeY, preparation, &mut builder)?;
+        self.prepare_native_online(Phase::BeforeY, preparation, None, &mut builder)?;
         self.prepare_nested_online(Phase::BeforeY, preparation, &mut builder)?;
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
@@ -573,7 +573,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mu_prime = transcript.challenge(&mut dr)?;
 
         preparation.y = Some(*y.value().take());
-        self.prepare_native_online(Phase::BeforeX, preparation, &mut builder)?;
+        self.prepare_native_online(Phase::BeforeX, preparation, None, &mut builder)?;
         self.prepare_nested_online(Phase::BeforeX, preparation, &mut builder)?;
         self.compute_ab(
             rng,
@@ -591,7 +591,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let x = transcript.challenge(&mut dr)?;
 
         preparation.x = Some(*x.value().take());
-        self.prepare_native_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.prepare_native_online(Phase::BeforeAlpha, preparation, None, &mut builder)?;
         self.prepare_nested_online(Phase::BeforeAlpha, preparation, &mut builder)?;
         self.commit_native_online_query(preparation, rng, &mut builder)?;
         self.commit_nested_online_query(preparation, rng, &mut builder)?;
