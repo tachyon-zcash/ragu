@@ -125,6 +125,23 @@ const POLYNOMIALS: [Phase; slot::OUTGOING + 1] = {
     phases
 };
 
+// The host IPA helper is fixed in BridgeSPrime before y. Keeping the
+// pre-w phase unchanged preserves the wallet compression's run bases.
+pub(crate) const HOST_IPA: usize = slot::U;
+const NATIVE_POLYNOMIALS: [Phase; POLYNOMIALS.len() + 1] = {
+    let mut phases = [Phase::BeforeY; POLYNOMIALS.len() + 1];
+    let mut i = 0;
+    while i < POLYNOMIALS.len() {
+        phases[native_slot(i)] = POLYNOMIALS[i];
+        i += 1;
+    }
+    phases
+};
+
+const fn native_slot(slot: usize) -> usize {
+    slot + (slot >= HOST_IPA) as usize
+}
+
 const fn restriction(polynomial: usize, x: usize, y: usize, helper: usize) -> Restriction {
     Restriction {
         polynomial,
@@ -184,10 +201,19 @@ pub(crate) const MESH: Mesh = Mesh {
     outgoing: slot::OUTGOING,
 };
 
+pub(crate) const NATIVE_MESH: Mesh = Mesh {
+    u: native_slot(slot::U),
+    outgoing: native_slot(slot::OUTGOING),
+    ..MESH
+};
+
 /// The mesh's intersections, each one shared value wire: a restriction
 /// with its helper, a helper with $U$, and $U$ with the outgoing
 /// restriction.
 const EDGES: usize = 2 + INTRODUCED.len() + HELPERS.len() + 1;
+
+/// The enclosing step's y challenge in the query stage, after w.
+pub(crate) const QUERY_Y: usize = 1;
 
 /// The query stage's value wires that hold the registry's evaluations, on
 /// a side whose standard profile registers `circuits` internal circuits.
@@ -282,6 +308,15 @@ impl Values {
 
     /// The value wires: the mesh's intersections, then the evaluations.
     pub(crate) const fn len(self) -> usize {
+        self.u_y() + 1 + self.native as usize
+    }
+
+    /// The evaluation of the host IPA's challenge polynomial at y.
+    pub(crate) const fn host_ipa(self) -> usize {
+        assert!(
+            self.native,
+            "only the native batch has the host IPA polynomial"
+        );
         self.u_y() + 1
     }
 
@@ -493,6 +528,20 @@ const fn openings<const LEN: usize>(values: Values) -> [Opening; LEN] {
         value += 1;
         i += 1;
     }
+    if values.native {
+        let mut i = 0;
+        while i < next {
+            out[i].polynomial = native_slot(out[i].polynomial);
+            i += 1;
+        }
+        out[next] = Opening {
+            polynomial: HOST_IPA,
+            point: Point::Challenge(Challenge::Y),
+            value,
+        };
+        next += 1;
+        value += 1;
+    }
     assert!(next == LEN, "every opening is listed");
     assert!(value == values.len(), "every value has an opening");
     out
@@ -511,7 +560,7 @@ const NESTED_OPENINGS: [Opening; Values::NESTED.openings()] = openings(Values::N
 /// The native side's batch: the mesh's polynomials and the openings of
 /// the registry evaluations the circuit-field side's chunks read.
 pub(crate) const NATIVE: Layout = Layout {
-    polynomials: &POLYNOMIALS,
+    polynomials: &NATIVE_POLYNOMIALS,
     openings: &NATIVE_OPENINGS,
     inputs: input::NATIVE,
     points: 0,

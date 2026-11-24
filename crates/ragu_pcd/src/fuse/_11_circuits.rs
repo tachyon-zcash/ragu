@@ -399,6 +399,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             builder.online_fq_openings(),
             &self.nested_registry,
             online.as_ref(),
+            builder.native_online().commitments(),
             rng,
         )?;
         let rxs = builder.nested_online_mut().extension_rxs(rxs)?;

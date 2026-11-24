@@ -373,6 +373,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 _ => unreachable!("a binding names extension stages"),
             },
             |slot| self.stashed_online_commitments[slot].clone(),
+            |slot| self.online_points[slot].clone(),
         )
     }
 

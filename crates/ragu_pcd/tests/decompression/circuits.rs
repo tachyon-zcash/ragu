@@ -885,20 +885,30 @@ fn the_step_binding_holds_g_prime_to_the_slot() {
         "the digest is the transcript's last squeeze"
     );
     let digest = native.work.elements[digest_slot];
-    let opened = native
-        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y], digest)
-        .unwrap();
+    let query = |opening| {
+        let mut query = native.online_query.elements.clone();
+        let wire = crate::decompress::online::Values::value_at(
+            crate::decompress::online::Values::NATIVE.host_ipa(),
+        );
+        query[crate::decompress::online::QUERY_Y] = x;
+        query[wire] = opening;
+        query
+    };
+    let prepared = |opening, digest| {
+        native
+            .for_decompression::<TestR, HEADER_SIZE>(params, digest)
+            .unwrap()
+            .with_online(native.online_input.elements.clone(), query(opening))
+            .unwrap()
+    };
+    let opened = prepared(y, digest);
     assert!(
         !rejected(&opened),
         "the opening of s(X) and the digest are accepted"
     );
-    let other = native
-        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y + Fp::ONE], digest)
-        .unwrap();
+    let other = prepared(y + Fp::ONE, digest);
     assert!(rejected(&other), "another value is rejected under the flag");
-    let other_digest = native
-        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y], digest + Fp::ONE)
-        .unwrap();
+    let other_digest = prepared(y, digest + Fp::ONE);
     assert!(
         rejected(&other_digest),
         "another digest is rejected under the flag"
@@ -911,25 +921,35 @@ fn the_step_binding_holds_g_prime_to_the_slot() {
         assert!(!rejected(&unset), "nothing is held without the flag");
     }
 
-    // The scalar-field side: the slot's commitment is G', or not.
     let nested = &sides.nested;
-    let held = nested
-        .for_step::<TestR, HEADER_SIZE>(params, true, commitment, [Fq::ZERO, Fq::ONE])
-        .unwrap();
-    assert!(!rejected(&held), "G' in the slot is accepted");
-    let stray = Pasta::host_generators(params).g()[7];
-    let swapped = nested
-        .for_step::<TestR, HEADER_SIZE>(params, true, stray, [Fq::ZERO, Fq::ONE])
-        .unwrap();
+    let span = nested.schedule.layout.instance.commitments;
+    let wallet_slots = core::array::from_fn(|i| nested.instance.points[span.at(span.len - 2 + i)]);
+    let prepare = |flag, slots, ipa| {
+        nested
+            .for_step::<TestR, HEADER_SIZE>(params, flag, slots, ipa, [Fq::ZERO, Fq::ONE])
+            .unwrap()
+    };
+    let held = prepare(true, wallet_slots, commitment);
     assert!(
-        rejected(&swapped),
-        "another point is rejected under the flag"
+        !rejected(&held),
+        "the wallet slots and IPA commitment are accepted"
     );
-    let free = nested
-        .for_step::<TestR, HEADER_SIZE>(params, false, stray, [Fq::ZERO, Fq::ONE])
-        .unwrap();
+    let stray = Pasta::host_generators(params).g()[7];
+    assert!(
+        rejected(&prepare(true, wallet_slots, stray)),
+        "another IPA point is rejected"
+    );
+    for i in 0..wallet_slots.len() {
+        let mut wrong = wallet_slots;
+        wrong[i] = stray;
+        assert!(
+            rejected(&prepare(true, wrong, commitment)),
+            "wallet slot {i} is bound"
+        );
+    }
+    let free = prepare(false, [stray; 2], stray);
     assert!(!rejected(&free), "no point is held without the flag");
-    assert_eq!(exposed(&free)[1], stray, "the slot's commitment is exposed");
+    assert_eq!(&exposed(&free)[1..], &[stray; 3]);
 
     // The flag crosses in the digits stage: the scalar-field side's
     // recomputation is the stage's commitment only under the same flag.
@@ -973,12 +993,13 @@ fn the_online_fq_opening_holds_the_nested_g_prime() {
 
     // Prepared outside a step, the side holds the opening at zero.
     assert!(!rejected(nested), "s(0) = 1 is accepted");
-    let slot = nested.schedule.regions.slot_commitment.unwrap();
-    let held = nested.work.points[slot];
+    let slots = nested.schedule.regions.output_commitments.unwrap();
+    let held = slots.map(|slot| nested.work.points[slot]);
+    let host_ipa = nested.work.points[nested.schedule.regions.host_ipa_commitment.unwrap()];
     let x = Fq::random(|bytes| rng.fill_bytes(bytes));
     let y = poly.eval(x);
     let opened = nested
-        .for_step::<TestR, HEADER_SIZE>(params, false, held, [x, y])
+        .for_step::<TestR, HEADER_SIZE>(params, false, held, host_ipa, [x, y])
         .unwrap();
     assert!(!rejected(&opened), "the opening of s(X) is accepted");
     let [x_slot, y_slot] = opened.schedule.regions.fq_opening.unwrap();
@@ -988,7 +1009,7 @@ fn the_online_fq_opening_holds_the_nested_g_prime() {
         "the opening is what the binding circuit exposes"
     );
     let other = nested
-        .for_step::<TestR, HEADER_SIZE>(params, false, held, [x, y + Fq::ONE])
+        .for_step::<TestR, HEADER_SIZE>(params, false, held, host_ipa, [x, y + Fq::ONE])
         .unwrap();
     assert!(rejected(&other), "another value is rejected");
 }
@@ -1088,18 +1109,18 @@ fn bound_commitments(
         // The nested curve's G', which the circuit-field side holds.
         sides.native.work.points[sides.native.schedule.regions.g_prime],
     ]);
-    let slot = nested
-        .schedule
-        .regions
-        .slot_commitment
-        .expect("the scalar-field side holds the slot commitment");
-    let of_native = alloc::vec![
-        ReferenceBackend::sparse_commit_to_affine(
-            &<NativeDigits as StageExt<Fp, R>>::rx(Fp::ZERO, &sides.native.digits).unwrap(),
-            Pasta::host_generators(params),
-        ),
-        nested.work.points[slot],
-    ];
+    let slots = nested.schedule.regions.output_commitments.unwrap();
+    let host_ipa = nested.schedule.regions.host_ipa_commitment.unwrap();
+    let mut of_native = alloc::vec![ReferenceBackend::sparse_commit_to_affine(
+        &<NativeDigits as StageExt<Fp, R>>::rx(Fp::ZERO, &sides.native.digits).unwrap(),
+        Pasta::host_generators(params),
+    )];
+    of_native.extend(
+        slots
+            .into_iter()
+            .chain([host_ipa])
+            .map(|slot| nested.work.points[slot]),
+    );
     (of_nested, of_native)
 }
 

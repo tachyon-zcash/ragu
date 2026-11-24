@@ -32,7 +32,7 @@
 //! | 12 | 2 | Schema version of that payload kind: 4 |
 //! | 14 | 2 | Protocol version: 1 (`ragu-pcd-v1`) |
 //! | 16 | 4 | Rank |
-//! | 20 | 8 | Header size, in field elements: 0, as no schema 4 payload carries a header |
+//! | 20 | 8 | Header size, in field elements: 0, since proof payloads carry no header |
 //!
 //! Decoding checks the envelope and its dimensions, then the exact total
 //! length those dimensions imply, before decoding the payload. Compressed
@@ -46,8 +46,9 @@
 //!
 //! # Versions
 //!
-//! The schema version fixes a payload's field order, each field's codec and
-//! the profile's vector counts. The envelope version fixes the layout above.
+//! The profile's schema version fixes a payload's field order, each field's
+//! codec and its vector counts. Standard uses schema 4. Aggregator uses
+//! schema 5 for the layout that carries wallet output commitments. The envelope version fixes the layout above.
 //! The protocol version follows the verification semantics identified by the
 //! transcript domain tags. Changing any of these means a new version and
 //! explicit dispatch in the decoder, with either a migration path and

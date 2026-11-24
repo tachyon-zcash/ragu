@@ -1170,7 +1170,6 @@ mod index_positions {
     fn arithmetic_positions_match_canonical_lists() {
         check::<Standard>();
         check::<crate::profile::testing::Wider>();
-        #[cfg(feature = "unstable-aggregator")]
         check::<crate::profile::Aggregator<4>>();
     }
 }

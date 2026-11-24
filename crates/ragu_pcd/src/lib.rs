@@ -81,7 +81,6 @@ extern crate std;
 mod application;
 mod backend;
 mod compress;
-#[cfg(feature = "unstable-aggregator")]
 mod decompress;
 mod fuse;
 #[path = "../tests/fuzzing/mod.rs"]

@@ -358,10 +358,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     pub fn finalize_with(
         mut self,
         params: &'params C::Params,
-        context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
+        mut context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
-        C::Profile::check_context(&context, params, &self.header_map)?;
+        C::Profile::check_context(&mut context, params, &self.header_map)?;
 
         // The decompression step, which a profile with a statement circuit
         // registers below, stages a value: the application stage, which
@@ -488,6 +488,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             self = self.register_internal_step(
                 crate::step::internal::decompress::Decompress::<()>::with_excluded_suffixes(
                     crate::profile::ProverContext::excluded_decompression_suffixes(&context),
+                    C::Profile::DECOMPRESS_ONLINE_POLYNOMIALS,
                 ),
             )?;
         }
@@ -539,7 +540,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_registry,
             params,
             num_application_steps: self.num_application_steps,
-            #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
@@ -681,7 +681,6 @@ pub struct Application<
     pub(crate) num_application_steps: usize,
     /// The header type each registered step outputs, by suffix, and
     /// whether its proofs carry an online polynomial.
-    #[cfg(feature = "unstable-aggregator")]
     pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
     /// The application stage's size, in values.
     pub(crate) stage_size: usize,
@@ -719,7 +718,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// The header type each registered step outputs, by suffix, and
     /// whether its proofs carry an online polynomial: the headers the
     /// application's statements carry.
-    #[cfg(feature = "unstable-aggregator")]
     pub(crate) fn output_headers(&self) -> &BTreeMap<crate::header::Suffix, (TypeId, bool)> {
         &self.output_headers
     }
