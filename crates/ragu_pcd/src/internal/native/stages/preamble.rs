@@ -399,14 +399,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         let decompress = InternalStepIndex::Decompress.circuit_index::<P>()?;
         let decompress = Element::constant(dr, decompress.omega_j());
         let is_decompress = self.circuit_id.is_equal(dr, &mut (), &decompress)?;
-        // After the header, the step binding: the flag, one for the
-        // decompression step and zero for any other, that step's opening
-        // of its first output slot, which holds the host IPA's s(X) there
-        // and nothing the chunks read anywhere else, and the point at
-        // which it opened its left input's first slot, the transcript
-        // digest it staged before its challenge. The step folded its own
-        // application claim, so these are what its `hashes_1` exported of
-        // its openings, which `unified_ky_values` holds these wires to.
+        // For decompression, the step binding follows the header with a
+        // flag of one and the staged transcript digest. The first left
+        // opening exposes that digest as its point. `unified_ky_values`
+        // holds this wire to what `hashes_1` exported. Other steps use
+        // the canonical unit header and two zeros.
         let own = {
             let mut ky = Horner::new(y);
             self.output_header.write(dr, &mut ky)?;

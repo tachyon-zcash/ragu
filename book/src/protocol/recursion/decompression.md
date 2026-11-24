@@ -38,7 +38,7 @@ aggregator runs the wallet verifier's equations inside a new
   |---|---|---|
   | the Fuse that produced the wallet proof | $F$ | replayed by the chunks: raw squeezes on the native side, their lifts on the nested side and for both $\beta$ |
   | the compression of the wallet proof | $C$ | replayed by the chunks: each is the lift of a squeeze, with squeezes of its own for each curve |
-  | the Fuse of the aggregator step that carries the chunks | $\text{step}$ | fresh: $w_{\rm step}$ is the point of the step's online openings |
+  | the Fuse of the aggregator step that carries the chunks | $\text{step}$ | fresh: application slots open at $w_{\rm step}$ and the host IPA helper opens at $y_{\rm step}$ |
   | a Fuse that takes the result as a child | $\text{parent}$ | fresh: its $y$ is the point at which the claim targets are evaluated |
 
   The sequence diagrams below show what the prover commits and what the
@@ -79,7 +79,7 @@ flowchart TB
     W -->|"circuit-field parts"| NA
     W -->|"scalar-field parts"| NE
     NA <-->|"challenge bits,<br/>run commitments,<br/>digits of scalars"| NE
-    ON -->|"registry values,<br/>s at w_step"| NA
+    ON -->|"registry values,<br/>s at y_step"| NA
     ON -->|"registry values,<br/>s at the lift of w_step"| NE
     ON --> AC
     NA --> FR
@@ -330,8 +330,11 @@ then $y$ coordinate.
 
 The decompression API returns an aggregator-rank proof with the wallet
 proof's output header and commitments, and the supplied polynomial
-coefficients. A later Fuse can open those polynomials through the usual
-oracle API. The same proof can be compressed at the aggregator rank.
+coefficients. The decompression step folds the output opening claims into
+its PCS accumulator. A later Fuse can open those polynomials through the
+usual oracle API. The same proof can be compressed at the aggregator rank.
+See the [Tachyon Stamp handoff](../poly-oracle.md#stamp-handoff) for an
+application example.
 
 In the code, decompression is implemented in `ragu_pcd`'s private
 `decompress` module. Its

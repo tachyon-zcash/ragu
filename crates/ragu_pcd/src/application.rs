@@ -798,13 +798,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// can compare them with commitments to candidate polynomials or from
     /// the original proof.
     ///
-    /// The application decides whether to publish those coefficients or
-    /// commitments. To publish with padding, [`fuse`](Self::fuse) a final
-    /// application step whose output header declares `(Padding, Padding)`
-    /// before rerandomizing. For compressed publication, compress the
-    /// resulting rerandomized proof. See [Publishing with Padding][padding].
+    /// See [Publishing Proofs][publication].
     ///
-    /// [padding]: https://tachyon.z.cash/ragu/guide/writing_circuits.html#publishing-with-padding
+    /// [publication]: https://tachyon.z.cash/ragu/guide/writing_circuits.html#publishing-proofs
     ///
     /// # Hiding scope
     ///

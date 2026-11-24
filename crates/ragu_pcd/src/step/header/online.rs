@@ -39,13 +39,10 @@ use core::any::TypeId;
 /// [`Step::prepare`](crate::step::Step::prepare); public openings can
 /// still reveal those values.
 ///
-/// A compressed proof's statement carries only the header's fields, so a
-/// header type registered at a suffix a decompressed statement can land on
-/// must treat its slots as padding: the decompression step holds them to
-/// the constant one, and a step that opens them expecting the polynomial
-/// the fields describe checks the wrong polynomial. Binding those slots to
-/// the compressed proof's own online commitments would be a change to the
-/// statement extension's contract.
+/// Aggregator decompression binds the output commitments to the wallet
+/// proof's commitments. Supply the matching coefficients to
+/// [`Application::decompress_with_polynomials`](crate::Application::decompress_with_polynomials)
+/// so later steps can open the slots.
 ///
 /// [`Header`]: super::Header
 pub const NUM_ONLINE_FP_POLYS: usize = 2;

@@ -527,10 +527,9 @@ where
     R: Rank,
     B: SelectableBackend,
 {
-    /// Decompresses `pcd`, a compressed proof of the wallet application,
-    /// into a proof of this application carrying the same header and data:
-    /// the decompression step's, proved against the bootstrap proof with
-    /// the chunks run over `pcd`.
+    /// Decompresses a wallet proof whose output header declares two padding
+    /// slots. Use [`Self::decompress_with_polynomials`] for headers with
+    /// application polynomials.
     ///
     /// # Errors
     ///
