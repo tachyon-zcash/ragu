@@ -634,7 +634,7 @@ fn aggregator_declares_the_decompression() {
             native_circuits + 2 + 6 + batch,
             19 + 1 + nested_stages + batch,
             1 + 20,
-            20,
+            21,
             per_step,
             per_step,
         );

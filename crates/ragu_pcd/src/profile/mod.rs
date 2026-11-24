@@ -185,7 +185,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const DECOMPRESS_ONLINE_POLYNOMIALS: bool = false;
 
     /// The payload schema version for this profile's proof formats.
-    const WIRE_SCHEMA_VERSION: u16 = 4;
+    const WIRE_SCHEMA_VERSION: u16 = 1;
 
     /// Native online polynomial and opening declarations. The application
     /// slots are separate from this layout.

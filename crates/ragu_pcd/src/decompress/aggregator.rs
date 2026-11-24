@@ -226,7 +226,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // One online Fq polynomial per step: the nested IPA's s(X).
     const ONLINE_FQ_POLYS: usize = 1;
     const DECOMPRESS_ONLINE_POLYNOMIALS: bool = true;
-    const WIRE_SCHEMA_VERSION: u16 = 5;
 
     // The wallet registry's evaluations the chunks read, as openings of
     // its restrictions, which the meshes hold to the registry.

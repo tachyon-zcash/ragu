@@ -46,16 +46,16 @@
 //!
 //! # Versions
 //!
-//! The profile's schema version fixes a payload's field order, each field's
-//! codec and its vector counts. Standard uses schema 4. Aggregator uses
-//! schema 5 for the layout that carries wallet output commitments. The envelope version fixes the layout above.
-//! The protocol version follows the verification semantics identified by the
-//! transcript domain tags. Changing any of these means a new version and
-//! explicit dispatch in the decoder, with either a migration path and
-//! compatibility tests or failing closed on the old one; a crate release or an
-//! implementation change alone changes none of them. The fuse fixtures pin
-//! the payload bytes of every scenario, so a change to the format fails them
-//! until they are regenerated, which is the moment to bump the version.
+//! The profile's schema version identifies a payload's field order, codecs
+//! and vector counts. Standard and Aggregator use schema 1 while their
+//! formats are under development. The envelope version identifies the
+//! layout above. The protocol version identifies the verification semantics
+//! covered by the transcript domain tags.
+//!
+//! After deployment, incompatible changes require a new version and a
+//! decoder that either supports the old version or rejects it. The fuse
+//! fixtures pin the bytes of each scenario and are regenerated when the
+//! format changes.
 //!
 //! # Input limits
 //!
