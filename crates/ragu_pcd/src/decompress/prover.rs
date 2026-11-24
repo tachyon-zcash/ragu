@@ -1295,7 +1295,7 @@ pub(crate) fn native_inputs<C: Cycle>(witness: &Witness<C>) -> Result<Vec<C::Cir
     let (left, right) = (instance.left, instance.right);
     let mut inputs = shared(
         &witness.native,
-        [fuse.w, fuse.x, fuse.y, fuse.u],
+        [*fuse.w, *fuse.x, *fuse.y, *fuse.u],
         [[left.x, left.y], [right.x, right.y]],
     )?;
     inputs.push(instance.circuit_id.omega_j());
@@ -1317,10 +1317,10 @@ pub(crate) fn nested_inputs<C: Cycle>(witness: &Witness<C>) -> Result<Vec<C::Sca
     shared(
         &witness.nested,
         [
-            nested::challenge::<C>(fuse.w)?,
-            nested::challenge::<C>(fuse.x)?,
-            nested::challenge::<C>(fuse.y)?,
-            nested::challenge::<C>(fuse.u)?,
+            nested::challenge::<C>(*fuse.w)?,
+            nested::challenge::<C>(*fuse.x)?,
+            nested::challenge::<C>(*fuse.y)?,
+            nested::challenge::<C>(*fuse.u)?,
         ],
         [[left.x, left.y], [right.x, right.y]],
     )
@@ -1457,10 +1457,10 @@ impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
         let mut challenge_bits = bits(&S::own(witness).raw.in_order())?;
         // In `fuse::LIFTED` order.
         challenge_bits.extend(bits(&[
-            witness.fuse.x,
-            witness.fuse.y,
-            witness.fuse.u,
-            witness.fuse.w,
+            *witness.fuse.x,
+            *witness.fuse.y,
+            *witness.fuse.u,
+            *witness.fuse.w,
         ])?);
         challenge_bits.extend(bits(&S::other(witness).raw.in_order())?);
         let aux = Aux {

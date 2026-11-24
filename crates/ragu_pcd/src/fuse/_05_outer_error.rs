@@ -36,6 +36,7 @@ use crate::{
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
         revdot::{self, Parameters},
+        transcript::{Challenge, ChallengeMu, ChallengeW, ChallengeY},
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -88,9 +89,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_claims: NestedFuseClaims<'rx, C::ScalarField, R>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
-        w: &Element<'dr, D>,
-        y: &Element<'dr, D>,
-        mu: &Element<'dr, D>,
+        w: &Challenge<Element<'dr, D>, ChallengeW>,
+        y: &Challenge<Element<'dr, D>, ChallengeY>,
+        mu: &Challenge<Element<'dr, D>, ChallengeMu>,
         sponge_state_elements: FixedVec<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
@@ -107,9 +108,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let w = *w.value().take();
-        let y = *y.value().take();
-        let mu = *mu.value().take();
+        let (w, y, mu) = (w.take(), y.take(), mu.take());
         let bridge_hash = builder.bridge_hash_commitment();
         // A test's prover may stage its left child's bridge k(y) over
         // another header than its preamble's copy.
@@ -118,12 +117,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let native_a =
             revdot::fold_inner_with_backend::<B, _, _, native::RevdotParameters<C::Profile>>(
                 &native_claims.a,
-                mu,
+                *mu,
             );
         let native_b =
             revdot::fold_inner_with_backend::<B, _, _, native::RevdotParameters<C::Profile>>(
                 &native_claims.b,
-                mu,
+                *mu,
             );
         drop(native_claims);
 
@@ -134,10 +133,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             (
                 preamble_witness,
                 &native_inner_error_witness.error_terms,
-                w,
+                *w,
                 bridge_hash,
-                y,
-                mu,
+                *y,
+                *mu,
             ),
             |dr, witness| {
                 let (preamble_witness, inner_error_terms, w, bridge_hash, y, mu) = witness.cast();
@@ -399,16 +398,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_claims: NestedFuseClaims<'_, C::ScalarField, R>,
         nested_source: &NestedFuseProofSource<'_, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
-        native_y: C::CircuitField,
-        native_mu: C::CircuitField,
+        native_y: Challenge<C::CircuitField, ChallengeY>,
+        native_mu: Challenge<C::CircuitField, ChallengeMu>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
     )> {
-        let nested_y = nested::challenge::<C>(native_y)?;
-        let nested_mu = nested::challenge::<C>(native_mu)?;
+        let nested_y = nested::challenge::<C>(*native_y)?;
+        let nested_mu = nested::challenge::<C>(*native_mu)?;
 
         let a = revdot::fold_inner_with_backend::<
             B,

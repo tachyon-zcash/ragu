@@ -37,7 +37,7 @@ use ragu_backend::ReferenceBackend;
 use ragu_core::{
     Cycle, Error, FixedGenerators, Result,
     drivers::emulator::{Emulator, Wireless},
-    maybe::{Always, Maybe},
+    maybe::Always,
 };
 use ragu_primitives::{Element, GadgetExt, Point};
 use udon::{
@@ -271,10 +271,11 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
     }
 
     /// Squeezes a circuit-field challenge, after the commitment of the run
-    /// before it, if any.
+    /// before it, if any. It is untagged: the IPA and the compression name
+    /// the challenges they squeeze.
     fn squeeze(&mut self) -> Result<C::CircuitField> {
         self.flush()?;
-        let challenge = *self.transcript.challenge(&mut self.dr)?.value().take();
+        let challenge = *self.transcript.challenge::<()>(&mut self.dr)?.take();
         super::fingerprint::record_challenge(&challenge);
         Ok(challenge)
     }

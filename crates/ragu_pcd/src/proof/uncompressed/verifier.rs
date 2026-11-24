@@ -68,7 +68,10 @@ use crate::{
             stages::challenges as nested_challenges,
         },
         revdot,
-        transcript::Transcript,
+        transcript::{
+            ChallengeAlpha, ChallengeMu, ChallengeMuPrime, ChallengePreBeta, ChallengeU,
+            ChallengeW, ChallengeX, ChallengeY, ChallengeZ, Transcript,
+        },
     },
     ipa::IpaCycle,
     profile::ProfiledCycle,
@@ -385,27 +388,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 };
             }
             macro_rules! squeeze {
-                () => {
-                    *transcript.challenge(&mut dr)?.value().take()
+                ($tag:ty) => {
+                    *transcript.challenge::<$tag>(&mut dr)?.value().take()
                 };
             }
             absorb!(proof.bridge_preamble_commitment());
-            let w = squeeze!();
+            let w = squeeze!(ChallengeW);
             absorb!(proof.bridge_s_prime_commitment());
-            let y = squeeze!();
-            let z = squeeze!();
+            let y = squeeze!(ChallengeY);
+            let z = squeeze!(ChallengeZ);
             absorb!(proof.bridge_inner_error_commitment());
-            let mu = squeeze!();
+            let mu = squeeze!(ChallengeMu);
             absorb!(proof.bridge_outer_error_commitment());
-            let mu_prime = squeeze!();
+            let mu_prime = squeeze!(ChallengeMuPrime);
             absorb!(proof.bridge_ab_commitment());
-            let x = squeeze!();
+            let x = squeeze!(ChallengeX);
             absorb!(proof.bridge_query_commitment());
-            let alpha = squeeze!();
+            let alpha = squeeze!(ChallengeAlpha);
             absorb!(proof.bridge_f_commitment());
-            let u = squeeze!();
+            let u = squeeze!(ChallengeU);
             absorb!(proof.bridge_eval_commitment());
-            let pre_beta = squeeze!();
+            let pre_beta = squeeze!(ChallengePreBeta);
 
             [w, y, z, mu, mu_prime, x, alpha, u, pre_beta]
                 == [

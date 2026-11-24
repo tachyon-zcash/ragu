@@ -39,6 +39,7 @@ use crate::{
         nested::{
             self, challenge as nested_challenge, stages as nested_stages, unified as nested_unified,
         },
+        transcript::Challenge,
     },
     ipa::{CycleTranscript, IpaTranscript},
     profile::ProfiledCycle,
@@ -415,15 +416,15 @@ impl<C: ProfiledCycle> Instance<C> {
             return Ok(None);
         }
         Ok(Some(nested::Challenges {
-            w,
-            y,
-            z,
-            mu,
-            mu_prime,
-            x,
-            alpha,
-            u,
-            pre_beta,
+            w: Challenge::new(w),
+            y: Challenge::new(y),
+            z: Challenge::new(z),
+            mu: Challenge::new(mu),
+            mu_prime: Challenge::new(mu_prime),
+            x: Challenge::new(x),
+            alpha: Challenge::new(alpha),
+            u: Challenge::new(u),
+            pre_beta: Challenge::new(pre_beta),
         }))
     }
 
@@ -436,23 +437,23 @@ impl<C: ProfiledCycle> Instance<C> {
         native_unified::Instance {
             bridge_preamble_commitment: self.bridge(BridgePreamble),
             bridge_hash_commitment: self.bridge(BridgeHash),
-            w: challenges.w,
+            w: *challenges.w,
             bridge_s_prime_commitment: self.bridge(BridgeSPrime),
-            y: challenges.y,
-            z: challenges.z,
+            y: *challenges.y,
+            z: *challenges.z,
             bridge_inner_error_commitment: self.bridge(BridgeInnerError),
-            mu: challenges.mu,
+            mu: *challenges.mu,
             bridge_outer_error_commitment: self.bridge(BridgeOuterError),
-            mu_prime: challenges.mu_prime,
+            mu_prime: *challenges.mu_prime,
             c: self.c,
             bridge_ab_commitment: self.bridge(BridgeAB),
-            x: challenges.x,
+            x: *challenges.x,
             bridge_query_commitment: self.bridge(BridgeQuery),
-            alpha: challenges.alpha,
+            alpha: *challenges.alpha,
             bridge_f_commitment: self.bridge(BridgeF),
-            u: challenges.u,
+            u: *challenges.u,
             bridge_eval_commitment: self.bridge(BridgeEval),
-            pre_beta: challenges.pre_beta,
+            pre_beta: *challenges.pre_beta,
             v: self.v,
             nested_challenges_partial: self.nested_challenges_partial,
             nested_p_commitment: self.nested_p,
@@ -473,9 +474,9 @@ impl<C: ProfiledCycle> Instance<C> {
         Ok(nested_unified::Instance {
             c: self.nested_c,
             v: self.nested_v,
-            x: nested_challenge::<C>(challenges.x)?,
-            y: nested_challenge::<C>(challenges.y)?,
-            u: nested_challenge::<C>(challenges.u)?,
+            x: nested_challenge::<C>(*challenges.x)?,
+            y: nested_challenge::<C>(*challenges.y)?,
+            u: nested_challenge::<C>(*challenges.u)?,
             exported: [
                 self.native_commitment(Rx(Preamble)),
                 self.native_commitment(Rx(InnerError)),
@@ -619,7 +620,7 @@ impl<C: ProfiledCycle> Instance<C> {
     ) -> Result<Bindings<native::RxComponent, C::CircuitField, R>> {
         use native::{RxComponent::Rx, RxIndex::*};
         type F<C> = <C as Cycle>::CircuitField;
-        let (w, x, y, u) = (challenges.w, challenges.x, challenges.y, challenges.u);
+        let (w, x, y, u) = (*challenges.w, *challenges.x, *challenges.y, *challenges.u);
         let m = |w, x, y| B::registry_wxy(registry, w, x, y);
         let (l, r) = (self.left, self.right);
         let claim = |poly, degrees: Vec<usize>, values: Vec<F<C>>| {
@@ -727,10 +728,10 @@ impl<C: ProfiledCycle> Instance<C> {
     ) -> Result<Bindings<nested::RxComponent, C::ScalarField, R>> {
         use nested::{RxComponent::Rx, RxIndex::*};
         type F<C> = <C as Cycle>::ScalarField;
-        let w = nested_challenge::<C>(challenges.w)?;
-        let x = nested_challenge::<C>(challenges.x)?;
-        let y = nested_challenge::<C>(challenges.y)?;
-        let u = nested_challenge::<C>(challenges.u)?;
+        let w = nested_challenge::<C>(*challenges.w)?;
+        let x = nested_challenge::<C>(*challenges.x)?;
+        let y = nested_challenge::<C>(*challenges.y)?;
+        let u = nested_challenge::<C>(*challenges.u)?;
         let m = |w, x, y| B::registry_wxy(registry, w, x, y);
         let (l, r) = (self.nested_left, self.nested_right);
         let claim = |poly, degrees: Vec<usize>, values: Vec<F<C>>| {
@@ -822,7 +823,7 @@ impl<C: ProfiledCycle> Instance<C> {
         w: C::CircuitField,
         base: usize,
     ) -> ([C::HostCurve; OPENED], Vec<OpeningClaim<C::CircuitField>>) {
-        let u = challenges.u;
+        let u = *challenges.u;
         let claim = |poly, point, value| OpeningClaim { poly, point, value };
         (
             [
@@ -849,7 +850,7 @@ impl<C: ProfiledCycle> Instance<C> {
         w: C::ScalarField,
         base: usize,
     ) -> Result<([C::NestedCurve; OPENED], Vec<OpeningClaim<C::ScalarField>>)> {
-        let u = nested_challenge::<C>(challenges.u)?;
+        let u = nested_challenge::<C>(*challenges.u)?;
         let claim = |poly, point, value| OpeningClaim { poly, point, value };
         Ok((
             [

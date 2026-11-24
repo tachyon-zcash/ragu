@@ -50,6 +50,7 @@ use crate::{
     internal::{
         native::{self, RxComponent, RxIndex, online},
         nested::{self},
+        transcript::Challenge,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -676,15 +677,15 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// The native challenges of this proof, in challenge-stage order.
     pub(crate) fn challenges(&self) -> nested::Challenges<C::CircuitField> {
         nested::Challenges {
-            w: self.w,
-            y: self.y,
-            z: self.z,
-            mu: self.mu,
-            mu_prime: self.mu_prime,
-            x: self.x,
-            alpha: self.alpha,
-            u: self.u,
-            pre_beta: self.pre_beta,
+            w: Challenge::new(self.w),
+            y: Challenge::new(self.y),
+            z: Challenge::new(self.z),
+            mu: Challenge::new(self.mu),
+            mu_prime: Challenge::new(self.mu_prime),
+            x: Challenge::new(self.x),
+            alpha: Challenge::new(self.alpha),
+            u: Challenge::new(self.u),
+            pre_beta: Challenge::new(self.pre_beta),
         }
     }
 

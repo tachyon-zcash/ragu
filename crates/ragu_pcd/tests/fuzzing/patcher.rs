@@ -98,7 +98,10 @@ use crate::{
         endoscalar::EndoscalarStage,
         native::{self, online, stages::points as native_points, total_circuit_counts},
         nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
-        transcript::Transcript,
+        transcript::{
+            Challenge, ChallengeAlpha, ChallengeMu, ChallengeMuPrime, ChallengePreBeta, ChallengeU,
+            ChallengeW, ChallengeX, ChallengeY, ChallengeZ, Transcript,
+        },
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -460,14 +463,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
-        let w = transcript.challenge(&mut dr)?;
+        let w = transcript.challenge::<ChallengeW>(&mut dr)?;
         let (_application_data, _application_aux, application) = self.compute_application_proof(
             rng,
             step,
             witness,
             (&left, left_data),
             (&right, right_data),
-            *w.value().take(),
+            w.take(),
             prepared,
             application_stage,
             &mut builder,
@@ -499,8 +502,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_s_prime_commitment =
             Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
-        let y = transcript.challenge(&mut dr)?;
-        let z = transcript.challenge(&mut dr)?;
+        let y = transcript.challenge::<ChallengeY>(&mut dr)?;
+        let z = transcript.challenge::<ChallengeZ>(&mut dr)?;
 
         let native_source = NativeFuseProofSource {
             left: &left,
@@ -544,7 +547,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|e| *e.value().take())
             .collect_fixed()?;
 
-        let mu = transcript.challenge(&mut dr)?;
+        let mu = transcript.challenge::<ChallengeMu>(&mut dr)?;
 
         let (
             native_outer_error_witness,
@@ -571,7 +574,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_outer_error_commitment =
             Point::constant(&mut dr, builder.bridge_outer_error_commitment())?;
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
-        let mu_prime = transcript.challenge(&mut dr)?;
+        let mu_prime = transcript.challenge::<ChallengeMuPrime>(&mut dr)?;
 
         preparation.y = Some(*y.value().take());
         self.prepare_native_online(Phase::BeforeX, preparation, &mut builder)?;
@@ -589,7 +592,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
         let bridge_ab_commitment = Point::constant(&mut dr, builder.bridge_ab_commitment()?)?;
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
-        let x = transcript.challenge(&mut dr)?;
+        let x = transcript.challenge::<ChallengeX>(&mut dr)?;
 
         preparation.x = Some(*x.value().take());
         self.prepare_native_online(Phase::BeforeAlpha, preparation, &mut builder)?;
@@ -612,7 +615,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
         bridge_query_commitment.write(&mut dr, &mut transcript)?;
-        let alpha = transcript.challenge(&mut dr)?;
+        let alpha = transcript.challenge::<ChallengeAlpha>(&mut dr)?;
 
         let (native_f, nested_f) = self.compute_f(
             rng,
@@ -633,12 +636,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
-        let u = transcript.challenge(&mut dr)?;
+        let u = transcript.challenge::<ChallengeU>(&mut dr)?;
 
-        self.commit_native_online_eval(*u.value().take(), rng, &mut builder)?;
-        self.commit_nested_online_eval(*u.value().take(), rng, &mut builder)?;
-        let bound_challenges =
-            [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
+        self.commit_native_online_eval(u.take(), rng, &mut builder)?;
+        self.commit_nested_online_eval(u.take(), rng, &mut builder)?;
+        let bound_challenges = [
+            *w.take(),
+            *y.take(),
+            *z.take(),
+            *mu.take(),
+            *mu_prime.take(),
+            *x.take(),
+            *alpha.take(),
+            *u.take(),
+        ];
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
             &bound_challenges,
             &left,
@@ -671,9 +682,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
                 bridge_eval_commitment_point.write(dr, &mut transcript)?;
-                let pre_beta = transcript.challenge(dr)?;
+                let pre_beta = transcript.challenge::<ChallengePreBeta>(dr)?;
 
-                Ok((pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)))
+                Ok((
+                    pre_beta.into_inner(),
+                    (eval_rx, bridge_eval_rx, bridge_eval_commitment),
+                ))
             })?;
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
@@ -700,15 +714,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
         )?;
 
-        builder.set_w(*w.value().take());
-        builder.set_y(*y.value().take());
-        builder.set_z(*z.value().take());
-        builder.set_mu(*mu.value().take());
-        builder.set_mu_prime(*mu_prime.value().take());
-        builder.set_x(*x.value().take());
-        builder.set_alpha(*alpha.value().take());
-        builder.set_u(*u.value().take());
-        builder.set_pre_beta(*pre_beta.element().value().take());
+        builder.set_w(w.take());
+        builder.set_y(y.take());
+        builder.set_z(z.take());
+        builder.set_mu(mu.take());
+        builder.set_mu_prime(mu_prime.take());
+        builder.set_x(x.take());
+        builder.set_alpha(alpha.take());
+        builder.set_u(u.take());
+        builder.set_pre_beta(Challenge::new(*pre_beta.element().value().take()));
 
         // Compute-v consumes the same helper sums as the real prover. Keep
         // the committed stages in state for capture; no extension rx needs

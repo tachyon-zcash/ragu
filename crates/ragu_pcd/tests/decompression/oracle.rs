@@ -227,7 +227,7 @@ pub(crate) mod transcript {
             dr: &mut D,
             transcript: &mut Transcript<'dr, D, P>,
         ) -> Result<Self> {
-            let element = transcript.challenge(dr)?;
+            let element = transcript.challenge::<()>(dr)?.into_inner();
             let endoscalar =
                 Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), element)?);
             let lift = endoscalar.lift(dr)?;
@@ -251,7 +251,7 @@ pub(crate) mod transcript {
             dr: &mut D,
             transcript: &mut Transcript<'dr, D, P>,
         ) -> Result<Self> {
-            let raw = transcript.challenge(dr)?;
+            let raw = transcript.challenge::<()>(dr)?.into_inner();
             let endoscalar =
                 Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), raw.clone())?);
             Ok(RawChallenge { raw, endoscalar })
@@ -1406,9 +1406,9 @@ where
     let fuse_lift = |dr: &mut D, raw: C::CircuitField| -> Result<Element<'dr, D>> {
         endoscalar(dr, raw)?.lift(dr)
     };
-    let fuse_x = fuse_lift(dr, witness.fuse.x)?;
-    let fuse_y = fuse_lift(dr, witness.fuse.y)?;
-    let fuse_u = fuse_lift(dr, witness.fuse.u)?;
+    let fuse_x = fuse_lift(dr, *witness.fuse.x)?;
+    let fuse_y = fuse_lift(dr, *witness.fuse.y)?;
+    let fuse_u = fuse_lift(dr, *witness.fuse.u)?;
 
     // The nested unified output, bound to the lifts, and the host curve's
     // commitments it exports.

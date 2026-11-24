@@ -12,15 +12,30 @@
 //! // Absorb a single field element via Buffer trait
 //! value.write(dr, &mut transcript)?;
 //!
-//! // Squeeze a single field element challenge
-//! let w = transcript.challenge(dr)?;
+//! // Squeeze a challenge, tagged with its role in the fuse's schedule
+//! let w = transcript.challenge::<ChallengeW>(dr)?;
 //!
 //! // Save/resume for multi-circuit protocols
 //! let state = transcript.save_state(dr)?;
 //! let mut resumed = Transcript::resume_from_state(state, params);
-//! let challenge = resumed.challenge(dr)?; // must squeeze first
+//! let mu = resumed.challenge::<ChallengeMu>(dr)?; // must squeeze first
 //! let mut transcript = resumed.into_transcript(); // then can absorb again
 //! ```
+//!
+//! ### Typed challenges
+//!
+//! A squeeze returns a [`Challenge`] tagged with a zero-sized marker naming
+//! the challenge it is in the fuse's schedule, [`ChallengeW`] through
+//! [`ChallengePreBeta`]. Distinct markers make distinct types, so a function
+//! or field that takes one challenge refuses another at compile time. The
+//! tag names the role only: it places no restriction on the value, which can
+//! be zero like any squeeze.
+//!
+//! Name the tag at the squeeze. A tag left to inference takes whatever the
+//! challenge's first use expects, so two squeezes passed in the wrong order
+//! would still compile. A squeeze that names no challenge of the schedule,
+//! such as the compression's transcript, whose challenges its own protocols
+//! name, uses the `()` tag.
 //!
 //! ### Safety
 //!
@@ -36,7 +51,9 @@
 //! Transcripts of protocols with different interaction sequences are
 //! domain-separated by protocol tags during construction [`Transcript::new`].
 
-use ragu_core::{PoseidonPermutation, Result, drivers::Driver};
+use core::{marker::PhantomData, ops::Deref};
+
+use ragu_core::{PoseidonPermutation, Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{
     Element,
     io::Buffer,
@@ -96,9 +113,9 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
         Ok(Transcript { sponge, params })
     }
 
-    /// Squeezes a single field element challenge from the transcript.
-    pub fn challenge(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
-        self.sponge.squeeze(dr)
+    /// Squeezes the challenge `T` from the transcript.
+    pub fn challenge<T>(&mut self, dr: &mut D) -> Result<Challenge<Element<'dr, D>, T>> {
+        Ok(Challenge::new(self.sponge.squeeze(dr)?))
     }
 
     /// Saves the transcript state (analogous to flush).
@@ -145,10 +162,10 @@ pub struct ResumedTranscript<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> 
 }
 
 impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> ResumedTranscript<'dr, D, P> {
-    /// Squeezes a single field element challenge.
-    pub fn challenge(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
+    /// Squeezes the challenge `T`.
+    pub fn challenge<T>(&mut self, dr: &mut D) -> Result<Challenge<Element<'dr, D>, T>> {
         self.squeezed = true;
-        self.sponge.squeeze(dr)
+        Ok(Challenge::new(self.sponge.squeeze(dr)?))
     }
 
     /// Transitions back to a full transcript that supports absorbing.
@@ -175,6 +192,94 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Buffer<'dr, D> for Trans
         self.sponge.absorb(dr, value)
     }
 }
+
+/// A Fiat–Shamir challenge, tagged with the marker `T` naming which challenge
+/// of the fuse's schedule it is.
+///
+/// The tag is a phantom type, so a challenge costs what its value does.
+/// [`Deref`] reads the value for arithmetic, and
+/// [`into_inner`](Self::into_inner) discards the tag where the value leaves
+/// the typed boundary, such as a circuit's wires.
+pub struct Challenge<F, T> {
+    value: F,
+    _marker: PhantomData<T>,
+}
+
+impl<F, T> Challenge<F, T> {
+    /// Tags `value` as the challenge `T`.
+    ///
+    /// The transcript's squeezes tag their own output. Use this where a
+    /// challenge was derived some other way: read back from a proof, or
+    /// squeezed by the compression, which replays the fuse's schedule over
+    /// its own transcript.
+    pub fn new(value: F) -> Self {
+        Challenge {
+            value,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Unwraps the challenge, discarding its tag.
+    pub fn into_inner(self) -> F {
+        self.value
+    }
+}
+
+impl<F, T> Deref for Challenge<F, T> {
+    type Target = F;
+
+    fn deref(&self) -> &F {
+        &self.value
+    }
+}
+
+impl<F: Clone, T> Clone for Challenge<F, T> {
+    fn clone(&self) -> Self {
+        Challenge::new(self.value.clone())
+    }
+}
+
+impl<F: Copy, T> Copy for Challenge<F, T> {}
+
+impl<'dr, D: Driver<'dr>, T> Challenge<Element<'dr, D>, T> {
+    /// The challenge's value, still tagged. Like [`Maybe::take`], this is
+    /// for a driver that holds witness values, such as the prover's emulator,
+    /// and fails to compile on one that does not.
+    pub fn take(&self) -> Challenge<D::F, T> {
+        Challenge::new(*self.value().take())
+    }
+}
+
+/// Marks $w$, squeezed after the `preamble` bridge: the registry's $W$ point
+/// and the application step's $\zeta$.
+pub struct ChallengeW;
+
+/// Marks $y$, the first challenge squeezed after the `s_prime` bridge.
+pub struct ChallengeY;
+
+/// Marks $z$, the second challenge squeezed after the `s_prime` bridge.
+pub struct ChallengeZ;
+
+/// Marks $\mu$, the first folding layer's challenge, squeezed after the
+/// `inner_error` bridge.
+pub struct ChallengeMu;
+
+/// Marks $\mu'$, the second folding layer's challenge, squeezed after the
+/// `outer_error` bridge.
+pub struct ChallengeMuPrime;
+
+/// Marks $x$, squeezed after the `ab` bridge.
+pub struct ChallengeX;
+
+/// Marks $\alpha$, squeezed after the `query` bridge.
+pub struct ChallengeAlpha;
+
+/// Marks $u$, squeezed after the `f` bridge: the point the batch opens at.
+pub struct ChallengeU;
+
+/// Marks `pre_beta`, squeezed after the `eval` bridge, whose endoscalar is
+/// $\beta$.
+pub struct ChallengePreBeta;
 
 #[cfg(test)]
 mod tests {
@@ -226,7 +331,7 @@ mod tests {
                     e.write(dr, t).unwrap();
                     None
                 }
-                Op::Squeeze => Some(*t.challenge(dr).unwrap().value().take()),
+                Op::Squeeze => Some(*t.challenge::<()>(dr).unwrap().value().take()),
             })
             .collect()
     }
@@ -246,8 +351,8 @@ mod tests {
             elem.write(&mut dr, &mut tr1).unwrap();
             elem.write(&mut dr, &mut tr2).unwrap();
 
-            let c1 = *tr1.challenge(&mut dr).unwrap().value().take();
-            let c2 = *tr2.challenge(&mut dr).unwrap().value().take();
+            let c1 = *tr1.challenge::<()>(&mut dr).unwrap().value().take();
+            let c2 = *tr2.challenge::<()>(&mut dr).unwrap().value().take();
             prop_assert_ne!(c1, c2);
         }
 
@@ -263,7 +368,7 @@ mod tests {
                     let e = Element::constant(&mut dr, v);
                     e.write(&mut dr, &mut t).unwrap();
                 }
-                *t.challenge(&mut dr).unwrap().value().take()
+                *t.challenge::<()>(&mut dr).unwrap().value().take()
             };
 
             prop_assert_eq!(squeeze(&vs), squeeze(&vs));
@@ -278,10 +383,10 @@ mod tests {
             let e = Element::constant(&mut dr, v);
             e.write(&mut dr, &mut t).unwrap();
 
-            let c0 = *t.challenge(&mut dr).unwrap().value().take();
-            let c1 = *t.challenge(&mut dr).unwrap().value().take();
-            let c2 = *t.challenge(&mut dr).unwrap().value().take();
-            let c3 = *t.challenge(&mut dr).unwrap().value().take();
+            let c0 = *t.challenge::<()>(&mut dr).unwrap().value().take();
+            let c1 = *t.challenge::<()>(&mut dr).unwrap().value().take();
+            let c2 = *t.challenge::<()>(&mut dr).unwrap().value().take();
+            let c3 = *t.challenge::<()>(&mut dr).unwrap().value().take();
 
             for c in [c0, c1, c2, c3] {
                 prop_assert_ne!(c, Fp::ZERO);
@@ -337,7 +442,7 @@ mod tests {
                 let mut resumed = Transcript::resume_from_state(state, poseidon);
 
                 // after_ops[0] is guaranteed Squeeze; squeeze it on ResumedTranscript.
-                out.push(*resumed.challenge(&mut dr).unwrap().value().take());
+                out.push(*resumed.challenge::<()>(&mut dr).unwrap().value().take());
                 let mut t = resumed.into_transcript();
                 out.extend(apply_ops(&mut dr, &mut t, &after_ops[1..]));
                 out
@@ -365,5 +470,34 @@ mod tests {
 
         // should panic because no squeeze was called
         let _ = resumed.into_transcript();
+    }
+
+    #[test]
+    fn challenge_costs_its_value() {
+        use core::mem::{align_of, size_of};
+
+        assert_eq!(size_of::<Challenge<Fp, ChallengeW>>(), size_of::<Fp>());
+        assert_eq!(align_of::<Challenge<Fp, ChallengeW>>(), align_of::<Fp>());
+        assert_eq!(
+            size_of::<Challenge<Element<'static, Sim>, ChallengeX>>(),
+            size_of::<Element<'static, Sim>>()
+        );
+    }
+
+    /// The tag is a type only: it is not absorbed, so the same transcript
+    /// squeezes the same value under any tag.
+    #[test]
+    fn tag_leaves_the_squeeze_unchanged() {
+        let params = crate::pasta::baked();
+        let mut dr = Sim::new();
+
+        let mut t = Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"tags").unwrap();
+        let e = Element::constant(&mut dr, Fp::from(7u64));
+        e.write(&mut dr, &mut t).unwrap();
+        let mut untagged = t.clone();
+
+        let w = t.challenge::<ChallengeW>(&mut dr).unwrap();
+        let raw = untagged.challenge::<()>(&mut dr).unwrap();
+        assert_eq!(*w.value().take(), *raw.value().take());
     }
 }

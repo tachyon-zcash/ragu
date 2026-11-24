@@ -17,7 +17,7 @@ use ragu_circuits::{
     registry::{Registry, RegistryAt},
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Cycle, Result, drivers::Driver};
 use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 
@@ -34,6 +34,7 @@ use crate::{
     internal::{
         native, nested,
         revdot::{self, NumErrorTerms, Parameters},
+        transcript::{Challenge, ChallengeY, ChallengeZ},
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -60,8 +61,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        y: &Element<'dr, D>,
-        z: &Element<'dr, D>,
+        y: &Challenge<Element<'dr, D>, ChallengeY>,
+        z: &Challenge<Element<'dr, D>, ChallengeZ>,
         native_source: &NativeFuseProofSource<'rx, C, R>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         randomizers: &'rx Randomizers<C, R>,
@@ -77,8 +78,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let y = *y.value().take();
-        let z = *z.value().take();
+        let (y, z) = (y.take(), z.take());
 
         // The native and nested halves share no state, so the backend may
         // run them side by side. The native stage's blind is the only
@@ -153,8 +153,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         host: &Committer<'_, C::HostCurve, C::HostGenerators, B>,
         blind: Blind<C::CircuitField>,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
-        y: C::CircuitField,
-        z: C::CircuitField,
+        y: Challenge<C::CircuitField, ChallengeY>,
+        z: Challenge<C::CircuitField, ChallengeZ>,
         native_source: &NativeFuseProofSource<'rx, C, R>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters<C::Profile>>,
@@ -162,7 +162,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         RegistryWy<C, R>,
         sparse::Polynomial<C::CircuitField, R>,
     )> {
-        let mut native_claims = NativeFuseBuilder::<C::CircuitField, R, B>::new(registry, y, z);
+        let mut native_claims = NativeFuseBuilder::<C::CircuitField, R, B>::new(registry, *y, *z);
         native::claims::build::<C::Profile, _, _>(native_source, &mut native_claims)?;
         let mut native_claims = native_claims.finish();
         #[cfg(test)]
@@ -195,7 +195,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native::RevdotParameters<C::Profile>,
         >::rx(blind, &native_inner_error_witness)?;
 
-        let registry_wy_poly = B::registry_at_y(native_registry, y);
+        let registry_wy_poly = B::registry_at_y(native_registry, *y);
         let registry_wy_commitment = host.commit(&registry_wy_poly);
         let registry_wy = RegistryWy {
             poly: registry_wy_poly,
@@ -223,8 +223,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         registry: &Registry<'_, C::ScalarField, R>,
         nested: &Committer<'_, C::NestedCurve, C::NestedGenerators, B>,
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        native_y: C::CircuitField,
-        native_z: C::CircuitField,
+        native_y: Challenge<C::CircuitField, ChallengeY>,
+        native_z: Challenge<C::CircuitField, ChallengeZ>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         randomizer: &'rx NestedRandomizer<C, R>,
     ) -> Result<(
@@ -238,8 +238,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         NestedFuseClaims<'rx, C::ScalarField, R>,
         NestedRegistryWy<C, R>,
     )> {
-        let nested_y = nested::challenge::<C>(native_y)?;
-        let nested_z = nested::challenge::<C>(native_z)?;
+        let nested_y = nested::challenge::<C>(*native_y)?;
+        let nested_z = nested::challenge::<C>(*native_z)?;
 
         let mut nested_claims =
             NestedFuseBuilder::<C::ScalarField, R, B>::new(registry, nested_y, nested_z);

@@ -23,7 +23,14 @@ use super::{Cached, Proof};
 use crate::{
     backend::committer::Committer,
     header::NUM_ONLINE_FP_POLYS,
-    internal::{native::online, nested},
+    internal::{
+        native::online,
+        nested,
+        transcript::{
+            Challenge, ChallengeAlpha, ChallengeMu, ChallengeMuPrime, ChallengePreBeta, ChallengeU,
+            ChallengeW, ChallengeX, ChallengeY, ChallengeZ,
+        },
+    },
     profile::{
         Profile, ProfiledCycle,
         online::stages::{Native, Nested, Present},
@@ -40,6 +47,21 @@ macro_rules! setter {
                 concat!("double-set: ", stringify!($field))
             );
             self.$field = Some(v);
+        }
+    };
+}
+
+/// Produces `pub(crate) fn $name(&mut self, v: Challenge<C::CircuitField, $tag>)`
+/// that sets a challenge's `Option` field, panicking on double-set. The tag
+/// fixes which challenge each setter accepts; the field keeps the value.
+macro_rules! challenge_setter {
+    ($name:ident, $field:ident, $tag:ty) => {
+        pub(crate) fn $name(&mut self, v: Challenge<C::CircuitField, $tag>) {
+            assert!(
+                self.$field.is_none(),
+                concat!("double-set: ", stringify!($field))
+            );
+            self.$field = Some(v.into_inner());
         }
     };
 }
@@ -1337,15 +1359,15 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         nested_compute_v_rx
     );
 
-    setter!(set_w, w, C::CircuitField);
-    setter!(set_y, y, C::CircuitField);
-    setter!(set_z, z, C::CircuitField);
-    setter!(set_mu, mu, C::CircuitField);
-    setter!(set_mu_prime, mu_prime, C::CircuitField);
-    setter!(set_x, x, C::CircuitField);
-    setter!(set_alpha, alpha, C::CircuitField);
-    setter!(set_u, u, C::CircuitField);
-    setter!(set_pre_beta, pre_beta, C::CircuitField);
+    challenge_setter!(set_w, w, ChallengeW);
+    challenge_setter!(set_y, y, ChallengeY);
+    challenge_setter!(set_z, z, ChallengeZ);
+    challenge_setter!(set_mu, mu, ChallengeMu);
+    challenge_setter!(set_mu_prime, mu_prime, ChallengeMuPrime);
+    challenge_setter!(set_x, x, ChallengeX);
+    challenge_setter!(set_alpha, alpha, ChallengeAlpha);
+    challenge_setter!(set_u, u, ChallengeU);
+    challenge_setter!(set_pre_beta, pre_beta, ChallengePreBeta);
 
     getter!(w, w, C::CircuitField);
     getter!(y, y, C::CircuitField);

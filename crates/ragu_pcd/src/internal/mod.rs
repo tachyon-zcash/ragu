@@ -18,7 +18,8 @@
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
-//!   sponge, with domain separation
+//!   sponge, with domain separation, whose challenges are typed by their
+//!   role in the fuse's schedule
 //! - [`ky`] — the $k(y)$ targets of a proof's revdot claims, computed one
 //!   way for every verifier
 //! - [`inverter`] — batch inversion of the quotient denominators the

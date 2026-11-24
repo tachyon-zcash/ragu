@@ -1199,7 +1199,7 @@ mod timing {
         ] {
             Point::constant(&mut dr, point)?.write(&mut dr, &mut transcript)?;
             for _ in 0..count {
-                result.push(*transcript.challenge(&mut dr)?.value().take());
+                result.push(*transcript.challenge::<()>(&mut dr)?.value().take());
             }
         }
         Ok(result)
