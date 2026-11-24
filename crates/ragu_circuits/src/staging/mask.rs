@@ -317,6 +317,7 @@ mod tests {
         polynomials::{Rank, sparse},
         staging::StageBuilder,
         tests::SquareCircuit,
+        wiring::monomials::Monomials,
     };
 
     /// Local wrapper that names the four wire handles of one gate. Used by
@@ -366,8 +367,8 @@ mod tests {
             //
             // c[j] at degree 4n-1-j (j=1..n-1), a[j] at degree 2n+j (j=n-1 down to 0),
             // b[j] at degree 2n-1-j (j=0..n-1), d[j] at degree j (j=n-1 down to 1).
-            // d[0] at degree 0 is the ONE wire slot, not issued here (handled
-            // by orchestrate + Stripped for bonding polynomials).
+            // d[0] at degree 0 is the ONE wire slot, not issued here:
+            // orchestrate issues it, and `WithoutOne` removes it again.
             // c[0] is the registry tag slot at degree 4n-1 — not emitted here.
             //
             // The a[j=0] and b[j=0] slots are dummy constraints (the SYSTEM
@@ -420,6 +421,54 @@ mod tests {
     ) -> alloc::boxed::Box<dyn WiringObject<Fp, R> + 'static> {
         let metrics = metrics::eval_raw::<Fp, _>(&mask).unwrap();
         into_raw_wiring_object::<Fp, _, R>(mask, metrics).unwrap()
+    }
+
+    /// A circuit's wiring polynomial without its `ONE` constraint.
+    ///
+    /// Every circuit's wiring polynomial has the term $X^0 Y^0$, which
+    /// `orchestrate` emits to hold the `ONE` wire. A mask has no such term:
+    /// its constant term in $Y$ is zero. This wrapper removes the term from
+    /// the generic circuit above, for comparison with the [`StageMask`]
+    /// evaluators.
+    struct WithoutOne(alloc::boxed::Box<dyn WiringObject<Fp, R>>);
+
+    impl WithoutOne {
+        fn sxy(&self, x: Fp, y: Fp, floor_plan: &[floor_planner::ConstraintSegment]) -> Fp {
+            self.0.sxy(x, y, floor_plan) - Fp::ONE
+        }
+
+        fn sx(
+            &self,
+            x: Fp,
+            floor_plan: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<Fp, R> {
+            let mut poly = self.0.sx(x, floor_plan);
+            // The `ONE` constraint is the last one, at $Y^0$.
+            let constant = poly.iter_coeffs().next().unwrap();
+            poly.sub_assign(&sparse::Polynomial::from_coeffs(alloc::vec![constant]));
+            poly
+        }
+
+        fn sy(
+            &self,
+            y: Fp,
+            floor_plan: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<Fp, R> {
+            let mut poly = self.0.sy(y, floor_plan);
+            // The SYSTEM gate's d wire is the `ONE` wire, at $X^0$.
+            let mut one = sparse::View::<_, R, _>::wiring();
+            one.d.push(Fp::ONE);
+            poly.sub_assign(&one.build());
+            poly
+        }
+
+        fn monomials(&self, floor_plan: &[floor_planner::ConstraintSegment]) -> Monomials<Fp> {
+            let monomials = self.0.monomials(floor_plan);
+            let mut terms = monomials.iter().copied();
+            let one = terms.next().expect("the ONE constraint is present");
+            assert_eq!((one.y, one.x, one.coeff), (0, 0, Fp::ONE));
+            Monomials::new(terms.collect())
+        }
     }
 
     impl<R: Rank> StageMask<R> {
@@ -582,14 +631,14 @@ mod tests {
 
         let generic = mask_wiring_object(stage.clone());
         let plan = floor_planner::floor_plan(generic.segment_records());
-        let stripped = crate::staging::bonding::Stripped::new(generic);
-        let corrected_sxy = stripped.sxy(x, y, &plan);
+        let reference = WithoutOne(generic);
+        let corrected_sxy = reference.sxy(x, y, &plan);
 
         // StageMask returns -notch; add global to get the full mask.
         let full_sxy = stage.sxy(x, y, &[]) + super::global_mask::<Fp, R>(x, y);
         assert_eq!(full_sxy, corrected_sxy);
-        assert_eq!(corrected_sxy, stripped.sx(x, &plan).eval(y));
-        assert_eq!(corrected_sxy, stripped.sy(y, &plan).eval(x));
+        assert_eq!(corrected_sxy, reference.sx(x, &plan).eval(y));
+        assert_eq!(corrected_sxy, reference.sy(y, &plan).eval(x));
     }
 
     #[test]
@@ -699,12 +748,12 @@ mod tests {
             let generic = mask_wiring_object(make());
             let plan = floor_planner::floor_plan(generic.segment_records());
 
-            let stripped = crate::staging::bonding::Stripped::new(generic);
+            let reference = WithoutOne(generic);
 
             let check = |x: Fp, y: Fp| {
-                let sxy = stripped.sxy(x, y, &plan);
-                let sx_eval = stripped.sx(x, &plan).eval(y);
-                let sy_eval = stripped.sy(y, &plan).eval(x);
+                let sxy = reference.sxy(x, y, &plan);
+                let sx_eval = reference.sx(x, &plan).eval(y);
+                let sy_eval = reference.sy(y, &plan).eval(x);
 
                 // Internal consistency of the RawCircuit impl (with correction)
                 prop_assert_eq!(sy_eval, sxy);
@@ -725,7 +774,7 @@ mod tests {
                 // the generic path writes down.
                 prop_assert_eq!(
                     WiringObject::<Fp, R>::monomials(&stage_mask, &[]),
-                    stripped.monomials(&plan)
+                    reference.monomials(&plan)
                 );
 
                 Ok(())

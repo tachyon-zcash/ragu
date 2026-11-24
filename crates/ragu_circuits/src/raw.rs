@@ -145,22 +145,14 @@ impl<F: Field, C: crate::Circuit<F>> RawCircuit<F> for CircuitAdapterRef<'_, C> 
 ///
 /// The final constraint enforces [`Driver::ONE`] (the $d$ wire of the SYSTEM
 /// gate, which evaluates to $1$) against the constant term of $k(Y)$. This
-/// ensures that $k(0) = 1$ for well-formed circuits. The result of
-/// [`orchestrate`]: the degree of $k(Y)$.
+/// ensures that $k(0) = 1$ for well-formed circuits.
 ///
 /// [`Driver::ONE`]: ragu_core::drivers::Driver::ONE
-pub(crate) struct Orchestrated {
-    /// The number of public output elements (degree of $k(Y)$).
-    pub degree_ky: usize,
-}
-
-/// Runs the circuit witness, writes public outputs, and enforces the ONE
-/// constraint. See [`Orchestrated`] for details on each step.
 pub(crate) fn orchestrate<'dr, 'source: 'dr, F, D, RC>(
     dr: &mut D,
     raw_circuit: &RC,
     witness: DriverValue<D, RC::Witness<'source>>,
-) -> Result<Orchestrated>
+) -> Result<()>
 where
     F: Field,
     D: Driver<'dr, F = F>,
@@ -179,14 +171,11 @@ where
     let mut outputs: Vec<ragu_primitives::Element<'dr, D>> = Vec::new();
     output.write(dr, &mut outputs)?;
 
-    let degree_ky = outputs.len();
     for output in &outputs {
         dr.enforce_zero(|lc| lc.add(output.wire()))?;
     }
 
     // 4. ONE constraint: enforce that Driver::ONE equals the constant
     //    term of k(Y).
-    dr.enforce_zero(|lc| lc.add(&D::ONE))?;
-
-    Ok(Orchestrated { degree_ky })
+    dr.enforce_zero(|lc| lc.add(&D::ONE))
 }

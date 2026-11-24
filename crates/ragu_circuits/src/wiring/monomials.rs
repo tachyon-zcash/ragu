@@ -134,30 +134,6 @@ impl<F: Field> Monomials<F> {
             acc + m.coeff * x_powers[m.x] * y_powers[m.y]
         })
     }
-
-    /// Removes the `ONE` constraint, the monomial $X^0 Y^0$ with coefficient
-    /// one, turning a circuit wiring polynomial into a bonding polynomial.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the constant term is anything but that monomial, which cannot
-    /// happen for a polynomial [`eval`] produced: [`orchestrate`] emits the
-    /// `ONE` constraint last, so it occupies $Y^0$ alone.
-    ///
-    /// [`orchestrate`]: crate::raw::orchestrate
-    pub(crate) fn strip_one(&mut self) {
-        let one = self.0.first().expect("the ONE constraint is present");
-        assert_eq!(
-            (one.y, one.x, one.coeff),
-            (0, 0, F::ONE),
-            "the constant term must be the ONE constraint"
-        );
-        self.0.remove(0);
-        assert!(
-            self.0.first().is_none_or(|m| m.y > 0),
-            "the ONE constraint occupies Y^0 alone"
-        );
-    }
 }
 
 /// A wire: a linear form in the wire monomials of $X$.
@@ -643,33 +619,15 @@ mod tests {
         assert_ne!(digest(&[&Monomials::default()]), digest(&[]));
     }
 
+    /// The `ONE` constraint is the monomial $X^0 Y^0$ with coefficient one,
+    /// and it occupies $Y^0$ alone.
     #[test]
     fn starts_with_the_one_constraint() {
-        let mut monomials = monomials(3);
-        let first = *monomials.iter().next().unwrap();
+        let monomials = monomials(3);
+        let mut terms = monomials.iter();
+        let first = terms.next().unwrap();
         assert_eq!((first.y, first.x, first.coeff), (0, 0, Fp::ONE));
-        let before = monomials.iter().len();
-        monomials.strip_one();
-        assert_eq!(monomials.iter().len(), before - 1);
-        assert!(monomials.iter().all(|m| m.y > 0));
-    }
-
-    #[test]
-    #[should_panic(expected = "the ONE constraint is present")]
-    fn strip_one_rejects_the_zero_polynomial() {
-        Monomials::<Fp>::default().strip_one();
-    }
-
-    #[test]
-    #[should_panic(expected = "must be the ONE constraint")]
-    fn strip_one_rejects_another_constant_term() {
-        Monomials::new(vec![term(0, 0, Fp::from(2))]).strip_one();
-    }
-
-    #[test]
-    #[should_panic(expected = "occupies Y^0 alone")]
-    fn strip_one_rejects_a_shared_row() {
-        Monomials::new(vec![term(0, 0, Fp::ONE), term(0, 3, Fp::ONE)]).strip_one();
+        assert!(terms.all(|m| m.y > 0));
     }
 
     #[test]

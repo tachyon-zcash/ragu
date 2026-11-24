@@ -1171,21 +1171,17 @@ mod tests {
         Ok(())
     }
 
-    /// A registry holding every kind of wiring polynomial: circuits, stage
-    /// masks and a bonding polynomial, with domain points left unassigned.
+    /// A registry holding every kind of wiring polynomial: circuits, a stage
+    /// mask and a final mask, with domain points left unassigned.
     fn mixed_registry() -> Result<Registry<'static, Fp, TestRank>> {
-        use crate::staging::{bonding::Stripped, final_stage_mask, stage_mask};
+        use crate::staging::{final_stage_mask, stage_mask};
 
-        let stripped = Stripped::new(crate::into_wiring_object::<_, _, TestRank>(
-            SquareCircuit { times: 3 },
-        )?);
         let registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_internal_circuit(SquareCircuit { times: 1 })?
             .register_bonding(stage_mask(1, 3)?)
             .register_bonding(final_stage_mask(2)?)
-            .register_bonding(crate::BondingObject::new(Box::new(stripped)))
             .finalize()?;
         assert!(registry.num_circuits() < registry.domain.size());
         Ok(registry)
@@ -1193,8 +1189,8 @@ mod tests {
 
     /// What the tag hashes is what the registry evaluates: at every domain
     /// point, the registry polynomial is the monomials hashed for the circuit
-    /// registered there plus the tag term, for circuits, stage masks and
-    /// bonding polynomials alike.
+    /// registered there plus the tag term, for circuits and stage masks
+    /// alike.
     #[test]
     fn hashed_monomials_are_the_registry_polynomial() -> Result<()> {
         let registry = mixed_registry()?;
@@ -1216,8 +1212,7 @@ mod tests {
     /// The tag hashes the monomial driver's walk of each circuit, and the
     /// registry evaluates the walks of the `sxy`, `sx` and `sy` drivers. At a
     /// point drawn afresh on every run, all four agree at every domain point:
-    /// those holding circuits, stage masks and bonding polynomials, and those
-    /// left unassigned.
+    /// those holding circuits and stage masks, and those left unassigned.
     #[test]
     fn monomial_driver_agrees_with_the_wiring_drivers() -> Result<()> {
         let registry = mixed_registry()?;

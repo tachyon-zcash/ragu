@@ -290,9 +290,6 @@ pub struct CircuitMetrics {
     /// The number of gates, including those used for allocations.
     pub(crate) num_gates: usize,
 
-    /// The degree of the instance polynomial $k(Y)$.
-    pub(crate) degree_ky: usize,
-
     /// Per-segment constraint records in DFS emission order.
     ///
     /// See [`SegmentRecord`] for the indexing convention: index 0 is the
@@ -613,7 +610,7 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
 pub(crate) fn eval_raw<F: Field, RC: RawCircuit<F>>(circuit: &RC) -> Result<CircuitMetrics> {
     let mut collector = Counter::<F>::new();
 
-    let result = super::raw::orchestrate(&mut collector, circuit, Empty)?;
+    super::raw::orchestrate(&mut collector, circuit, Empty)?;
 
     let recorded_gates: usize = collector.segments.iter().map(|r| r.num_gates).sum();
     let recorded_constraints: usize = collector.segments.iter().map(|r| r.num_constraints).sum();
@@ -637,7 +634,6 @@ pub(crate) fn eval_raw<F: Field, RC: RawCircuit<F>>(circuit: &RC) -> Result<Circ
     Ok(CircuitMetrics {
         num_constraints: collector.num_constraints,
         num_gates: collector.num_gates,
-        degree_ky: result.degree_ky,
         segments: collector.segments,
     })
 }
