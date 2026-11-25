@@ -94,7 +94,7 @@ proptests_fast *ARGS:
 proptests_heavy *ARGS:
   PROPTEST_CASES="${PROPTEST_CASES:-256}" cargo test --release -p ragu_circuits --all-features proptest {{ARGS}}
 
-# run the wallet/aggregator workflow suite natively, HEAD against main (qa/bench/README.md)
+# run the workflow bench suite natively, HEAD against main: 1 warmup, 3 runs, threads = logical CPUs capped at 12 (qa/bench/README.md)
 bench *ARGS:
     python3 qa/bench/run.py run {{ARGS}}
 
