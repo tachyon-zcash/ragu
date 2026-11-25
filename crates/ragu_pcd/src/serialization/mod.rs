@@ -53,8 +53,22 @@
 //! explicit dispatch in the decoder, with either a migration path and
 //! compatibility tests or failing closed on the old one; a crate release or an
 //! implementation change alone changes none of them. The fuse fixtures pin
-//! the payload bytes of every scenario, so a change to the format fails them
-//! until they are regenerated, which is the moment to bump the version.
+//! the payload bytes of every scenario, so a change to the format, or to
+//! what a prover writes in it, fails them until they are regenerated. A
+//! regeneration that moves the Standard profile's layout is the moment to
+//! bump the schema version.
+//!
+//! Until the first release, two kinds of change regenerate the fixtures and
+//! keep the versions:
+//!
+//! - A change to the verification semantics keeps the protocol version.
+//!   Nothing is deployed, and a payload from before the change fails
+//!   verification rather than decoding.
+//! - A change to the layout of the
+//!   [`Aggregator`](crate::profile::Aggregator) profile's payloads keeps the
+//!   schema version. The profile is unaudited, and its layout follows its
+//!   online batches. A payload from before the change fails the length
+//!   check, or verification where the length is the same.
 //!
 //! # Input limits
 //!

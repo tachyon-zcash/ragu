@@ -171,6 +171,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   take (`pasta::STAGE_REACH`), through `IpaCycle::nested_generator`, and
   serves a Standard application that compresses; the aggregator's own tables
   hold the same points.
+- The `Aggregator` profile's nested online batch holds the nested IPA's
+  challenge polynomial, and its query stage that polynomial's opening, so the
+  scalar field's online stages take one more gate at the front of every
+  circuit of a proof's decompression. The compression commits a proof's runs
+  at the generators after those stages in every profile, so compressed proofs
+  from earlier versions do not verify, the Standard profile's included. The
+  Standard profile's proofs and circuits are unchanged. The `Aggregator`
+  profile's proofs and compressed proofs change layout with its batch, so its
+  payloads from earlier versions do not decode. The proof and
+  compressed-proof schemas are unchanged: before the first release the schema
+  version follows the Standard profile's layout alone (see `serialization`).
 - `CycleTranscript::new` commits each run of consecutive scalar-field values
   over the parameters' first nested generators, so a standalone IPA over
   `ipa` round-trips on either curve; the fuse opens its own transcript without
