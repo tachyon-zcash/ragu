@@ -115,7 +115,8 @@ impl From<CircuitIndex> for usize {
 ///
 /// Circuits are organized into four categories:
 /// - Internal circuits: system circuits for the PCD construction
-/// - Masks: mask polynomials for well-formedness enforcement
+/// - Masks: the stage masks and final masks that keep each stage polynomial
+///   and each circuit's own polynomial within its gates
 /// - Internal steps: internal step circuits (e.g. rerandomize, trivial)
 /// - Application steps: user-defined application step circuits
 ///
@@ -236,7 +237,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     ///
     /// Circuits are concatenated in the following order for proper indexing:
     /// 1. Internal circuits: System circuits for the PCD construction
-    /// 2. Masks: mask polynomials
+    /// 2. Masks: stage masks and final masks
     /// 3. Internal steps: Internal step circuits (e.g. rerandomize, trivial)
     /// 4. Application steps: User-defined step circuits
     ///

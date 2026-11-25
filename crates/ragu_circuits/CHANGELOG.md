@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed `BondingObject` to `MaskObject` and
   `RegistryBuilder::register_bonding` to `register_mask`. Every such
   polynomial is a stage mask or a final mask.
+- Removed `MultiStage::into_bonding_object`, which turned a circuit with no
+  gates of its own into a bonding polynomial. Its one user, the nested
+  loading circuit in `ragu_pcd`, is gone.
 - Renamed `StageExt::mask` to `StageExt::stage_mask`, beside
   `StageExt::final_mask`, as the free functions `staging::stage_mask` and
   `staging::final_mask` are named.

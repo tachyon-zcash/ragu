@@ -1497,9 +1497,9 @@ impl Builder {
         );
     }
 
-    /// The claims' points: sums of their groups' components into work
-    /// slots, and for a claim with several groups the Horner fold of the
-    /// group sums under $z$.
+    /// The claims' points. A circuit claim's point is the sum of its one
+    /// group's components. A mask claim's groups hold one component each,
+    /// which it copies into work slots and Horner-folds under $z$.
     fn claims(&mut self, claims: &[ClaimPlan], z: ChallengeRef) {
         let commitments = self.layout.instance.commitments;
         let claim_points = self.slots.points(claims.len());

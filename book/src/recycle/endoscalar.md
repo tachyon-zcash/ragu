@@ -42,7 +42,7 @@ commitment binding, and the root check must preserve these same wires.
 gates at 143 bits. It now ends at the preamble under its own final mask
 instead of chaining through the `outer_error` stage, whose wires it never
 read. Its claim contains `BindBeta`, `PointsBinding`, and `Preamble`; the
-new `PreambleFinalStaged` mask bonds `BindBeta`, which is removed from the
+new `PreambleFinalStaged` mask covers `BindBeta`, which is removed from the
 `OuterErrorFinalStaged` mask claim. Registration includes the new mask.
 The internal registry therefore has 53 native and 46 nested entries,
 including masks, with 25 native and 29 nested walk steps once the online

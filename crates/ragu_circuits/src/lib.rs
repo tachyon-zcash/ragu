@@ -340,8 +340,8 @@ where
 /// 2. **Batchable.** Without gates the revdot identity is linear in the trace,
 ///    so multiple traces can be folded with a random challenge and verified in
 ///    a single claim.
-/// 3. **$k(Y) \equiv 0$.** A mask has no instance and no `ONE` constraint,
-///    which gives $s(X, 0) = 0$. A circuit wiring polynomial instead has
+/// 3. **$k(Y) \equiv 0$.** A mask is a polynomial in $XY$ with no constant
+///    term, so $s(X, 0) = 0$. A circuit wiring polynomial instead has
 ///    $s(X, 0) = 1$, because the verifier sets $\mathbf{k}_0 = 1$ in any
 ///    circuit wiring claim regardless of public inputs. This distinction can be
 ///    used to prevent substitution attacks (a mask polynomial used where a

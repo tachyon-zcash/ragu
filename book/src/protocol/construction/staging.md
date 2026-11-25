@@ -123,10 +123,10 @@ trace and permit batching.[^batching]
 the claim of one mask then $\revdot{z \v{r_0} + \v{r_1}}{\v{s}} = 0$ for a
 random $z$ suffices to check both at once.
 
-In order to distinguish these polynomials from ordinary circuit wiring
-polynomials, the $0$th constraint is not emitted in masks, forcing
-$k(0) = s(X, 0) = 0$. The verifier enforces the kind of wiring polynomial by
-choosing $\v{k}_0$, since the revdot claim alone does not distinguish the two.
+A mask is a polynomial in $XY$ with no constant term, so $s(X, 0) = 0$, where
+the wiring polynomial of a circuit has $s(X, 0) = 1$ from its `ONE` constraint.
+The verifier enforces the kind of wiring polynomial by choosing $\v{k}_0$,
+since the revdot claim alone does not distinguish the two.
 
 The simplest theoretical mask $s_{\max}(X, Y) = \sum_{i=0}^{4n-1}(XY)^i$ would
 zero every wire of every gate. Since `SYSTEM` gate wires are either unused or

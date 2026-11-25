@@ -240,7 +240,9 @@ enforces.
 
 Every nested stage is loaded unenforced. `Collapse` re-emits the two contracts
 that the nested walk depends on, in its items 1 and 2, and binds the walk's
-inputs to the bridge stages in its item 3.
+inputs to the bridge stages in its item 3. `Collapse` and `ComputeV` both load
+every stage, so either could state a relation between two stages. Such a
+relation belongs in `Collapse`, beside the contracts of the stages.
 
 ### `EndoscalingStep(s)` {#nested-endoscaling-step}
 
@@ -265,10 +267,9 @@ from the `BridgePreamble` stage at the $y_q$ of the challenge stage.
 
 1. All $153$ points of the `PointsStage` are curve points.
 2. The `EndoscalarStage` holds $143$ bits and the $94$ products of those bits.
-3. Each of the $122$ inputs $C_k$ of the `PointsStage` equals the bridge-stage
-   field listed for it in the table of the
-   [nested walk](walks.md#nested-walk). The first is the initial point, which
-   equals `BridgeF.native_f`.
+3. The initial point $C_0$ of the `PointsStage` equals `BridgeF.native_f`, and
+   each of its $121$ inputs $C_1, \dots, C_{121}$ equals the bridge-stage field
+   listed for it in the table of the [nested walk](walks.md#nested-walk).
 4. The slots `x`, `y` and `u` equal the challenge stage's $x_q$, $y_q$ and
    $u_q$.
 5. The point of the `BridgeHash` stage equals $O_1$ in `BridgePreamble`.
@@ -290,8 +291,8 @@ from the `BridgePreamble` stage at the $y_q$ of the challenge stage.
 
    and enforce $(1 - \text{base}_q) \cdot (c_q - c_q^\ast) = 0$.
 
-Item 3 is $244$ linear constraints, one for each coordinate of a point, and
-adds no gate.
+Item 3 is $244$ linear constraints, one for each coordinate of the $122$
+points, and adds no gate.
 
 No nested circuit constrains $\sigma$. It is fixed from the native side through
 the [challenge stage commitment](stage_contents.md#challenge-stage).

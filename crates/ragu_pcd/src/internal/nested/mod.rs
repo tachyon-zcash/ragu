@@ -12,6 +12,8 @@
 //!
 //! The collapse and compute-v circuits share the [`unified`]
 //! instance as their public input, each constraining the slots it owns.
+//! Both load every nested stage. A relation between two stages belongs in
+//! collapse, which also holds the stages' contracts.
 //!
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
@@ -350,8 +352,8 @@ pub enum InternalCircuitIndex {
     /// Final staged mask of the circuits whose last stage is the challenge
     /// stage.
     ChallengeFinalStaged,
-    /// A mask of the profile's nested extension, a stage's or a final
-    /// one, in [`Extension::masks`](crate::profile::Extension::masks)
+    /// A mask of the profile's nested extension, a stage mask or a final
+    /// mask, in [`Extension::masks`](crate::profile::Extension::masks)
     /// order.
     ExtensionMask(u32),
 }
@@ -495,8 +497,8 @@ impl InternalCircuitIndex {
         })
     }
 
-    /// Whether `self` is registered as a mask, a stage's or a final one,
-    /// rather than as a circuit.
+    /// Whether `self` is registered as a mask, a stage mask or a final
+    /// mask, rather than as a circuit.
     #[cfg(test)]
     pub fn is_mask(self) -> bool {
         use InternalCircuitIndex::*;

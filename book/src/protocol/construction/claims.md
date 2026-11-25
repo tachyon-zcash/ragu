@@ -29,18 +29,26 @@ traces $r_1, r_2, \dots$:
 
 $$\left( \text{Horner}_z[r_1, r_2, \dots],\ s_j(X, y);\ 0 \right).$$
 
-It holds as an identity in $y$ and $z$ exactly when each entry of the list
-separately satisfies the constraints of $s_j$. If some entry of a list of $L$
-violates a constraint, the claim holds for $y$ and $z$ drawn uniformly from a
-set $S$ with probability at most $(4n - 2 + L)/|S|$.[^mask-bound]
+A registered mask is a sum of powers of $XY$ over a set $M$ of wire positions,
+$\sum_{i \in M} w_i \, (XY)^i$, with $w_{4n-1} = \kappa$ and every other weight
+equal to one. For a polynomial $r$ with coefficients $r_d$, its revdot product
+with the mask reads off the masked coefficients of $r$:
+
+$$\revdot{r}{s_j(X, y)} = \sum_{i \in M} w_i \, r_{4n-1-i} \, y^i.$$
+
+The claim therefore holds as an identity in $y$ and $z$ exactly when every
+entry of the list is zero at each masked position, and at $X^0$ when
+$\kappa \neq 0$. If some entry of a list of $L$ is not, the claim holds for $y$
+and $z$ drawn uniformly from a set $S$ with probability at most
+$(4n - 2 + L)/|S|$.[^mask-bound]
 
 [^mask-bound]: The product of the claim is
-    $z^{L-1} \revdot{r_1}{s_j(X, y)} + \dots + \revdot{r_L}{s_j(X, y)}$. Each
-    $\revdot{r}{s_j(X, Y)}$ is a polynomial in $Y$ of degree at most $4n - 1$
-    whose coefficients are the values of the constraints on $r$. The product
-    is therefore a polynomial in $y$ and $z$ of total degree at most
-    $(4n - 1) + (L - 1)$, it is nonzero when some entry violates a constraint,
-    and the bound is that of Schwartz–Zippel.
+    $z^{L-1} \revdot{r_1}{s_j(X, y)} + \dots + \revdot{r_L}{s_j(X, y)}$, and
+    each $\revdot{r}{s_j(X, Y)}$ is the polynomial in $Y$ above, of degree at
+    most $4n - 1$. The product is therefore a polynomial in $y$ and $z$ of
+    total degree at most $(4n - 1) + (L - 1)$, it is nonzero when some entry
+    has a nonzero masked coefficient, and the bound is that of
+    Schwartz–Zippel.
 
 A **raw claim** $(A, B;\ c)$ has no such structure. It is what a fold leaves
 behind, and each child brings one.

@@ -328,8 +328,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         ))
     }
 
-    /// Registers mask `mask` of the native extension, a stage's or a
-    /// final one in [`Extension::masks`] order, into `slot`.
+    /// Registers mask `mask` of the native extension, a stage mask or a
+    /// final mask in [`Extension::masks`] order, into `slot`.
     ///
     /// # Errors
     ///
@@ -944,8 +944,8 @@ impl<'params, F: Field, R: Rank> CircuitSlot<'params, F, R> {
     }
 }
 
-/// A registry slot a profile's mask hook fills with one mask, a stage's
-/// or a final one.
+/// A registry slot a profile's mask hook fills with one mask, a stage
+/// mask or a final mask.
 ///
 /// The hook receives the slot and returns it [`Registered`], which only
 /// [`register_stage_mask`](Self::register_stage_mask) and
@@ -959,7 +959,7 @@ impl<'params, F: Field, R: Rank> MaskSlot<'params, F, R> {
         MaskSlot(registry)
     }
 
-    /// Registers stage `S`'s mask as the slot's mask and records the
+    /// Registers the stage mask of `S` in the slot and records the
     /// stage's gates for the registry to check against the profile's
     /// declaration ([`Extension::stages`]).
     ///
@@ -973,9 +973,9 @@ impl<'params, F: Field, R: Rank> MaskSlot<'params, F, R> {
         })
     }
 
-    /// Registers the final mask of the circuits whose last stage is `S` as
-    /// the slot's mask and records the gate it starts at for the
-    /// registry to check against the profile's declaration
+    /// Registers the final mask of the circuits whose last stage is `S` in
+    /// the slot and records the gate it starts at for the registry to
+    /// check against the profile's declaration
     /// ([`Extension::final_masks`]).
     ///
     /// # Errors
@@ -1123,7 +1123,7 @@ impl<F: Field, R: Rank> Default for ExtensionRxs<F, R> {
 /// the fuse's own and the stages they load.
 ///
 /// The circuits are registered as internal circuits after the fuse's and
-/// its masks, the stages' and then the final ones, after the fuse's
+/// its masks, the stage masks and then the final masks, after the fuse's
 /// masks, so that the registry's order stays circuits first. Each circuit
 /// and each stage has an rx polynomial in the proof; a final mask, the
 /// final mask of its circuits' last stage, binds the rx polynomials of the
@@ -1268,8 +1268,8 @@ impl Extension {
         self.circuits.len() + self.stages
     }
 
-    /// The masks the extension registers: the stages', then the final
-    /// masks.
+    /// The masks the extension registers: the stage masks, then the
+    /// final masks.
     pub fn masks(&self) -> usize {
         self.stages + self.final_masks.len()
     }
@@ -1281,7 +1281,7 @@ impl Extension {
     }
 
     /// The circuits a final mask binds, for `mask` an index among the
-    /// masks past the stages' own.
+    /// masks past the stage masks.
     pub fn final_mask(&self, mask: usize) -> &[u32] {
         &self.final_masks[mask - self.stages]
     }

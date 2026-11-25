@@ -7,9 +7,10 @@
 //! from the points stage, which is committed after the challenge the walk
 //! folds under, so two things are enforced here:
 //!
-//! - **The walked points.** Every point of the points stage equals the copy
-//!   a bridge stage holds, and the transcript absorbed that bridge stage
-//!   before the challenge (see [The walked points](#the-walked-points)).
+//! - **The walked points.** Every input of the points stage, and its initial
+//!   point, equals the copy a bridge stage holds, and the transcript absorbed
+//!   that bridge stage before the challenge (see
+//!   [The walked points](#the-walked-points)).
 //! - **The stage contracts.** Every point of the points stage lies on the
 //!   curve, and the endoscalar stage's
 //!   [`HoistedEndoscalar`](ragu_primitives::HoistedEndoscalar) holds boolean
@@ -118,8 +119,9 @@ use crate::{
     profile::Profile,
 };
 
-/// Enforces every point of the points stage equal to the copy a bridge
-/// stage holds, in the order `compute_p` (`_10_p`) accumulates them.
+/// Enforces every input of the points stage, and its initial point, equal to
+/// the copy a bridge stage holds, in the order `compute_p` (`_10_p`)
+/// accumulates them.
 ///
 /// The transcript absorbs the bridge stages before the challenge the walk
 /// folds under, and commits the points stage after it. These equalities are

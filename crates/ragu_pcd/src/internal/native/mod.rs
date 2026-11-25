@@ -277,8 +277,8 @@ pub enum InternalCircuitIndex {
     /// The final mask of the step circuits, whose only stage is the
     /// application stage.
     ApplicationFinalStaged,
-    /// A mask of the profile's native extension, a stage's or a final
-    /// one, in [`Extension::masks`](crate::profile::Extension::masks)
+    /// A mask of the profile's native extension, a stage mask or a final
+    /// mask, in [`Extension::masks`](crate::profile::Extension::masks)
     /// order.
     ExtensionMask(u32),
 }
@@ -438,8 +438,8 @@ impl InternalCircuitIndex {
         CircuitIndex::new(pos)
     }
 
-    /// Whether `self` is registered as a mask, a stage's or a final one,
-    /// rather than as a circuit.
+    /// Whether `self` is registered as a mask, a stage mask or a final
+    /// mask, rather than as a circuit.
     #[cfg(test)]
     pub fn is_mask(self) -> bool {
         use InternalCircuitIndex::*;
