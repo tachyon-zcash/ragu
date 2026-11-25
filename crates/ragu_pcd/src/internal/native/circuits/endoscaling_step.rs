@@ -5,8 +5,9 @@
 //! points per step.
 //!
 //! The mirror of the nested [`EndoscalingStep`] for the split points layout
-//! of [`stages::points`]: step $k$ starts from the previous interstitial (or
-//! $F_n$ for step 0), endoscales it by the walk stage's endoscalar bits and adds
+//! of [`stages::points`]: step $k$ is page $k$ of the walk (see
+//! [`paging`]). It starts from the previous interstitial (or $F_n$ for
+//! step 0), endoscales it by the walk stage's endoscalar bits and adds
 //! each of its inputs in turn, reading every point from the stage that
 //! committed it, and enforces the result equal to its own interstitial. The
 //! last interstitial is $P_n$.
@@ -24,6 +25,7 @@
 //! no such selector and needs no suffix.
 //!
 //! [`EndoscalingStep`]: crate::internal::endoscalar::EndoscalingStep
+//! [`paging`]: crate::internal::paging
 //! [`stages::points`]: crate::internal::native::stages::points
 //! [`unified`]: crate::internal::native::unified
 
@@ -40,16 +42,56 @@ use ragu_core::{
     gadgets::{Bound, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, NonzeroBank, WithSuffix, vec::Len};
+use ragu_primitives::{
+    Element, Point, WithSuffix,
+    vec::{FixedVec, Len},
+};
 
 use super::super::stages::points::{
     AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, PreambleStage, RegistryWxStage,
     WalkInputs, WalkStage, WalkWitness,
 };
 use crate::{
-    internal::endoscalar::input_range,
+    internal::paging::{self, PointHorner, Walk as _},
     profile::{Profile, ProfiledCycle},
 };
+
+/// The loaded points stages, as the walk one step is a page of.
+struct Loaded<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
+    unit: PointHorner<'a, 'dr, D, C::NestedCurve>,
+    inputs: WalkInputs<'a, 'dr, D, C::NestedCurve, C::Profile>,
+    interstitials: &'a FixedVec<Point<'dr, D, C::NestedCurve>, NumSteps<C::Profile>>,
+}
+
+impl<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> paging::Walk<'dr, D>
+    for Loaded<'a, 'dr, D, C>
+{
+    type Unit = PointHorner<'a, 'dr, D, C::NestedCurve>;
+
+    fn unit(&self) -> &Self::Unit {
+        &self.unit
+    }
+
+    fn capacity(&self) -> usize {
+        C::Profile::NATIVE_ENDOSCALINGS_PER_STEP
+    }
+
+    fn num_inputs(&self) -> usize {
+        NumInputs::<C::Profile>::len()
+    }
+
+    fn initial(&self) -> &Point<'dr, D, C::NestedCurve> {
+        self.inputs.initial()
+    }
+
+    fn input(&self, index: usize) -> &Point<'dr, D, C::NestedCurve> {
+        self.inputs.input(index)
+    }
+
+    fn interstitial(&self, page: usize) -> &Point<'dr, D, C::NestedCurve> {
+        &self.interstitials[page]
+    }
+}
 
 /// One step of the native endoscaling walk.
 #[derive(Clone)]
@@ -118,39 +160,19 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let ab = ab.unenforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let f = f.unenforced(dr, inputs.as_ref().map(|i| &i.f))?;
         let walked = walk.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
-        let endoscalar = &walked.endoscalar;
-        let interstitials = &walked.interstitials;
-        let walk = WalkInputs {
-            binding: &binding,
-            preamble: &preamble,
-            registry_wx: &registry_wx,
-            ab: &ab,
-            f: &f,
+        let walk = Loaded::<D, C> {
+            unit: PointHorner::new(&walked.endoscalar),
+            inputs: WalkInputs {
+                binding: &binding,
+                preamble: &preamble,
+                registry_wx: &registry_wx,
+                ab: &ab,
+                f: &f,
+            },
+            interstitials: &walked.interstitials,
         };
-
-        let initial = self
-            .step
-            .checked_sub(1)
-            .map(|i| &interstitials[i])
-            .unwrap_or(walk.initial())
-            .clone();
-
-        let range = input_range(
-            C::Profile::NATIVE_ENDOSCALINGS_PER_STEP,
-            self.step,
-            NumInputs::<C::Profile>::len(),
-        );
-        assert!(!range.is_empty());
-
-        let acc = NonzeroBank::scope(dr, |dr, bank| {
-            let mut acc = initial;
-            for idx in range {
-                let scaled = endoscalar.group_scale(dr, &acc)?;
-                acc = scaled.add_incomplete(dr, walk.input(idx), bank)?;
-            }
-            Ok(acc)
-        })?;
-        acc.enforce_equal(dr, &interstitials[self.step])?;
+        assert!(!paging::range(walk.capacity(), self.step, walk.num_inputs()).is_empty());
+        paging::page(dr, &walk, self.step)?;
 
         Ok(WithAux::new(
             WithSuffix::new((), Element::zero(dr)),

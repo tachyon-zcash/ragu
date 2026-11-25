@@ -17,6 +17,9 @@
 //!   that batch-reduces them
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
+//! - [`paging`] — one walk of a unit operation cut into circuits that
+//!   share a stage of interstitial states, which both endoscaling walks
+//!   are
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
 //! - [`ky`] — the $k(y)$ targets of a proof's revdot claims, computed one
@@ -25,8 +28,8 @@
 //!   `compute_v` circuits need
 //! - [`const_fns`] — compile-time helper functions for array construction
 //!
-//! [`revdot`], [`endoscalar`], [`transcript`], [`ky`] and [`inverter`] live
-//! in `shared/` and are re-exported here.
+//! [`revdot`], [`endoscalar`], [`paging`], [`transcript`], [`ky`] and
+//! [`inverter`] live in `shared/` and are re-exported here.
 //!
 //! # Crossing the cycle
 //!
@@ -101,10 +104,11 @@ mod shared {
     pub mod endoscalar;
     pub mod inverter;
     pub mod ky;
+    pub mod paging;
     pub mod revdot;
     pub mod transcript;
 }
-pub use shared::{endoscalar, inverter, ky, revdot, transcript};
+pub use shared::{endoscalar, inverter, ky, paging, revdot, transcript};
 
 /// Position `index` among a profile's `count` variants of one kind, for
 /// either side's arithmetic index lookups.

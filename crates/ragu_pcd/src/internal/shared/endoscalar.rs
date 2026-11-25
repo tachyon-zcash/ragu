@@ -1,11 +1,14 @@
-//! MultiStage circuit implementation for endoscaling operations.
+//! The endoscaling walk: the stages that hold it and the nested step
+//! circuit.
 //!
-//! This module provides the [`EndoscalingStep`] multi-stage circuit, which computes
-//! iterated endoscalar multiplications using Horner's rule. Each step performs
-//! up to `E` endoscalings, storing the result in an interstitial slot.
+//! The walk computes iterated endoscalar multiplications by Horner's rule.
+//! It is a paged walk (see [`paging`]): its unit is
+//! [`PointHorner`], `[e] acc + input`, and each step
+//! circuit is one page of up to `E` endoscalings, whose result the step
+//! holds to its interstitial.
 //!
 //! The structure separates points into:
-//! - `initial`: The base case accumulator for step 0
+//! - `initial`: The walk's initial state, which step 0 starts from
 //! - `inputs`: Additional points to endoscale (length = `N::len() - 1`)
 //! - `interstitials`: Output points, one per step
 //!
@@ -38,23 +41,13 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, GadgetExt, HoistedEndoscalar, NonzeroBank, Point, Uendo,
+    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, HoistedEndoscalar, Point, Uendo,
     consistent::Consistent,
     vec::{FixedVec, Len},
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
-/// The range of input indices step `step` walks, out of `num_inputs`, at
-/// `endoscalings` per step.
-pub(crate) fn input_range(
-    endoscalings: usize,
-    step: usize,
-    num_inputs: usize,
-) -> core::ops::Range<usize> {
-    let start = step * endoscalings;
-    let end = (start + endoscalings).min(num_inputs);
-    start..end
-}
+use super::paging::{self, PointHorner};
 
 /// Number of inputs (excluding initial) for a walk over `N` points.
 pub struct InputsLen<N: Len>(core::marker::PhantomData<N>);
@@ -68,15 +61,13 @@ impl<N: Len> Len for InputsLen<N> {
 }
 
 /// Compute the number of endoscaling steps for `num_points` curve points at
-/// `endoscalings` per step.
+/// `endoscalings` per step: the pages of a walk whose initial state is the
+/// first point and whose inputs are the rest.
 ///
 /// This is `ceil((num_points - 1) / endoscalings).max(1)`.
 pub(crate) const fn num_steps(endoscalings: usize, num_points: usize) -> usize {
     assert!(num_points > 0);
-    assert!(endoscalings > 0);
-    let inputs = num_points - 1;
-    let steps = inputs.div_ceil(endoscalings);
-    if steps > 1 { steps } else { 1 }
+    paging::num_pages(endoscalings, num_points - 1)
 }
 
 /// Number of steps (= interstitials) for a walk over `N` points at `E`
@@ -175,20 +166,11 @@ impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
 
         let endoscalar: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
 
-        // Compute interstitials using chunked Horner iteration
-        let mut interstitials = vec::Vec::with_capacity(NumStepsLen::<N, E>::len());
-        let mut acc = initial.to_projective();
-
-        if points.is_empty() {
-            interstitials.push(acc);
-        } else {
-            for chunk in points.chunks(E::len()) {
-                for input in chunk {
-                    acc = acc * endoscalar + input.to_projective();
-                }
-                interstitials.push(acc);
-            }
-        }
+        // The state after each step, as the pages hold them.
+        let interstitials =
+            paging::interstitials(E::len(), initial.to_projective(), points, |acc, input| {
+                *acc = *acc * endoscalar + input.to_projective()
+            });
 
         let interstitials = {
             // Batch normalize projective points to affine
@@ -263,14 +245,51 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>> Stage<C::Base, R>
     }
 }
 
-/// Step-based endoscaling component.
+/// The loaded endoscalar and points stages, as the walk one step is a page
+/// of.
+struct Loaded<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> {
+    unit: PointHorner<'a, 'dr, D, C>,
+    points: &'a Points<'dr, D, C, N, E>,
+}
+
+impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> paging::Walk<'dr, D>
+    for Loaded<'a, 'dr, D, C, N, E>
+{
+    type Unit = PointHorner<'a, 'dr, D, C>;
+
+    fn unit(&self) -> &Self::Unit {
+        &self.unit
+    }
+
+    fn capacity(&self) -> usize {
+        E::len()
+    }
+
+    fn num_inputs(&self) -> usize {
+        InputsLen::<N>::len()
+    }
+
+    fn initial(&self) -> &Point<'dr, D, C> {
+        &self.points.initial
+    }
+
+    fn input(&self, index: usize) -> &Point<'dr, D, C> {
+        &self.points.inputs[index]
+    }
+
+    fn interstitial(&self, page: usize) -> &Point<'dr, D, C> {
+        &self.points.interstitials[page]
+    }
+}
+
+/// One step of the endoscaling walk: one page of up to `E` endoscalings.
 ///
-/// Each step performs up to `E` endoscalings via Horner's rule:
 /// - Step 0 initializes from `initial`, iterates over its slice of `inputs[0..E]`
 /// - Step N (N > 0) initializes from `interstitials[N-1]`, iterates over
 ///   `inputs[N*E..(N+1)*E]` (clamped to bounds)
 ///
-/// The circuit constrains that `interstitials[step]` equals the Horner result.
+/// The circuit constrains that `interstitials[step]` equals the Horner
+/// result ([`paging::page`]).
 pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len, G = NoGap> {
     step: usize,
     _marker: core::marker::PhantomData<(C, R, N, E, G)>,
@@ -301,11 +320,6 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
             step,
             _marker: core::marker::PhantomData,
         }
-    }
-
-    /// Range of input indices to iterate over in the Horner loop.
-    fn input_range(&self) -> core::ops::Range<usize> {
-        input_range(E::len(), self.step, InputsLen::<N>::len())
     }
 }
 
@@ -354,29 +368,18 @@ where
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
         let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points))?;
 
-        // acc = initial or previous interstitial, depending on step index
-        let initial = self
-            .step
-            .checked_sub(1)
-            .map(|i| &points.interstitials[i])
-            .unwrap_or(&points.initial)
-            .clone();
-
-        let input_range = self.input_range();
-
-        // Horner's rule: scale and add each input. With only the initial
-        // point, the empty loop leaves it to be constrained to the output.
-        let acc = NonzeroBank::scope(dr, |dr, bank| {
-            let mut acc = initial;
-            for idx in input_range {
-                let scaled = endoscalar.group_scale(dr, &acc)?;
-                acc = scaled.add_incomplete(dr, &points.inputs[idx], bank)?;
-            }
-            Ok(acc)
-        })?;
-
-        // Constrain output
-        acc.enforce_equal(dr, &points.interstitials[self.step])?;
+        // The step is one page of the walk: from the initial point or the
+        // previous interstitial, Horner's rule over the step's inputs, held
+        // to the step's own interstitial. With only the initial point, the
+        // page applies nothing and holds it to the output.
+        paging::page(
+            dr,
+            &Loaded {
+                unit: PointHorner::new(&endoscalar),
+                points: &points,
+            },
+            self.step,
+        )?;
 
         Ok(WithAux::new((), D::unit()))
     }
@@ -719,7 +722,7 @@ mod tests {
     fn test_input_range() {
         // Helper to get input_range for a given NUM_POINTS and step
         fn range<const NUM_POINTS: usize>(step: usize) -> core::ops::Range<usize> {
-            EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step).input_range()
+            super::paging::range(E::len(), step, InputsLen::<ConstLen<NUM_POINTS>>::len())
         }
 
         // NUM_POINTS = 1: 0 inputs, 1 step
