@@ -511,6 +511,7 @@ impl<C: ProfiledCycle> Instance<C> {
         let nested_bound = ky::native_bound::<C::Profile, _>(
             |index| self.nested_commitment(nested::RxComponent::Rx(index)),
             |i| self.online_fq_commitments[i],
+            |slot| self.nested_online_commitments[slot],
         );
         let nested_online_stages = ky::nested_online_stages::<C::Profile, _>(|index| {
             self.nested_commitment(nested::RxComponent::Rx(index))

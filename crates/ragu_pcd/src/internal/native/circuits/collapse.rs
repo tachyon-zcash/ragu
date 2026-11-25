@@ -278,13 +278,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
         let (left_binding, right_binding) = match (&extension.binding, &binding) {
             (Some(_), Some(binding)) => {
                 // The children's nested extension stages the binding
-                // names, then the online Fq commitments they exported.
+                // names, then the online Fq commitments they exported,
+                // then the commitments of their nested batch it names.
+                // The last are the preamble's copies, which the child's
+                // `bind_endoscalar` claim below holds to the points its
+                // walk folded.
                 let bound = |child: &super::super::stages::points::ChildBinding<
                     'dr,
                     D,
                     C::NestedCurve,
                     C::Profile,
-                >| {
+                >,
+                             inputs: &native_preamble::ProofInputs<'dr, D, C, HEADER_SIZE>| {
                     ky::native_bound::<C::Profile, _>(
                         |index| match index {
                             crate::internal::nested::RxIndex::ExtensionStage(j) => {
@@ -293,11 +298,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
                             _ => unreachable!("a binding names extension stages"),
                         },
                         |i| child.online_fq[i].clone(),
+                        |slot| inputs.online_points[slot].clone(),
                     )
                 };
                 (
-                    ky::binding_ky(dr, &y, &bound(&binding.left), &[])?,
-                    ky::binding_ky(dr, &y, &bound(&binding.right), &[])?,
+                    ky::binding_ky(dr, &y, &bound(&binding.left, &preamble.left), &[])?,
+                    ky::binding_ky(dr, &y, &bound(&binding.right, &preamble.right), &[])?,
                 )
             }
             _ => (None, None),

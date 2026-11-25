@@ -213,6 +213,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     ky::native_bound::<C::Profile, _>(
                         |index| proof.nested_rx_commitment(index),
                         |i| proof.online_fq_commitments[i],
+                        |slot| proof.nested_online_commitments[slot],
                     )
                 };
                 // The `bind_endoscalar` circuit's, over the online Fq

@@ -186,10 +186,13 @@ pub fn bound<T>(binding: Option<&Binding>, stage: impl Fn(u32) -> T) -> Vec<T> {
 /// exposes: the nested extension stages its binding names, as `commitment`
 /// gives them, then the proof's own online Fq polynomials it names, in
 /// that order, as `online` gives the commitments the proof exports (see
-/// [`bound_commitments`](nested::online::bound_commitments)).
+/// [`bound_commitments`](nested::online::bound_commitments)), then the
+/// polynomials of its nested batch it names, as `batch` gives their
+/// commitments.
 pub fn native_bound<P: Profile, T>(
     commitment: impl Fn(nested::RxIndex) -> T,
     online: impl Fn(usize) -> T,
+    batch: impl Fn(usize) -> T,
 ) -> Vec<T> {
     let binding = crate::profile::native_extension::<P>().binding;
     let mut points = bound(binding.as_ref(), |j| {
@@ -197,6 +200,7 @@ pub fn native_bound<P: Profile, T>(
     });
     if let Some(binding) = &binding {
         points.extend((0..binding.online.len()).map(online));
+        points.extend(binding.batch.iter().map(|&slot| batch(slot as usize)));
     }
     points
 }
@@ -378,6 +382,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             native_bound::<C::Profile, _>(
                 |index| proof.nested_rx_commitment(index),
                 |i| proof.online_fq_commitments[i],
+                |slot| proof.nested_online_commitments[slot],
             )
         });
         let exported = proof

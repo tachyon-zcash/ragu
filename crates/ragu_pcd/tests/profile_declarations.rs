@@ -363,10 +363,44 @@ fn malformed_declarations_are_refused() {
         }
     }
 
+    /// [`Crossing`] with its native binding naming a polynomial of the
+    /// nested batch, which the profile does not declare.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct StrayBatch;
+
+    impl Profile for StrayBatch {
+        const NAME: &'static str = "stray batch";
+        const NATIVE_EXTENSION: usize = 1;
+        const NESTED_EXTENSION: usize = 2;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            let mut extension = Crossing::native_extension();
+            extension
+                .binding
+                .as_mut()
+                .expect("the crossing profile's native binding")
+                .batch = vec![0];
+            extension
+        }
+
+        fn nested_extension() -> Extension {
+            Crossing::nested_extension()
+        }
+    }
+
+    assert!(Crossing::check().is_ok());
     assert!(StrayStatement::check().is_err());
     assert!(NestedStatement::check().is_err());
     assert!(StrayBinding::check().is_err());
     assert!(StrayNestedBinding::check().is_err());
+    assert!(StrayBatch::check().is_err());
 }
 
 /// A profile's name identifies it in diagnostics, so the checks refuse

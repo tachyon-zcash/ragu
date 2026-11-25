@@ -834,11 +834,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
             |slots: &[u32], count: usize| slots.iter().all(|&slot| (slot as usize) < count);
         if let Some(binding) = &native.binding
             && !(within(&binding.online, Self::ONLINE_FQ_POLYS)
-                && binding.batch.is_empty()
+                && within(&binding.batch, Self::NESTED_ONLINE.polynomials.len())
                 && binding.openings.is_empty())
         {
             return Err(Error::Initialization(
-                "the native binding circuit exposes commitments of the step's online Fq polynomials alone".into(),
+                "the native binding circuit names an online slot the step does not have".into(),
             ));
         }
         if let Some(binding) = &nested.binding
@@ -1242,8 +1242,13 @@ pub struct Binding {
     /// step; naming one has the step export its commitment for its parent
     /// to hold, which a profile that names none does not pay for.
     pub online: Vec<u32>,
-    /// Native profile batch commitments, after the application slot points.
-    /// Only the nested binding circuit can expose these host-curve points.
+    /// The polynomials of the other field's profile batch whose
+    /// commitments the circuit's output ends with, after the points of
+    /// `online`, in output order. The points are on the curve the
+    /// binding's side holds: the nested binding names polynomials of
+    /// [`Profile::NATIVE_ONLINE`], and the native binding names
+    /// polynomials of [`Profile::NESTED_ONLINE`]. The claim's $k(y)$
+    /// holds each point to the commitment the step's walk folded.
     pub batch: Vec<u32>,
     /// The step's online polynomials over the scalar field whose openings
     /// the circuit's output ends with, after its points: for each slot the
