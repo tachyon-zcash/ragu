@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Blind::random` draws all three. A field element converts into the `Blind`
   that holds it at `a[0]` and leaves the blind gate zero.
 - Added runtime-sized stages: `staging::stage_gates`, `stage_rx`, `stage_mask`
-  and `final_stage_mask` lay out and mask a stage whose size is fixed when the
+  and `final_mask` lay out and mask a stage whose size is fixed when the
   registry is built rather than in the type, with the rank's bounds checked.
 - Added iteration over the stored coefficients of sparse polynomials.
 - Added `Stage::gate_ranges`, the gates of a stage and of every stage before
@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed `BondingObject` to `MaskObject` and
   `RegistryBuilder::register_bonding` to `register_mask`. Every such
   polynomial is a stage mask or a final mask.
+- Renamed `StageExt::mask` to `StageExt::stage_mask`, beside
+  `StageExt::final_mask`, as the free functions `staging::stage_mask` and
+  `staging::final_mask` are named.
 - `MaskObject` is a concrete type over the rank alone, `MaskObject<R>`,
   where it boxed a wiring polynomial over a field and a lifetime. The
   functions that return one lose those two parameters.

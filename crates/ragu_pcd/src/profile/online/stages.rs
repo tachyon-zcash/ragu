@@ -508,9 +508,9 @@ impl OnlineMask {
         slot: MaskSlot<'params, F, R>,
     ) -> Result<Registered<'params, F, R>> {
         match self {
-            Self::InputMask => slot.register_mask::<InputStage<P, S>>(),
-            Self::QueryMask => slot.register_mask::<QueryStage<P, S>>(),
-            Self::EvalMask => slot.register_mask::<EvalStage<P, S>>(),
+            Self::InputMask => slot.register_stage_mask::<InputStage<P, S>>(),
+            Self::QueryMask => slot.register_stage_mask::<QueryStage<P, S>>(),
+            Self::EvalMask => slot.register_stage_mask::<EvalStage<P, S>>(),
             Self::HelperFinal => slot.register_final_mask::<EvalStage<P, S>>(),
             Self::ConsumersFinal => slot.register_final_mask::<QueryStage<P, S>>(),
         }

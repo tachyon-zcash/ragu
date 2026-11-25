@@ -348,14 +348,14 @@ where
 ///    circuit wiring polynomial is expected) when the verifier does not have a
 ///    fixed choice of the wiring polynomial.
 ///
-/// Constructed via [`StageExt::mask`] and [`StageExt::final_mask`], or
-/// [`stage_mask`] and [`final_stage_mask`] for a stage sized at runtime; the
+/// Constructed via [`StageExt::stage_mask`] and [`StageExt::final_mask`], or
+/// [`stage_mask`] and [`final_mask`] for a stage sized at runtime; the
 /// underlying implementation is private to this crate.
 ///
-/// [`StageExt::mask`]: crate::staging::StageExt::mask
+/// [`StageExt::stage_mask`]: crate::staging::StageExt::stage_mask
 /// [`StageExt::final_mask`]: crate::staging::StageExt::final_mask
 /// [`stage_mask`]: crate::staging::stage_mask
-/// [`final_stage_mask`]: crate::staging::final_stage_mask
+/// [`final_mask`]: crate::staging::final_mask
 pub struct MaskObject<R: Rank> {
     inner: staging::mask::StageMask<R>,
 }

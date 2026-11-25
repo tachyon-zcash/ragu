@@ -950,19 +950,23 @@ where
     type Transcript<C, S, K, R, const H: usize> = TranscriptStage<C, S, K, R, H>;
     type Digits<C, S, K, R, const H: usize> = DigitsStage<C, S, K, R, H>;
     if mask < indices.front {
-        return S::register_mask(mask, slot);
+        return S::register_stage_mask(mask, slot);
     }
     let with_transcript = indices.with_transcript;
     let stages = indices.stages() as u32;
     let digits_final = stages + 1 + with_transcript as u32;
     match mask as u32 {
-        index if index == indices.lifts() => slot.register_mask::<Lifts<C, S, K, R, HEADER_SIZE>>(),
-        index if index == indices.work() => slot.register_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
+        index if index == indices.lifts() => {
+            slot.register_stage_mask::<Lifts<C, S, K, R, HEADER_SIZE>>()
+        }
+        index if index == indices.work() => {
+            slot.register_stage_mask::<Work<C, S, K, R, HEADER_SIZE>>()
+        }
         index if with_transcript && index == indices.transcript() => {
-            slot.register_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
+            slot.register_stage_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
         }
         index if index == indices.digits() => {
-            slot.register_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
+            slot.register_stage_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
         }
         index if index == stages => slot.register_final_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
         index if with_transcript && index == stages + 1 => {

@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decompression is integrated. `finalize` checks a profile's declaration
   against what its hooks register: a staged circuit through
   `CircuitSlot::register_staged` and a stage's masks through
-  `MaskSlot::register_mask` and `register_final_mask`; a mask of another
+  `MaskSlot::register_stage_mask` and `register_final_mask`; a mask of another
   shape cannot be registered.
 - Added optional `baked-aggregator` parameters through
   `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank

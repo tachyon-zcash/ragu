@@ -178,8 +178,8 @@ fn online_stages<S: Side<Pasta>, R: Rank>(
             <Query<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.online_query)?,
         ],
         alloc::vec![
-            <Input<S, R> as StageExt<S::F, R>>::mask()?,
-            <Query<S, R> as StageExt<S::F, R>>::mask()?,
+            <Input<S, R> as StageExt<S::F, R>>::stage_mask()?,
+            <Query<S, R> as StageExt<S::F, R>>::stage_mask()?,
         ],
     ))
 }
@@ -197,15 +197,15 @@ fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     let (mut stages, mut masks) = online_stages::<S, R>(prepared)?;
     for index in 0..S::stages() {
         stages.push(S::rx(index, zero, prepared)?);
-        masks.push(S::mask(index)?);
+        masks.push(S::stage_mask(index)?);
     }
     stages.extend([
         <Lifts<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.lifts)?,
         <Work<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.work)?,
     ]);
     masks.extend([
-        <Lifts<S, R> as StageExt<S::F, R>>::mask()?,
-        <Work<S, R> as StageExt<S::F, R>>::mask()?,
+        <Lifts<S, R> as StageExt<S::F, R>>::stage_mask()?,
+        <Work<S, R> as StageExt<S::F, R>>::stage_mask()?,
     ]);
     Ok((stages, masks))
 }
@@ -234,7 +234,7 @@ fn run_circuit<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
                 zero,
                 &prepared.transcript,
             )?);
-            masks.push(<Transcript<S, R> as StageExt<S::F, R>>::mask()?);
+            masks.push(<Transcript<S, R> as StageExt<S::F, R>>::stage_mask()?);
             let final_mask = <Transcript<S, R> as StageExt<S::F, R>>::final_mask()?;
             check(circuit, prepared, stages, masks, final_mask, rng)
         }
@@ -248,7 +248,7 @@ fn run_circuit<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
                 zero,
                 &prepared.digits,
             )?);
-            masks.push(<Digits<S, R> as StageExt<S::F, R>>::mask()?);
+            masks.push(<Digits<S, R> as StageExt<S::F, R>>::stage_mask()?);
             let final_mask = <Digits<S, R> as StageExt<S::F, R>>::final_mask()?;
             check(circuit, prepared, stages, masks, final_mask, rng)
         }
@@ -1010,7 +1010,8 @@ fn statement_circuit_exposes_the_output_header() {
     let trace = circuit.trace(prepared).unwrap().into_parts().0;
     let mut builder = TestRegistryBuilder::<Fp, AggregatorRank>::new();
     let handle = builder.register_circuit(circuit.clone()).unwrap();
-    let mask = builder.register_mask(<Instance as StageExt<Fp, AggregatorRank>>::mask().unwrap());
+    let mask =
+        builder.register_mask(<Instance as StageExt<Fp, AggregatorRank>>::stage_mask().unwrap());
     let final_mask =
         builder.register_mask(<Instance as StageExt<Fp, AggregatorRank>>::final_mask().unwrap());
     let registry = builder.finalize().unwrap();

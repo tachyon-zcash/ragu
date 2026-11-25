@@ -61,7 +61,7 @@
 //! [`StageExt::rx`] produces a staging polynomial for a given stage, given a
 //! witness. The well-formedness check can be performed by applying a revdot
 //! claim between the resulting [`Polynomial`](sparse::Polynomial) and the
-//! stage's [staging mask](StageExt::mask).
+//! stage's [stage mask](StageExt::stage_mask).
 //!
 //! ```rust,ignore
 //! use ragu_circuits::registry::{CircuitIndex, RegistryBuilder};
@@ -71,7 +71,7 @@
 //!
 //! // Register the mask alone, so its circuit index is zero.
 //! let registry = RegistryBuilder::<Fp, R>::new()
-//!     .register_mask(MyStage::mask()?)
+//!     .register_mask(MyStage::stage_mask()?)
 //!     .finalize()?;
 //! let mask_index = CircuitIndex::new(0);
 //!
@@ -97,7 +97,7 @@
 //! combined.add_assign(&b);
 //!
 //! let registry = RegistryBuilder::<Fp, R>::new()
-//!     .register_mask(MyStage::mask()?)
+//!     .register_mask(MyStage::stage_mask()?)
 //!     .finalize()?;
 //! let mask_index = CircuitIndex::new(0);
 //!
@@ -461,7 +461,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// # Errors
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
-    fn mask() -> Result<MaskObject<R>> {
+    fn stage_mask() -> Result<MaskObject<R>> {
         stage_mask(Self::skip_gates(), Self::num_gates())
     }
 
@@ -473,7 +473,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
     fn final_mask() -> Result<MaskObject<R>> {
-        final_stage_mask(Self::skip_gates() + Self::num_gates())
+        final_mask(Self::skip_gates() + Self::num_gates())
     }
 
     /// Returns the generator index for the i-th first-value coefficient of
@@ -570,7 +570,7 @@ pub fn stage_rx<F: Field, R: Rank>(
 }
 
 /// The well-formedness mask of a stage laid out at runtime over `num_gates`
-/// gates from gate `skip_gates`: [`StageExt::mask`] for a stage whose size
+/// gates from gate `skip_gates`: [`StageExt::stage_mask`] for a stage whose size
 /// is not a type-level constant.
 ///
 /// # Errors
@@ -592,7 +592,7 @@ pub fn stage_mask<R: Rank>(skip_gates: usize, num_gates: usize) -> Result<MaskOb
 ///
 /// Returns a capacity error if `skip_gates` is past the blind gate, or an
 /// initialization error if it is zero.
-pub fn final_stage_mask<R: Rank>(skip_gates: usize) -> Result<MaskObject<R>> {
+pub fn final_mask<R: Rank>(skip_gates: usize) -> Result<MaskObject<R>> {
     check_stage_bounds::<R>(skip_gates, 0)?;
     Ok(MaskObject::new(mask::StageMask::new_final(skip_gates)?))
 }
@@ -614,7 +614,7 @@ mod runtime_tests {
         // The gate before the blind gate is the stage's last gate: still in range.
         assert!(stage_rx::<Fp, R>(Fp::ZERO, n - 1, 2, &[Fp::ONE, Fp::ONE]).is_ok());
         assert!(stage_mask::<R>(n - 1, 1).is_ok());
-        assert!(final_stage_mask::<R>(n).is_ok());
+        assert!(final_mask::<R>(n).is_ok());
 
         // The blind gate itself, and ranges whose end overflows `usize`.
         for (skip, capacity) in [(n, 1), (1, 2 * n), (usize::MAX, 1), (2, usize::MAX)] {
@@ -628,7 +628,7 @@ mod runtime_tests {
             ));
         }
         assert!(matches!(
-            final_stage_mask::<R>(n + 1),
+            final_mask::<R>(n + 1),
             Err(Error::GateBoundExceeded { .. })
         ));
 
@@ -641,10 +641,7 @@ mod runtime_tests {
             stage_mask::<R>(0, 1),
             Err(Error::Initialization(_))
         ));
-        assert!(matches!(
-            final_stage_mask::<R>(0),
-            Err(Error::Initialization(_))
-        ));
+        assert!(matches!(final_mask::<R>(0), Err(Error::Initialization(_))));
 
         // Too many values for the stage's capacity.
         assert!(matches!(

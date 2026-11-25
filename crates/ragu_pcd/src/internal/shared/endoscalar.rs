@@ -516,9 +516,10 @@ mod tests {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
-            let endo_mask_h = builder.register_mask(<EndoscalarStage as StageExt<Fp, R>>::mask()?);
-            let pts_mask_h =
-                builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+            let endo_mask_h =
+                builder.register_mask(<EndoscalarStage as StageExt<Fp, R>>::stage_mask()?);
+            let pts_mask_h = builder
+                .register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::stage_mask()?);
             let final_mask_h =
                 builder
                     .register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
@@ -595,8 +596,8 @@ mod tests {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
-            builder.register_mask(<EndoscalarStage as StageExt<Fp, R>>::mask()?);
-            builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+            builder.register_mask(<EndoscalarStage as StageExt<Fp, R>>::stage_mask()?);
+            builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::stage_mask()?);
             builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
             let registry = builder.finalize()?;
 
@@ -640,8 +641,8 @@ mod tests {
 
         let mut builder = TestRegistryBuilder::new();
         let staged_h = builder.register_circuit(MultiStage::new(step.clone()))?;
-        builder.register_mask(<EndoscalarStage as StageExt<Fp, R>>::mask()?);
-        builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+        builder.register_mask(<EndoscalarStage as StageExt<Fp, R>>::stage_mask()?);
+        builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::stage_mask()?);
         builder.register_mask(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
         let registry = builder.finalize()?;
         let staged = MultiStage::new(step);

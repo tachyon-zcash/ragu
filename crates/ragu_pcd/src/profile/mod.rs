@@ -948,7 +948,7 @@ impl<'params, F: Field, R: Rank> CircuitSlot<'params, F, R> {
 /// or a final one.
 ///
 /// The hook receives the slot and returns it [`Registered`], which only
-/// [`register_mask`](Self::register_mask) and
+/// [`register_stage_mask`](Self::register_stage_mask) and
 /// [`register_final_mask`](Self::register_final_mask) produce, so a hook
 /// registers one mask and nothing else.
 pub struct MaskSlot<'params, F: Field, R: Rank>(RegistryBuilder<'params, F, R>);
@@ -965,11 +965,11 @@ impl<'params, F: Field, R: Rank> MaskSlot<'params, F, R> {
     ///
     /// # Errors
     ///
-    /// Propagates [`StageExt::mask`]'s error.
-    pub fn register_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
+    /// Propagates [`StageExt::stage_mask`]'s error.
+    pub fn register_stage_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
         Ok(Registered {
-            registry: self.0.register_mask(S::mask()?),
-            registration: Registration::Mask(stage_gates::<F, R, S>()),
+            registry: self.0.register_mask(S::stage_mask()?),
+            registration: Registration::StageMask(stage_gates::<F, R, S>()),
         })
     }
 
@@ -1026,8 +1026,8 @@ pub(crate) enum Registration {
     /// order ([`CircuitSlot::register_staged`]).
     Staged(Vec<Range<usize>>),
     /// A stage's mask, over the stage's gates
-    /// ([`MaskSlot::register_mask`]).
-    Mask(Range<usize>),
+    /// ([`MaskSlot::register_stage_mask`]).
+    StageMask(Range<usize>),
     /// A final mask, from a gate on ([`MaskSlot::register_final_mask`]).
     FinalMask(usize),
 }
@@ -1392,7 +1392,9 @@ impl Extension {
         let mut stage_masks = Vec::with_capacity(self.stages);
         for (j, registration) in masks.iter().enumerate() {
             match registration {
-                Registration::Mask(gates) if j < self.stages => stage_masks.push(gates.clone()),
+                Registration::StageMask(gates) if j < self.stages => {
+                    stage_masks.push(gates.clone())
+                }
                 Registration::FinalMask(_) if j >= self.stages => {}
                 _ if j < self.stages => {
                     return refuse(alloc::format!(

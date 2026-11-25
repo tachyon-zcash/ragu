@@ -71,7 +71,7 @@ fn registrations_are_held_to_the_declaration() {
         binding: None,
     };
     assert!(extension.is_consistent());
-    let masks = vec![Mask(1..4), Mask(4..9), FinalMask(9), FinalMask(4)];
+    let masks = vec![StageMask(1..4), StageMask(4..9), FinalMask(9), FinalMask(4)];
     let circuits = vec![Staged(vec![1..4, 4..9]), Circuit, single(1..4)];
     assert!(
         extension
@@ -110,19 +110,29 @@ fn registrations_are_held_to_the_declaration() {
     // of the wrong kind.
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), Mask(4..9), FinalMask(10), FinalMask(4)]
+        vec![
+            StageMask(1..4),
+            StageMask(4..9),
+            FinalMask(10),
+            FinalMask(4)
+        ]
     ));
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), Mask(4..8), FinalMask(9), FinalMask(4)]
+        vec![StageMask(1..4), StageMask(4..8), FinalMask(9), FinalMask(4)]
     ));
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), FinalMask(9), FinalMask(9), FinalMask(4)]
+        vec![StageMask(1..4), FinalMask(9), FinalMask(9), FinalMask(4)]
     ));
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), Mask(4..9), Mask(9..12), FinalMask(4)]
+        vec![
+            StageMask(1..4),
+            StageMask(4..9),
+            StageMask(9..12),
+            FinalMask(4)
+        ]
     ));
     // Other counts than the declaration's.
     assert!(refused(circuits[..2].to_vec(), masks.clone()));

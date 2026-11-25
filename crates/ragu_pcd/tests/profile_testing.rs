@@ -245,7 +245,7 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         match mask {
-            0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+            0 => slot.register_stage_mask::<DigitsStage<Base::CircuitField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
             _ => unreachable!("two masks"),
         }
@@ -274,7 +274,7 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         match mask {
-            0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+            0 => slot.register_stage_mask::<DigitsStage<Base::ScalarField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
             _ => unreachable!("two masks"),
         }
@@ -883,7 +883,7 @@ impl Profile for Crossing {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         match mask {
-            0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+            0 => slot.register_stage_mask::<DigitsStage<Base::ScalarField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
             _ => unreachable!("two masks"),
         }
@@ -1011,7 +1011,7 @@ impl Profile for CrossingBack {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         match mask {
-            0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+            0 => slot.register_stage_mask::<DigitsStage<Base::CircuitField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
             _ => unreachable!("two masks"),
         }

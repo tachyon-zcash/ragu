@@ -1175,14 +1175,14 @@ mod tests {
     /// A registry holding every kind of wiring polynomial: circuits, a stage
     /// mask and a final mask, with domain points left unassigned.
     fn mixed_registry() -> Result<Registry<'static, Fp, TestRank>> {
-        use crate::staging::{final_stage_mask, stage_mask};
+        use crate::staging::{final_mask, stage_mask};
 
         let registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_internal_circuit(SquareCircuit { times: 1 })?
             .register_mask(stage_mask(1, 3)?)
-            .register_mask(final_stage_mask(2)?)
+            .register_mask(final_mask(2)?)
             .finalize()?;
         assert!(registry.num_circuits() < registry.domain.size());
         Ok(registry)

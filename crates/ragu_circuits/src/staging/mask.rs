@@ -560,8 +560,8 @@ mod tests {
         let rx1_b = MyStage1::rx(Fp::ZERO, endoscalar_b)?;
         let rx2 = MyStage2::rx(Fp::ZERO, (p1, p2))?;
 
-        let circ1 = MyStage1::mask()?.into_inner();
-        let circ2 = MyStage2::mask()?.into_inner();
+        let circ1 = MyStage1::stage_mask()?.into_inner();
+        let circ2 = MyStage2::stage_mask()?.into_inner();
 
         let z = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -885,7 +885,7 @@ mod tests {
 
         let rx = ConstrainedStage::rx(Fp::ZERO, valid_witness).unwrap();
 
-        let stage_mask = <ConstrainedStage as StageExt<Fp, R>>::mask()
+        let stage_mask = <ConstrainedStage as StageExt<Fp, R>>::stage_mask()
             .unwrap()
             .into_inner();
 
@@ -921,7 +921,7 @@ mod tests {
             sy
         };
         let stage = full_mask(
-            &<ConstrainedStage as StageExt<Fp, R>>::mask()
+            &<ConstrainedStage as StageExt<Fp, R>>::stage_mask()
                 .unwrap()
                 .into_inner(),
         );
