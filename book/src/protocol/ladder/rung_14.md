@@ -69,10 +69,8 @@ $C_0 - \beta^{-j} \Delta$ leaves the result unchanged. So every point entering a
 walk is committed in a stage that the transcript absorbs before $u$ is drawn,
 and the circuits compare the walked points with their sources.
 
-For the walk that produces $P$, the nested `Loading` check holds each walked
-point equal to its copy in the bridge stages. It is a bonding claim
-([rung 12](rung_12.md)), which can state linear relations among wires and
-nothing else. The nested `Collapse` circuit therefore enforces that the walked
+For the walk that produces $P$, the nested `Collapse` circuit holds each walked
+point equal to its copy in the bridge stages. It also enforces that the walked
 points lie on the curve and that the walk's bits are bits, and the nested
 `ComputeV` circuit ties those bits to $\beta_q$. For the walk that produces
 $P_q$, the walked points sit in native stages whose commitments the bridges

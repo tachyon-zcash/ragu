@@ -614,7 +614,7 @@ fn the_second_pass_randomizers_reach_every_quotient() {
         // and one per group that holds a claim.
         assert_eq!(
             reaches.iter().map(|r| r.coefficients).collect::<Vec<_>>(),
-            [95 + 14, 83 + 11]
+            [95 + 14, 82 + 11]
         );
         for reach in reaches {
             assert_eq!(reach.rank, reach.coefficients);
@@ -635,7 +635,7 @@ fn the_second_pass_randomizers_reach_every_quotient() {
 enum Chosen {
     /// Nothing: every coefficient but the free ones is zero.
     Nothing,
-    /// The bootstrap proof's own stage, whose bonding claim the second pass
+    /// The bootstrap proof's own stage, whose mask claim the second pass
     /// folds together with the first pass's.
     Bootstrap,
 }
@@ -667,7 +667,7 @@ impl Chosen {
 fn assert_reached(reaches: Vec<observed::Reach>) {
     assert_eq!(
         reaches.iter().map(|r| r.coefficients).collect::<Vec<_>>(),
-        [95 + 14, 83 + 11]
+        [95 + 14, 82 + 11]
     );
     for reach in reaches {
         assert_eq!(reach.rank, reach.coefficients);

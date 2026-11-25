@@ -107,10 +107,10 @@ fn helper_uses_the_independent_stage_chain_on_both_fields() -> Result<()> {
 fn online_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
     use ragu_circuits::registry::RegistryBuilder;
 
-    use super::stages::{self, Bonding};
+    use super::stages::{self, Mask};
     use crate::{
         internal::{native, nested},
-        profile::{BondingSlot, CircuitSlot, Shape},
+        profile::{CircuitSlot, MaskSlot, Shape},
     };
 
     fn register<F: Field, S: Side>() -> Result<()> {
@@ -126,16 +126,16 @@ fn online_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
             None,
         )?
         .into_registry();
-        for j in 0..layout.bondings() {
-            let Bonding::Online(bonding) = stages::bonding::<Batched, S>(j)? else {
-                panic!("batch-only profile has no user bonding");
+        for j in 0..layout.masks() {
+            let Mask::Online(mask) = stages::mask::<Batched, S>(j)? else {
+                panic!("batch-only profile has no user mask");
             };
-            registry = bonding
-                .register::<F, WalletRank, Batched, S>(BondingSlot::new(registry))?
+            registry = mask
+                .register::<F, WalletRank, Batched, S>(MaskSlot::new(registry))?
                 .into_registry();
         }
         assert_eq!(registry.num_internal_circuits(), layout.internal());
-        assert!(stages::bonding::<Batched, S>(layout.bondings()).is_err());
+        assert!(stages::mask::<Batched, S>(layout.masks()).is_err());
         Ok(())
     }
     register::<Fp, stages::Native>()?;
@@ -196,7 +196,7 @@ impl<const KIND: u8> Profile for Consumers<KIND> {
 
 #[test]
 fn consumer_prefixes_preserve_user_indices_and_cross_field_bindings() -> Result<()> {
-    use super::stages::{self, Bonding};
+    use super::stages::{self, Mask};
     type P = Consumers<0>;
     stages::check::<P, stages::Native>()?;
     stages::check::<P, stages::Nested>()?;
@@ -209,9 +209,7 @@ fn consumer_prefixes_preserve_user_indices_and_cross_field_bindings() -> Result<
     assert_eq!(native.binding.unwrap().stages, vec![3]);
     assert_eq!(native.statement, Some(0));
     for (merged, user) in [(3, 0), (4, 1)] {
-        assert!(
-            matches!(stages::bonding::<P, stages::Native>(merged)?, Bonding::User(j) if j == user)
-        );
+        assert!(matches!(stages::mask::<P, stages::Native>(merged)?, Mask::User(j) if j == user));
     }
     assert_eq!(
         stages::layout::<Standard, stages::Native>(),
@@ -602,10 +600,10 @@ fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
         ) {
             self.0.push((id, rxs.collect()));
         }
-        fn grouped_bonding_claim(
+        fn mask_claim(
             &mut self,
             _: native::InternalCircuitIndex,
-            _: impl Iterator<Item = impl Iterator<Item = native::RxComponent>>,
+            _: impl Iterator<Item = native::RxComponent>,
         ) -> Result<()> {
             Ok(())
         }

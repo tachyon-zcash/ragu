@@ -37,7 +37,7 @@ use crate::{
     },
     header::{Dummy, Header, Suffix},
     profile::{
-        Aggregator, BondingSlot, CircuitSlot, Decompression, Profile, Profiled, Shape, Standard,
+        Aggregator, CircuitSlot, Decompression, MaskSlot, Profile, Profiled, Shape, Standard,
     },
     step::{Encoded, Index, Step, internal::decompress::Decompress},
 };
@@ -160,7 +160,7 @@ fn pinned_layout_is_the_schedules() {
     P::check().unwrap();
 }
 
-/// Every chunk and bonding of both sides registers through the hooks at
+/// Every chunk and mask of both sides registers through the hooks at
 /// the aggregator rank, one past the last fails, and the wallet rank
 /// is refused.
 #[test]
@@ -177,10 +177,10 @@ fn hooks_register_every_chunk_and_stage() {
         .unwrap()
         .into_registry();
     }
-    for bonding in 0..native.bondings() {
-        registry = P::register_native_bonding::<Pasta, AggregatorRank, HEADER_SIZE>(
-            bonding,
-            BondingSlot::new(registry),
+    for mask in 0..native.masks() {
+        registry = P::register_native_mask::<Pasta, AggregatorRank, HEADER_SIZE>(
+            mask,
+            MaskSlot::new(registry),
             params,
         )
         .unwrap()
@@ -188,9 +188,9 @@ fn hooks_register_every_chunk_and_stage() {
     }
     assert_eq!(registry.num_internal_circuits(), native.internal());
     assert!(matches!(
-        P::register_native_bonding::<Pasta, AggregatorRank, HEADER_SIZE>(
-            native.bondings(),
-            BondingSlot::new(registry),
+        P::register_native_mask::<Pasta, AggregatorRank, HEADER_SIZE>(
+            native.masks(),
+            MaskSlot::new(registry),
             params
         ),
         Err(Error::Initialization(_))
@@ -215,14 +215,11 @@ fn hooks_register_every_chunk_and_stage() {
         .unwrap()
         .into_registry();
     }
-    for bonding in 0..nested.bondings() {
-        registry = P::register_nested_bonding::<Pasta, AggregatorRank>(
-            bonding,
-            BondingSlot::new(registry),
-            params,
-        )
-        .unwrap()
-        .into_registry();
+    for mask in 0..nested.masks() {
+        registry =
+            P::register_nested_mask::<Pasta, AggregatorRank>(mask, MaskSlot::new(registry), params)
+                .unwrap()
+                .into_registry();
     }
     assert_eq!(registry.num_internal_circuits(), nested.internal());
     assert!(matches!(

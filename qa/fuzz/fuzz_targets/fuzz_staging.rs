@@ -69,7 +69,7 @@
 //! ```
 //!
 //! where `s_mask(y)` is `Registry::circuit_y(0, y)` for a registry built
-//! from a single `StageType::mask()` bonding object, minus the same
+//! from a single `StageType::stage_mask()` mask object, minus the same
 //! `tag * y^{4n-1}` tag term Invariant B subtracts.
 //!
 //! Invariant A catches sum-preserving bugs that Invariant B misses — e.g.,
@@ -92,7 +92,7 @@
 //!   already zero because `StageBuilder::configure_stage` allocates them
 //!   as `Coeff::Zero` (`staging/builder.rs:221`); the SYSTEM gate
 //!   contributes nothing because `global_project` zeros it. Distinct
-//!   code path from regular `mask()`, so a regression in `new_final` that
+//!   code path from regular `stage_mask()`, so a regression in `new_final` that
 //!   doesn't affect `new` surfaces here.
 //!
 //! ## Circuit menu
@@ -117,7 +117,7 @@ use std::sync::LazyLock;
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use ragu_circuits::{
-    BondingObject, Circuit, CircuitExt, WithAux,
+    MaskObject, Circuit, CircuitExt, WithAux,
     polynomials::{Rank, TestRank, sparse},
     registry::{CircuitIndex, Registry, RegistryBuilder},
     staging::{MultiStage, MultiStageCircuit, Stage, StageBuilder, StageExt},
@@ -440,7 +440,7 @@ static SINGLE4W_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
 static CHAIN_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
     LazyLock::new(|| build_registry(MultiStage::<Fp, TestRank, _>::new(Chain2x4)));
 
-/// Build a registry containing just one stage's `mask()` as a bonding
+/// Build a registry containing just one stage's `stage_mask()` as a mask
 /// entry. The resulting registry's `circuit_y(0, y)` is the stage's full
 /// mask polynomial (the framework's `RegistryAt::y` adds the global term
 /// for masking circuits, recovering it from the `-notch`-only `sy()` that
@@ -448,55 +448,55 @@ static CHAIN_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
 /// term — exactly the inputs Invariant A wants for its zero check, after
 /// subtracting the tag term.
 fn build_mask_registry(
-    mask: BondingObject<'static, Fp, TestRank>,
+    mask: MaskObject<TestRank>,
 ) -> Option<Registry<'static, Fp, TestRank>> {
     RegistryBuilder::<Fp, TestRank>::new()
-        .register_bonding(mask)
+        .register_mask(mask)
         .finalize()
         .ok()
 }
 
 static MASK_REGISTRY_W2: LazyLock<Option<Registry<'static, Fp, TestRank>>> = LazyLock::new(|| {
-    let mask: BondingObject<'static, Fp, TestRank> =
-        <StageW2 as StageExt<Fp, TestRank>>::mask().ok()?;
+    let mask: MaskObject<TestRank> =
+        <StageW2 as StageExt<Fp, TestRank>>::stage_mask().ok()?;
     build_mask_registry(mask)
 });
 
 static MASK_REGISTRY_W4: LazyLock<Option<Registry<'static, Fp, TestRank>>> = LazyLock::new(|| {
-    let mask: BondingObject<'static, Fp, TestRank> =
-        <StageW4 as StageExt<Fp, TestRank>>::mask().ok()?;
+    let mask: MaskObject<TestRank> =
+        <StageW4 as StageExt<Fp, TestRank>>::stage_mask().ok()?;
     build_mask_registry(mask)
 });
 
 static MASK_REGISTRY_W4_CHILD: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
     LazyLock::new(|| {
-        let mask: BondingObject<'static, Fp, TestRank> =
-            <StageW4Child as StageExt<Fp, TestRank>>::mask().ok()?;
+        let mask: MaskObject<TestRank> =
+            <StageW4Child as StageExt<Fp, TestRank>>::stage_mask().ok()?;
         build_mask_registry(mask)
     });
 
 // Final-mask registries — one per stage type, built from
-// `StageExt::final_mask()` instead of `mask()`. `final_mask` covers
+// `StageExt::final_mask()` instead of `stage_mask()`. `final_mask` covers
 // `[skip_gates, R::n())` (every gate after the stage's skip), whereas
 // `mask` covers only the stage's own `[skip, skip+num)` slots. Used
 // only for the LAST stage in a variant's chain.
 static MASK_REGISTRY_W2_FINAL: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
     LazyLock::new(|| {
-        let mask: BondingObject<'static, Fp, TestRank> =
+        let mask: MaskObject<TestRank> =
             <StageW2 as StageExt<Fp, TestRank>>::final_mask().ok()?;
         build_mask_registry(mask)
     });
 
 static MASK_REGISTRY_W4_FINAL: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
     LazyLock::new(|| {
-        let mask: BondingObject<'static, Fp, TestRank> =
+        let mask: MaskObject<TestRank> =
             <StageW4 as StageExt<Fp, TestRank>>::final_mask().ok()?;
         build_mask_registry(mask)
     });
 
 static MASK_REGISTRY_W4_CHILD_FINAL: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
     LazyLock::new(|| {
-        let mask: BondingObject<'static, Fp, TestRank> =
+        let mask: MaskObject<TestRank> =
             <StageW4Child as StageExt<Fp, TestRank>>::final_mask().ok()?;
         build_mask_registry(mask)
     });

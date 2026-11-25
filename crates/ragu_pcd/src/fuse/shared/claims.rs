@@ -306,13 +306,16 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
         self.circuit_impl(id.circuit_index::<P>(), TrackedPoly::sum(rxs));
     }
 
-    fn grouped_bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
     ) -> Result<()> {
-        let folded = revdot::fold(groups.map(TrackedPoly::sum), self.z);
-        self.bonding_impl(id.circuit_index::<P>(), folded);
+        let folded = revdot::fold(
+            rxs.map(|rx| TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key)),
+            self.z,
+        );
+        self.mask_impl(id.circuit_index::<P>(), folded);
         Ok(())
     }
 }

@@ -194,13 +194,13 @@ enum Side<'rx, F: Field, R: Rank> {
     /// restriction $s\_y$.
     Circuit(CircuitIndex),
     /// The circuit's restriction $s\_y$.
-    Bonding(CircuitIndex),
+    Mask(CircuitIndex),
 }
 
 impl<F: Field, R: Rank> Side<'_, F, R> {
     fn circuit_id(&self) -> Option<CircuitIndex> {
         match self {
-            Self::Circuit(id) | Self::Bonding(id) => Some(*id),
+            Self::Circuit(id) | Self::Mask(id) => Some(*id),
             Self::Given(_) => None,
         }
     }
@@ -279,11 +279,11 @@ where
         self.b.push(Side::Circuit(circuit_id));
     }
 
-    /// Push a bonding claim. There is no dilation and no $t(z)$, so
+    /// Push a mask claim. There is no dilation and no $t(z)$, so
     /// $b = s\_{y}$ and $k(y) = 0$.
-    pub fn bonding_impl(&mut self, circuit_id: CircuitIndex, a: A) {
+    pub fn mask_impl(&mut self, circuit_id: CircuitIndex, a: A) {
         self.a.push(a);
-        self.b.push(Side::Bonding(circuit_id));
+        self.b.push(Side::Mask(circuit_id));
     }
 
     /// Computes every claim's `b` and returns the claims.
@@ -344,23 +344,19 @@ where
         Claims { a, b }
     }
 
-    /// Horner-fold groups of polynomials. Each group is first summed, then
-    /// the sums are Horner-folded with $z$.
+    /// Horner-folds the polynomials of a mask claim with $z$.
     ///
-    /// The fold gives group `i` coefficient $z^{n-1-i}$. Callers that track
-    /// commitment decompositions must assign the same coefficients to the
-    /// corresponding source keys.
+    /// The fold gives polynomial `i` of `n` the coefficient $z^{n-1-i}$.
+    /// Callers that track commitment decompositions must assign the same
+    /// coefficients to the corresponding source keys.
     ///
-    /// Folding is sound because the revdot identity for bonding polynomials is
+    /// Folding is sound because the revdot identity for mask polynomials is
     /// linear in the trace.
-    pub fn fold_bonding_groups(
+    pub fn fold_mask(
         &self,
-        groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) -> Cow<'rx, sparse::Polynomial<F, R>> {
-        Cow::Owned(sparse::Polynomial::fold(
-            groups.map(|g| sum_polynomials(g)),
-            self.z,
-        ))
+        Cow::Owned(sparse::Polynomial::fold(rxs, self.z))
     }
 }
 

@@ -6,10 +6,10 @@
 //! returns opaque [`Handle`] values and resolves them to the correct
 //! [`CircuitIndex`] when querying the finalized registry.
 //!
-//! All circuits must be registered before any bonding objects.
+//! All circuits must be registered before any mask.
 
 use ragu_circuits::{
-    BondingObject, Circuit, Trace,
+    Circuit, MaskObject, Trace,
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryBuilder},
 };
@@ -32,12 +32,12 @@ impl Handle {
 ///
 /// Wraps [`RegistryBuilder`] and returns opaque handles instead of raw
 /// [`CircuitIndex`] values, so that tests do not depend on the order in
-/// which circuit and bonding-object categories are concatenated into the
+/// which circuit and mask categories are concatenated into the
 /// final index space.
 pub struct TestRegistryBuilder<'p, F: Field, R: Rank> {
     inner: Option<RegistryBuilder<'p, F, R>>,
     num_circuits: usize,
-    num_bonding: usize,
+    num_masks: usize,
 }
 
 impl<'p, F: Field, R: Rank> Default for TestRegistryBuilder<'p, F, R> {
@@ -52,7 +52,7 @@ impl<'p, F: Field, R: Rank> TestRegistryBuilder<'p, F, R> {
         Self {
             inner: Some(RegistryBuilder::new()),
             num_circuits: 0,
-            num_bonding: 0,
+            num_masks: 0,
         }
     }
 
@@ -70,17 +70,17 @@ impl<'p, F: Field, R: Rank> TestRegistryBuilder<'p, F, R> {
         Ok(handle)
     }
 
-    /// Registers a bonding object and returns an opaque handle.
-    pub fn register_bonding(&mut self, bonding: BondingObject<'p, F, R>) -> Handle {
+    /// Registers a mask and returns an opaque handle.
+    pub fn register_mask(&mut self, mask: MaskObject<R>) -> Handle {
         let handle = Handle {
-            index: self.num_circuits + self.num_bonding,
+            index: self.num_circuits + self.num_masks,
         };
         let builder = self
             .inner
             .take()
             .expect("builder poisoned by a prior failed registration");
-        self.inner = Some(builder.register_bonding(bonding));
-        self.num_bonding += 1;
+        self.inner = Some(builder.register_mask(mask));
+        self.num_masks += 1;
         handle
     }
 

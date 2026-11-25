@@ -11,7 +11,7 @@
 | [8](rung_08.md) | registry polynomial and restriction chain | more evaluations; a new wiring claim | rungs [9](rung_09.md), [15](rung_15.md) |
 | [9](rung_09.md), [10](rung_10.md) | quotient batching, then one combined opening | group arithmetic for $P$ | [rung 11](rung_11.md) |
 | [11](rung_11.md) | curve cycle with a mirrored accumulator; challenges as lifts of 143 bits | a large verifier on each side; cross-curve consistency | rungs [12](rung_12.md), [14](rung_14.md) |
-| [12](rung_12.md) | stages and masks | stage support | bonding claims in the fold |
+| [12](rung_12.md) | stages and masks | stage support | mask claims in the fold |
 | [13](rung_13.md) | Fiat-Shamir, recomputed in circuit | binding of the last challenge | the parent, or the decider |
 | [14](rung_14.md) | statement, base case, walk and setup bindings | the root's own checks | [rung 15](rung_15.md) |
 | [15](rung_15.md) | decider | proof size | [rung 16](rung_16.md) |

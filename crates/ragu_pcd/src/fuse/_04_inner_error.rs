@@ -214,7 +214,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// terms of their fold, along with the $m_n(w_n, X, y_n)$ restriction.
     ///
     /// The nested $y$ and $z$ are derived from the native challenges for the
-    /// claims' $b$ sides and for folding the bonding claims across the two
+    /// claims' $b$ sides and for folding the mask claims across the two
     /// children. This prover computation uses the children's polynomials
     /// from the previous step; recursive soundness additionally requires
     /// binding their commitments before $y$ and $z$, binding the lifted

@@ -1841,7 +1841,7 @@ fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
             claims::Kind::Circuit(circuit) => {
                 (Fp::ZERO, restriction(circuit) + C::Rank::tz(z).eval(r))
             }
-            claims::Kind::Bonding(circuit) => (Fp::ZERO, restriction(circuit)),
+            claims::Kind::Mask(circuit) => (Fp::ZERO, restriction(circuit)),
             claims::Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<C::Rank>(r)),
         };
         a_public += weights.a(i) * a;

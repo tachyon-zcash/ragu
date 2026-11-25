@@ -60,12 +60,12 @@
 //! |-----------------|---------------------------|-----------------------|-----------------------|
 //! | bridge          | $E_q$ points + scalars    | transcript absorption | transcript absorbs it |
 //! | points (native) | $E_p$ points + endoscalar | native walk, bindings | a bridge carries it   |
-//! | points (nested) | $E_q$ points              | nested walk           | [`loading`] ties it   |
+//! | points (nested) | $E_q$ points              | nested walk           | [`collapse`] ties it  |
 //!
 //! Commitment fields are named for their curve: `native_*` on the host
 //! curve ($E_q$), `nested_*` and `bridge_*` on the nested curve ($E_p$).
 //!
-//! [`loading`]: nested::circuits::loading
+//! [`collapse`]: nested::circuits::collapse
 //! [`Oracles::bridge_hash`]: crate::step::Oracles::bridge_hash
 
 /// Compile-time helpers for building the index lists' constant arrays.

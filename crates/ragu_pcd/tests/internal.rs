@@ -329,10 +329,10 @@ fn claimed_stages_lie_on_each_circuits_chain() {
             self.0.push((id, rxs.collect()));
         }
 
-        fn grouped_bonding_claim(
+        fn mask_claim(
             &mut self,
             _: InternalCircuitIndex,
-            _: impl Iterator<Item = impl Iterator<Item = RxComponent>>,
+            _: impl Iterator<Item = RxComponent>,
         ) -> ragu_core::Result<()> {
             Ok(())
         }
@@ -648,7 +648,7 @@ fn print_internal_stage_parameters() {
 ///
 /// # Panics
 ///
-/// Panics for the bonding entries, which are masks rather than circuits.
+/// Panics for the mask entries, which are not circuits.
 fn nested_circuit_counts(variant: nested::InternalCircuitIndex) -> (usize, usize) {
     use ragu_circuits::staging::MultiStage;
     use ragu_core::pasta::EqAffine;
@@ -679,13 +679,6 @@ fn nested_circuit_counts(variant: nested::InternalCircuitIndex) -> (usize, usize
                 crate::profile::Standard,
             >::new()))
         }
-        nested::InternalCircuitIndex::Loading => {
-            counts(MultiStage::new(nested::circuits::loading::Circuit::<
-                EqAffine,
-                R,
-                crate::profile::Standard,
-            >::new()))
-        }
         _ => panic!("constraint counts only apply to nested circuits"),
     }
 }
@@ -701,7 +694,6 @@ fn nested_circuits() -> impl Iterator<Item = nested::InternalCircuitIndex> {
                 nested::InternalCircuitIndex::EndoscalingStep(_)
                     | nested::InternalCircuitIndex::Collapse
                     | nested::InternalCircuitIndex::ComputeV
-                    | nested::InternalCircuitIndex::Loading
             )
         })
 }
@@ -720,9 +712,8 @@ fn test_nested_circuit_constraint_counts() {
         expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2023, 3501)));
     }
     expected.push((nested::InternalCircuitIndex::EndoscalingStep(steps as u32 - 1), (712, 879)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (1714, 2664)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1588, 1973)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (601,  245)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1713, 2908)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1581, 1961)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -751,10 +742,10 @@ fn test_nested_stage_parameters() {
     check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 399, num = 51);
     check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 450, num = 13);
     check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 463, num = 3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 466, num = 77);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 543, num = 3);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 546, num = 55);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 601, num = 10);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 466, num = 76);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 542, num = 3);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 545, num = 55);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 600, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -922,7 +913,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x2dcf8370467aac17ee4c7a3f5b3370784fe6ba30d3e06dd6c05c28ec1c987741"
+        "0x26276ff1e6006327a3ff501213fb68404690eedf5bee8dd81c0cb969a85dd710"
     ));
 
     assert_eq!(
@@ -944,7 +935,7 @@ fn test_nested_registry_tag() {
         .unwrap();
 
     let expected = Fq::new(udon::fq_hex!(
-        "0x0755793fce2a98d2239d3cf039f261fcc65d52b2681ad1f36dd4e78e90ca38ca"
+        "0x0f977c1018ab54a1fdffde723e2782406c46e83a93f686a112d22f135f01a8c2"
     ));
 
     assert_eq!(
@@ -1103,7 +1094,7 @@ fn test_values_shapes_follow_the_profile() {
         let internal = InternalCircuitValues::<_, P>::from_fn(|_| ());
         rejects_other_lengths(&internal.endoscaling_step_circuits);
         rejects_other_lengths(&internal.extension_circuits);
-        rejects_other_lengths(&internal.extension_bondings);
+        rejects_other_lengths(&internal.extension_masks);
         let rx = RxValues::<_, P>::from_fn(|_| ());
         rejects_other_lengths(&rx.endoscaling_steps);
         rejects_other_lengths(&rx.extension_circuits);
@@ -1131,7 +1122,7 @@ fn test_standard_lists_are_the_constants() {
 }
 
 /// An extension circuit's claim takes its rx and the stages it loads per
-/// proof, an extension stage's bonding its rx across proofs, and a final
+/// proof, an extension stage's mask its rx across proofs, and a final
 /// mask's the circuits it names, with the circuits' $k(y)$ one but the
 /// statement and binding circuits', which take their own values at their
 /// circuits on either side; and the collapse claim loads the binding
@@ -1185,7 +1176,7 @@ fn test_extension_claims_follow_the_declaration() {
     #[derive(Default)]
     struct Recorder {
         circuits: Vec<Claim>,
-        bondings: Vec<Claim>,
+        masks: Vec<Claim>,
     }
 
     impl<P: Profile> Processor<P, (usize, RxComponent), CircuitIndex> for Recorder {
@@ -1206,12 +1197,12 @@ fn test_extension_claims_follow_the_declaration() {
             self.circuits.push((id, rxs.collect()));
         }
 
-        fn grouped_bonding_claim(
+        fn mask_claim(
             &mut self,
             id: InternalCircuitIndex,
-            groups: impl Iterator<Item = impl Iterator<Item = (usize, RxComponent)>>,
+            rxs: impl Iterator<Item = (usize, RxComponent)>,
         ) -> Result<()> {
-            self.bondings.push((id, groups.flatten().collect()));
+            self.masks.push((id, rxs.collect()));
             Ok(())
         }
     }
@@ -1242,11 +1233,11 @@ fn test_extension_claims_follow_the_declaration() {
         }
     }
 
-    let bondings = &recorder.bondings;
-    let tail = bondings.len() - extension.bondings();
+    let masks = &recorder.masks;
+    let tail = masks.len() - extension.masks();
     for stage in 0..extension.stages {
-        let (id, rxs) = &bondings[tail + stage];
-        assert_eq!(*id, InternalCircuitIndex::ExtensionBonding(stage as u32));
+        let (id, rxs) = &masks[tail + stage];
+        assert_eq!(*id, InternalCircuitIndex::ExtensionMask(stage as u32));
         let expected = [
             (0, Rx(ExtensionStage(stage as u32))),
             (1, Rx(ExtensionStage(stage as u32))),
@@ -1254,10 +1245,10 @@ fn test_extension_claims_follow_the_declaration() {
         assert_eq!(*rxs, expected);
     }
     for (mask, named) in extension.final_masks.iter().enumerate() {
-        let (id, rxs) = &bondings[tail + extension.stages + mask];
+        let (id, rxs) = &masks[tail + extension.stages + mask];
         assert_eq!(
             *id,
-            InternalCircuitIndex::ExtensionBonding((extension.stages + mask) as u32)
+            InternalCircuitIndex::ExtensionMask((extension.stages + mask) as u32)
         );
         let expected: Vec<_> = named
             .iter()
@@ -1455,7 +1446,7 @@ fn test_extension_hooks_register_without_a_prover() {
     use ragu_circuits::registry::RegistryBuilder;
 
     use crate::profile::{
-        BondingSlot, CircuitSlot, NO_NATIVE_EXTENSION_PROVER, Profile, Profiled, testing::Hooked,
+        CircuitSlot, MaskSlot, NO_NATIVE_EXTENSION_PROVER, Profile, Profiled, testing::Hooked,
     };
 
     type H = Hooked;
@@ -1469,11 +1460,11 @@ fn test_extension_hooks_register_without_a_prover() {
             .into_registry();
     assert_eq!(registry.num_internal_circuits(), 1);
     let registry =
-        H::register_native_bonding::<Pasta, R, HEADER_SIZE>(0, BondingSlot::new(registry), params)
+        H::register_native_mask::<Pasta, R, HEADER_SIZE>(0, MaskSlot::new(registry), params)
             .unwrap()
             .into_registry();
     let registry =
-        H::register_native_bonding::<Pasta, R, HEADER_SIZE>(1, BondingSlot::new(registry), params)
+        H::register_native_mask::<Pasta, R, HEADER_SIZE>(1, MaskSlot::new(registry), params)
             .unwrap()
             .into_registry();
     assert_eq!(registry.num_internal_circuits(), 3);
@@ -1482,10 +1473,10 @@ fn test_extension_hooks_register_without_a_prover() {
     let registry = H::register_nested_circuit::<Pasta, R>(0, CircuitSlot::new(registry), params)
         .unwrap()
         .into_registry();
-    let registry = H::register_nested_bonding::<Pasta, R>(0, BondingSlot::new(registry), params)
+    let registry = H::register_nested_mask::<Pasta, R>(0, MaskSlot::new(registry), params)
         .unwrap()
         .into_registry();
-    let registry = H::register_nested_bonding::<Pasta, R>(1, BondingSlot::new(registry), params)
+    let registry = H::register_nested_mask::<Pasta, R>(1, MaskSlot::new(registry), params)
         .unwrap()
         .into_registry();
     assert_eq!(registry.num_internal_circuits(), 3);
@@ -1577,7 +1568,7 @@ fn test_fold_groups_follow_the_profile() {
     };
 
     assert_eq!(native::num_claims::<Standard>(), 95);
-    assert_eq!(nested::num_claims::<Standard>(), 83);
+    assert_eq!(nested::num_claims::<Standard>(), 82);
     assert_eq!(
         native::NumFoldGroups::<Standard>::len(),
         native::NUM_FOLD_GROUPS
@@ -1590,8 +1581,8 @@ fn test_fold_groups_follow_the_profile() {
     assert!(capacity::<native::RevdotParameters<Standard>>() >= native::num_claims::<Standard>());
     assert!(capacity::<nested::RevdotParameters<Standard>>() >= nested::num_claims::<Standard>());
 
-    // Wider adds two native circuits and four bondings, one nested circuit
-    // and two bondings, and lengthens both walks by a few steps.
+    // Wider adds two native circuits and four masks, one nested circuit
+    // and two masks, and lengthens both walks by a few steps.
     assert!(native::num_claims::<Wider>() > native::num_claims::<Standard>() + 7);
     assert!(nested::num_claims::<Wider>() > nested::num_claims::<Standard>() + 4);
     assert!(capacity::<native::RevdotParameters<Wider>>() >= native::num_claims::<Wider>());
@@ -1601,7 +1592,7 @@ fn test_fold_groups_follow_the_profile() {
 
 /// The gates of every fuse circuit of profile `P` over cycle `C` at rank
 /// `R` with `H`-element headers, by side, each with its index's name: the
-/// extension's circuits and the bondings aside.
+/// extension's circuits and the masks aside.
 macro_rules! fuse_gates {
     ($C:ty, $R:ty, $H:expr, $P:ty) => {{
         use ragu_circuits::staging::MultiStage;
@@ -1678,11 +1669,6 @@ macro_rules! fuse_gates {
                         $P,
                     >::new()))
                 }
-                Nested::Loading => gates(&MultiStage::new(nested::circuits::loading::Circuit::<
-                    Host,
-                    $R,
-                    $P,
-                >::new())),
                 _ => continue,
             };
             nested_gates.push((alloc::format!("{variant:?}"), gates));

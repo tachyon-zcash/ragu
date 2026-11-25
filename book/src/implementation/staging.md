@@ -17,7 +17,7 @@ associated `OutputKind` names the gadget type the slice's wires populate;
 its `witness` method produces an instance of that gadget. Stages define
 no gate constraints of their own — the trace each commits to carries
 only wire assignments, with well-formedness checked separately by a
-bonding polynomial obtained via [`StageExt::mask`][stagemask].
+mask obtained via [`StageExt::stage_mask`][stagemask].
 
 A [`MultiStageCircuit`][multistage-trait] composes a sequence of stages
 plus a final-trace body. Its `witness` method receives a
@@ -76,52 +76,60 @@ emits are still discarded.
 
 ## Worked example
 
-A small example from `crates/ragu_circuits/src/staging/bonding.rs`
-demonstrates the [`unenforced`][unenforced-method] case. `TwoWireStage` is
-a stage that allocates two [`Element`][element-gadget]s with zero value:
+The nested recursion circuits in `crates/ragu_pcd/src/internal/nested/`
+load every one of their stages [`unenforced`][unenforced-method]. Two
+circuits, `collapse` and `compute_v`, read the same twelve stages, and
+both load them through one function. It reserves every stage, finishes
+the builder, and injects each stage's gadget:
 
 ```rust,ignore
-impl Stage<Fp, R> for TwoWireStage {
-    type OutputKind = /* ... two Elements ... */;
-    fn values() -> usize { 2 }
+let (endoscalar, dr) = dr.add_stage::<EndoscalarStage>()?;
+let (bridge_hash, dr) = dr.add_stage::<stages::bridge_hash::Stage<C>>()?;
+let (points, dr) = dr.add_stage::<PointsStage<C, P>>()?;
+// ... nine more stages ...
+let dr = dr.finish();
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
-        &self, dr: &mut D, _: DriverValue<D, ()>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>> {
-        let w0 = Element::alloc(dr, &mut (), D::just(|| Fp::ZERO))?;
-        let w1 = Element::alloc(dr, &mut (), D::just(|| Fp::ZERO))?;
-        Ok(TwoWires { w0, w1 })
-    }
+let loaded = Loaded {
+    endoscalar: endoscalar.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?,
+    bridge_hash: bridge_hash.unenforced(dr, witness.as_ref().map(|w| w.bridge_hash))?,
+    points: points.unenforced(dr, witness.as_ref().map(|w| w.points))?,
+    // ...
+};
+```
+
+The points stage's gadget holds [`Point`][point-gadget]s. When
+`PointsStage::witness` runs inside the staging machinery it runs on the
+wireless emulator, so whatever constraints allocating a point would
+normally write are discarded. The returned gadget has wires mapped to
+the stage's reserved positions, but those wires hold whatever the prover
+committed to the stage polynomial, which need not be points of the
+curve.
+
+Loading the stage [`enforced`][enforced-method] would restore the
+invariant: `Point`'s [`Consistent`][consistent-trait] impl re-emits the
+curve equation on the real driver. Both circuits would then pay for it.
+Instead `collapse` emits the contracts once, for the two stages that
+have any, and `compute_v` relies on them:
+
+```rust,ignore
+let (dr, stages) = common::load_all(dr, &witness)?;
+
+stages.points.enforce_consistent(dr)?;
+stages.endoscalar.enforce_consistent(dr)?;
+```
+
+A relation between two stages is emitted the same way, on the real
+driver from [`finish`][finish]. `collapse` holds each input of the points
+stage equal to the copy a bridge stage carries:
+
+```rust,ignore
+for (input, held) in points.inputs.iter().zip(held) {
+    input.enforce_equal(dr, held)?;
 }
 ```
 
-When this runs inside the staging machinery, `Element::alloc` is invoked
-on the wireless emulator. Whatever gate allocations or constraints
-`alloc` would normally write are discarded. The returned `TwoWires`
-gadget has wires mapped to the stage's reserved positions, but those
-wires hold whatever the prover committed to the stage polynomial — not
-necessarily zero.
-
-[`Element`][element-gadget] conveys no wire invariants (any field value
-is a valid `Element`), so its [`Consistent`][consistent-trait] impl is a
-no-op anyway. The enclosing `MultiStageCircuit` therefore uses
-[`unenforced`][unenforced-method] (skipping the no-op call) and emits the
-actual constraint it cares about — `w0 == w1` — on the real driver from
-[`finish`][finish]:
-
-```rust,ignore
-let dr = builder.finish();
-let TwoWires { w0, w1 } = guard.unenforced(dr, D::unit())?;
-dr.enforce_zero(|lc| lc.add(w0.wire()).sub(w1.wire()))?;
-```
-
-If the stage had returned, say, a [`Point`][point-gadget] instead of
-[`Element`][element-gadget]s, [`enforced`][enforced-method] would have
-been the correct choice: `Point`'s [`Consistent`][consistent-trait] impl
-re-emits the curve equation on the real driver, restoring the type's
-invariants on the prover-supplied wires. A custom `dr.enforce_zero(...)`
-inside `TwoWireStage::witness` itself, however, would have been silently
-dropped — only the post-stage real-driver work counts.
+A `dr.enforce_zero(...)` inside a stage's own `witness`, however, would
+have been silently dropped: only the post-stage real-driver work counts.
 
 [ragu-circuits]: https://docs.rs/ragu_circuits/latest/ragu_circuits/
 [stage-trait]: https://docs.rs/ragu_circuits/latest/ragu_circuits/staging/trait.Stage.html
@@ -134,12 +142,11 @@ dropped — only the post-stage real-driver work counts.
 [add-stage]: https://docs.rs/ragu_circuits/latest/ragu_circuits/staging/struct.StageBuilder.html#method.add_stage
 [configure-stage]: https://docs.rs/ragu_circuits/latest/ragu_circuits/staging/struct.StageBuilder.html#method.configure_stage
 [finish]: https://docs.rs/ragu_circuits/latest/ragu_circuits/staging/struct.StageBuilder.html#method.finish
-[stagemask]: https://docs.rs/ragu_circuits/latest/ragu_circuits/staging/trait.StageExt.html#method.mask
+[stagemask]: https://docs.rs/ragu_circuits/latest/ragu_circuits/staging/trait.StageExt.html#method.stage_mask
 [stagemask-rx]: https://docs.rs/ragu_circuits/latest/ragu_circuits/staging/trait.StageExt.html#method.rx
 [wiremap-trait]: ragu_core::convert::WireMap
 [emulator]: ragu_core::drivers::emulator::Emulator
 [consistent-trait]: ragu_primitives::consistent::Consistent
-[element-gadget]: ragu_primitives::Element
 [point-gadget]: ragu_primitives::point::Point
 [gadget-trait]: ragu_core::gadgets::Gadget
 [fungibility]: ../guide/gadgets/index.md#fungibility

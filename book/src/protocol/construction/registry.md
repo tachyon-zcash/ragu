@@ -1,9 +1,9 @@
 # Registry {#registry}
 
 A fuse makes claims about many wiring polynomials over one field: one for each
-circuit, and one for each [bonding polynomial](staging.md#bonding). A
-**registry** collects them into a single polynomial $m(W, X, Y)$ that takes the
-value $s_j(X, Y)$ at a point $\omega_j$ assigned to the index $j$. The value
+circuit, and one for each [mask](staging.md#masks). A **registry** collects
+them into a single polynomial $m(W, X, Y)$ that takes the value $s_j(X, Y)$ at
+a point $\omega_j$ assigned to the index $j$. The value
 $s_j(x, y)$ of any registered polynomial is then an opening of one committed
 polynomial, $m(W, x, y)$, at $\omega_j$.
 
@@ -69,19 +69,17 @@ $$
 
 Every point of the domain therefore holds a wiring polynomial, and each is of
 one of two kinds. The wiring polynomial of a circuit has $s(X, 0) = 1$. A
-bonding polynomial has $s(X, 0) = 0$: the registered [masks](staging.md#masks)
-and [stripped circuits](staging.md#stripped) are of this kind, and so is the
-polynomial at a point with nothing registered.
+[mask](staging.md#masks) has $s(X, 0) = 0$, and so does the zero polynomial at
+a point with nothing registered.
 
 This is why an index only has to name a point of the domain. A claim about a
-circuit has $\v{k}_0 = 1$, which no bonding polynomial can satisfy, so a claim
-taken at an arbitrary point of the domain is confined to the registered circuits
-without any check of what was registered there.
+circuit has $\v{k}_0 = 1$, which no polynomial of the second kind can satisfy,
+so a claim taken at an arbitrary point of the domain is confined to the
+registered circuits without any check of what was registered there.
 
-Indices are assigned by category: internal circuits first, then bonding
-polynomials, then internal steps, then application steps. The index of an
-internal circuit or of a bonding polynomial therefore does not depend on how
-many steps an application registers.
+Indices are assigned by category: internal circuits first, then masks, then
+internal steps, then application steps. The index of an internal circuit or of
+a mask therefore does not depend on how many steps an application registers.
 
 ## Tag {#tag}
 

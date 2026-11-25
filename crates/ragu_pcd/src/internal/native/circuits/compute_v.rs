@@ -602,16 +602,15 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
         self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
-    fn grouped_bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = &'a Element<'dr, D>>>,
+        rxs: impl Iterator<Item = &'a Element<'dr, D>>,
     ) -> Result<()> {
         let sy = self.fixed_registry.get(id);
 
-        // Sum each group, then Horner-fold the sums with z.
-        let sums: Vec<_> = groups.map(|group| Element::sum(self.dr, group)).collect();
-        self.ax.push(Element::fold(self.dr, &sums, self.z)?);
+        // Horner-fold the rxs with z.
+        self.ax.push(Element::fold(self.dr, rxs, self.z)?);
 
         // b(x) = s_y evaluated at circuit's omega^j
         self.bx.push(sy.clone());

@@ -46,8 +46,8 @@
 //! In order for this to work, each of the individual stages (including the
 //! final stage) of the trace must be constrained to be well-formed, meaning
 //! that their wire assignments cannot overlap. These well-formedness checks
-//! use [bonding circuits](crate::BondingObject), whose traces can be folded
-//! and checked in a single batched revdot claim.
+//! use [mask polynomials](crate::MaskObject), whose traces can be folded and
+//! checked in a single batched revdot claim.
 //!
 //! ## Usage
 //!
@@ -61,7 +61,7 @@
 //! [`StageExt::rx`] produces a staging polynomial for a given stage, given a
 //! witness. The well-formedness check can be performed by applying a revdot
 //! claim between the resulting [`Polynomial`](sparse::Polynomial) and the
-//! stage's [staging mask](StageExt::mask).
+//! stage's [stage mask](StageExt::stage_mask).
 //!
 //! ```rust,ignore
 //! use ragu_circuits::registry::{CircuitIndex, RegistryBuilder};
@@ -71,7 +71,7 @@
 //!
 //! // Register the mask alone, so its circuit index is zero.
 //! let registry = RegistryBuilder::<Fp, R>::new()
-//!     .register_bonding(MyStage::mask()?)
+//!     .register_mask(MyStage::stage_mask()?)
 //!     .finalize()?;
 //! let mask_index = CircuitIndex::new(0);
 //!
@@ -97,7 +97,7 @@
 //! combined.add_assign(&b);
 //!
 //! let registry = RegistryBuilder::<Fp, R>::new()
-//!     .register_bonding(MyStage::mask()?)
+//!     .register_mask(MyStage::stage_mask()?)
 //!     .finalize()?;
 //! let mask_index = CircuitIndex::new(0);
 //!
@@ -150,13 +150,10 @@
 //!
 //! [staging implementation chapter]: https://tachyon.z.cash/ragu/implementation/staging
 
-pub(crate) mod bonding;
 mod builder;
 mod layout;
 pub(crate) mod mask;
 mod rx_driver;
-
-use alloc::boxed::Box;
 
 pub use builder::{StageBuilder, StageGuard};
 pub use layout::{Indexed, StageReader, stage_wire_indices, wire_degree, wires_of};
@@ -174,7 +171,7 @@ use rx_driver::RxDriver;
 use udon::field::Field;
 
 use crate::{
-    Blind, BondingObject, Circuit, WithAux,
+    Blind, Circuit, MaskObject, WithAux,
     polynomials::{Rank, sparse},
 };
 
@@ -365,7 +362,7 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
     /// # Errors
     ///
     /// Propagates any error from [`StageExt::final_mask`].
-    pub fn final_mask<'a>(&self) -> Result<BondingObject<'a, F, R>> {
+    pub fn final_mask(&self) -> Result<MaskObject<R>> {
         S::Last::final_mask()
     }
 }
@@ -453,7 +450,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         Self::default().rx_configured(blind, witness)
     }
 
-    /// Creates a bonding polynomial that enforces well-formedness checks on
+    /// Creates a mask polynomial that enforces well-formedness checks on
     /// this stage's partial trace.
     ///
     /// Staging circuits do not behave like normal circuits because their
@@ -464,19 +461,19 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// # Errors
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
-    fn mask<'a>() -> Result<BondingObject<'a, F, R>> {
+    fn stage_mask() -> Result<MaskObject<R>> {
         stage_mask(Self::skip_gates(), Self::num_gates())
     }
 
-    /// Creates a bonding polynomial that can be used to enforce well-formedness
+    /// Creates a mask polynomial that can be used to enforce well-formedness
     /// checks on any final trace (stage) that has this stage as its
     /// [`MultiStageCircuit::Last`] stage.
     ///
     /// # Errors
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
-    fn final_mask<'a>() -> Result<BondingObject<'a, F, R>> {
-        final_stage_mask(Self::skip_gates() + Self::num_gates())
+    fn final_mask() -> Result<MaskObject<R>> {
+        final_mask(Self::skip_gates() + Self::num_gates())
     }
 
     /// Returns the generator index for the i-th first-value coefficient of
@@ -573,21 +570,18 @@ pub fn stage_rx<F: Field, R: Rank>(
 }
 
 /// The well-formedness mask of a stage laid out at runtime over `num_gates`
-/// gates from gate `skip_gates`: [`StageExt::mask`] for a stage whose size
+/// gates from gate `skip_gates`: [`StageExt::stage_mask`] for a stage whose size
 /// is not a type-level constant.
 ///
 /// # Errors
 ///
 /// Returns a capacity error if the stage does not fit the rank's gates, or an
 /// initialization error if `skip_gates` is zero.
-pub fn stage_mask<'a, F: Field, R: Rank>(
-    skip_gates: usize,
-    num_gates: usize,
-) -> Result<BondingObject<'a, F, R>> {
+pub fn stage_mask<R: Rank>(skip_gates: usize, num_gates: usize) -> Result<MaskObject<R>> {
     check_stage_bounds::<R>(skip_gates, num_gates)?;
-    Ok(BondingObject::new(Box::new(mask::StageMask::new(
+    Ok(MaskObject::new(mask::StageMask::new(
         skip_gates, num_gates,
-    )?)))
+    )?))
 }
 
 /// The well-formedness mask of a final trace whose stages end at gate
@@ -598,13 +592,9 @@ pub fn stage_mask<'a, F: Field, R: Rank>(
 ///
 /// Returns a capacity error if `skip_gates` is past the blind gate, or an
 /// initialization error if it is zero.
-pub fn final_stage_mask<'a, F: Field, R: Rank>(
-    skip_gates: usize,
-) -> Result<BondingObject<'a, F, R>> {
+pub fn final_mask<R: Rank>(skip_gates: usize) -> Result<MaskObject<R>> {
     check_stage_bounds::<R>(skip_gates, 0)?;
-    Ok(BondingObject::new(Box::new(mask::StageMask::new_final(
-        skip_gates,
-    )?)))
+    Ok(MaskObject::new(mask::StageMask::new_final(skip_gates)?))
 }
 
 #[cfg(test)]
@@ -623,8 +613,8 @@ mod runtime_tests {
         let n = R::blind_gate();
         // The gate before the blind gate is the stage's last gate: still in range.
         assert!(stage_rx::<Fp, R>(Fp::ZERO, n - 1, 2, &[Fp::ONE, Fp::ONE]).is_ok());
-        assert!(stage_mask::<Fp, R>(n - 1, 1).is_ok());
-        assert!(final_stage_mask::<Fp, R>(n).is_ok());
+        assert!(stage_mask::<R>(n - 1, 1).is_ok());
+        assert!(final_mask::<R>(n).is_ok());
 
         // The blind gate itself, and ranges whose end overflows `usize`.
         for (skip, capacity) in [(n, 1), (1, 2 * n), (usize::MAX, 1), (2, usize::MAX)] {
@@ -633,12 +623,12 @@ mod runtime_tests {
                 Err(Error::GateBoundExceeded { .. })
             ));
             assert!(matches!(
-                stage_mask::<Fp, R>(skip, stage_gates(capacity)),
+                stage_mask::<R>(skip, stage_gates(capacity)),
                 Err(Error::GateBoundExceeded { .. })
             ));
         }
         assert!(matches!(
-            final_stage_mask::<Fp, R>(n + 1),
+            final_mask::<R>(n + 1),
             Err(Error::GateBoundExceeded { .. })
         ));
 
@@ -648,13 +638,10 @@ mod runtime_tests {
             Err(Error::Initialization(_))
         ));
         assert!(matches!(
-            stage_mask::<Fp, R>(0, 1),
+            stage_mask::<R>(0, 1),
             Err(Error::Initialization(_))
         ));
-        assert!(matches!(
-            final_stage_mask::<Fp, R>(0),
-            Err(Error::Initialization(_))
-        ));
+        assert!(matches!(final_mask::<R>(0), Err(Error::Initialization(_))));
 
         // Too many values for the stage's capacity.
         assert!(matches!(

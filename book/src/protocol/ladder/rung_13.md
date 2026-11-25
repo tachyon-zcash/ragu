@@ -15,7 +15,7 @@ that round, together with the scalars the nested side contributes to it.
 | Absorbed Bridge | Objects Fixed | Challenges Squeezed | Use |
 | --- | --- | --- | --- |
 | `BridgePreamble` | the children's commitments; the polynomials the fuse's step circuit may query, and the values it stages | $w$ | registry restriction in $W$ ([rung 8](rung_08.md)); the step circuit's challenge $\zeta$ ([rung 0](rung_00.md)) |
-| `BridgeSPrime` | the step circuit's trace; the `preamble` stage, with the children's public values and the fuse's own output header, openings and `BridgeHash` commitment coordinates; $[m(w, x^{(0)}, Y)]$ and $[m(w, x^{(1)}, Y)]$; the fold randomizers | $y$, $z$ | every circuit and bonding claim (rungs [1](rung_01.md), [12](rung_12.md)); restriction in $Y$ |
+| `BridgeSPrime` | the step circuit's trace; the `preamble` stage, with the children's public values and the fuse's own output header, openings and `BridgeHash` commitment coordinates; $[m(w, x^{(0)}, Y)]$ and $[m(w, x^{(1)}, Y)]$; the fold randomizers | $y$, $z$ | every circuit and mask claim (rungs [1](rung_01.md), [12](rung_12.md)); restriction in $Y$ |
 | `BridgeInnerError` | the inner quotients and the randomizer claim's target; $[m(w, X, y)]$ | $\mu$ | first fold layer ([rung 6](rung_06.md)) |
 | `BridgeOuterError` | the outer quotient | $\mu'$ | second fold layer |
 | `BridgeAB` | $[A]$ and $[B]$ | $x$ | folded-polynomial check ([rung 7](rung_07.md)); restriction in $X$ |

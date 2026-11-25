@@ -239,15 +239,6 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     /// These records serve as input to [`floor_planner::floor_plan`] for
     /// computing absolute constraint offsets.
     fn segment_records(&self) -> &[SegmentRecord];
-
-    /// Returns `true` if this circuit is a masking polynomial whose
-    /// `sxy`/`sx`/`sy` return only the $-\text{notch}$ term, expecting
-    /// the [`Registry`] to add the shared $S\_{\text{global}}$ once.
-    ///
-    /// [`Registry`]: registry::Registry
-    fn is_mask(&self) -> bool {
-        false
-    }
 }
 
 /// Wraps a circuit into a boxed [`WiringObject`] that can evaluate the
@@ -335,44 +326,46 @@ where
     Ok(Box::new(Processed { circuit, metrics }))
 }
 
-/// An evaluable bonding object $s(X, Y)$ used to enforce well-formedness of a
-/// staged trace.
+/// An evaluable mask polynomial $s(X, Y)$ used to enforce well-formedness of
+/// a staged trace.
 ///
-/// Bonding polynomials are wiring polynomials of a circuit that has only
-/// constraints (no gates) and is satisfied by an empty instance vector. This
-/// gives bonding polynomials three properties that circuit wiring polynomials
-/// lack:
+/// A mask is a wiring polynomial that holds wires of a trace to zero and has
+/// neither gates nor an instance. This gives masks three properties that
+/// circuit wiring polynomials lack:
 ///
-/// 1. **No dilation term.** Because the underlying circuit has no gates there
-///    is no $t(z)$, and the revdot identity simplifies to
+/// 1. **No dilation term.** Because a mask has no gates there is no $t(z)$,
+///    and the revdot identity simplifies to
 ///    $\langle\kern-0.5em\langle \kern0.1em \mathbf{r}, \mathbf{s} \kern0.1em
 ///    \rangle\kern-0.5em\rangle = 0$.
 /// 2. **Batchable.** Without gates the revdot identity is linear in the trace,
 ///    so multiple traces can be folded with a random challenge and verified in
 ///    a single claim.
-/// 3. **$k(Y) \equiv 0$.** Achieved by `Output = ()` and stripping the `ONE`
-///    constraint to give $s(X, 0) = 0$. A circuit wiring polynomial instead has
+/// 3. **$k(Y) \equiv 0$.** A mask is a polynomial in $XY$ with no constant
+///    term, so $s(X, 0) = 0$. A circuit wiring polynomial instead has
 ///    $s(X, 0) = 1$, because the verifier sets $\mathbf{k}_0 = 1$ in any
 ///    circuit wiring claim regardless of public inputs. This distinction can be
-///    used to prevent substitution attacks (a bonding polynomial used where a
+///    used to prevent substitution attacks (a mask polynomial used where a
 ///    circuit wiring polynomial is expected) when the verifier does not have a
 ///    fixed choice of the wiring polynomial.
 ///
-/// Constructed via [`StageExt::mask`] and [`StageExt::final_mask`]; the
+/// Constructed via [`StageExt::stage_mask`] and [`StageExt::final_mask`], or
+/// [`stage_mask`] and [`final_mask`] for a stage sized at runtime; the
 /// underlying implementation is private to this crate.
 ///
-/// [`StageExt::mask`]: crate::staging::StageExt::mask
+/// [`StageExt::stage_mask`]: crate::staging::StageExt::stage_mask
 /// [`StageExt::final_mask`]: crate::staging::StageExt::final_mask
-pub struct BondingObject<'a, F: Field, R: Rank> {
-    inner: Box<dyn WiringObject<F, R> + 'a>,
+/// [`stage_mask`]: crate::staging::stage_mask
+/// [`final_mask`]: crate::staging::final_mask
+pub struct MaskObject<R: Rank> {
+    inner: staging::mask::StageMask<R>,
 }
 
-impl<'a, F: Field, R: Rank> BondingObject<'a, F, R> {
-    pub(crate) fn new(inner: Box<dyn WiringObject<F, R> + 'a>) -> Self {
+impl<R: Rank> MaskObject<R> {
+    pub(crate) fn new(inner: staging::mask::StageMask<R>) -> Self {
         Self { inner }
     }
 
-    pub(crate) fn into_inner(self) -> Box<dyn WiringObject<F, R> + 'a> {
+    pub(crate) fn into_inner(self) -> staging::mask::StageMask<R> {
         self.inner
     }
 }

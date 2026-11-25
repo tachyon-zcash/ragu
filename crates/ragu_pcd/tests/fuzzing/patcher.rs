@@ -56,10 +56,9 @@
 //! Horner accumulation — and are handed to
 //! [`InternalCircuitVisitor::visit_nested`], as are the nested instance
 //! circuits: `collapse`, which pins the exported slots to stage wires,
-//! forces the `outer_error` stage's collapsed values and, outside the base
-//! case, the instance's $c_n$; and `compute_v`, which
-//! derives $v_n$. The remaining nested circuit, `loading`, is a bonding
-//! claim over stage polynomials with no witness of its own to capture.
+//! holds the walked points to their bridge-stage copies, forces the
+//! `outer_error` stage's collapsed values and, outside the base case, the
+//! instance's $c_n$; and `compute_v`, which derives $v_n$.
 //!
 //! Like the rest of the fuzzing surface it is gated behind `unstable-fuzzing`
 //! — by the inner attribute at the top of this file, so the pipeline modules

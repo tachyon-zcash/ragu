@@ -53,7 +53,7 @@ fn endoscaling_counts_must_allow_convergent_walks() {
 }
 
 /// What the hooks register is held to the declaration: each stage's
-/// mask at its bonding and a final mask at each later one, each staged
+/// mask at its index and a final mask at each later one, each staged
 /// circuit over its declared stages' gates under the final mask that
 /// starts where its last stage ends, and no stages for a circuit that
 /// declares none.
@@ -71,16 +71,16 @@ fn registrations_are_held_to_the_declaration() {
         binding: None,
     };
     assert!(extension.is_consistent());
-    let bondings = vec![Mask(1..4), Mask(4..9), FinalMask(9), FinalMask(4)];
+    let masks = vec![StageMask(1..4), StageMask(4..9), FinalMask(9), FinalMask(4)];
     let circuits = vec![Staged(vec![1..4, 4..9]), Circuit, single(1..4)];
     assert!(
         extension
-            .check_registered("native", &circuits, &bondings)
+            .check_registered("native", &circuits, &masks)
             .is_ok()
     );
-    let refused = |circuits: Vec<Registration>, bondings: Vec<Registration>| {
+    let refused = |circuits: Vec<Registration>, masks: Vec<Registration>| {
         matches!(
-            extension.check_registered("native", &circuits, &bondings),
+            extension.check_registered("native", &circuits, &masks),
             Err(Error::Initialization(_))
         )
     };
@@ -88,48 +88,55 @@ fn registrations_are_held_to_the_declaration() {
     // short of a stage.
     assert!(refused(
         vec![Staged(vec![1..4, 4..10]), Circuit, single(1..4)],
-        bondings.clone()
+        masks.clone()
     ));
     assert!(refused(
         vec![Staged(vec![4..9, 1..4]), Circuit, single(1..4)],
-        bondings.clone()
+        masks.clone()
     ));
     assert!(refused(
         vec![single(1..4), Circuit, single(1..4)],
-        bondings.clone()
+        masks.clone()
     ));
     // A circuit declared over stages but registered without, and one
     // declared without but registered over one.
-    assert!(refused(
-        vec![Circuit, Circuit, single(1..4)],
-        bondings.clone()
-    ));
+    assert!(refused(vec![Circuit, Circuit, single(1..4)], masks.clone()));
     assert!(refused(
         vec![Staged(vec![1..4, 4..9]), single(1..4), single(1..4)],
-        bondings.clone()
+        masks.clone()
     ));
     // A final mask elsewhere than where its circuits' last stage ends, a
-    // stage's mask over other gates than its circuits load, and bondings
+    // stage's mask over other gates than its circuits load, and masks
     // of the wrong kind.
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), Mask(4..9), FinalMask(10), FinalMask(4)]
+        vec![
+            StageMask(1..4),
+            StageMask(4..9),
+            FinalMask(10),
+            FinalMask(4)
+        ]
     ));
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), Mask(4..8), FinalMask(9), FinalMask(4)]
+        vec![StageMask(1..4), StageMask(4..8), FinalMask(9), FinalMask(4)]
     ));
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), FinalMask(9), FinalMask(9), FinalMask(4)]
+        vec![StageMask(1..4), FinalMask(9), FinalMask(9), FinalMask(4)]
     ));
     assert!(refused(
         circuits.clone(),
-        vec![Mask(1..4), Mask(4..9), Mask(9..12), FinalMask(4)]
+        vec![
+            StageMask(1..4),
+            StageMask(4..9),
+            StageMask(9..12),
+            FinalMask(4)
+        ]
     ));
     // Other counts than the declaration's.
-    assert!(refused(circuits[..2].to_vec(), bondings.clone()));
-    assert!(refused(circuits.clone(), bondings[..3].to_vec()));
+    assert!(refused(circuits[..2].to_vec(), masks.clone()));
+    assert!(refused(circuits.clone(), masks[..3].to_vec()));
 }
 
 #[test]
@@ -452,10 +459,10 @@ fn extension_entries_take_their_places() {
     assert_eq!(
         circuits[circuits.len() - 4..],
         [
-            NativeCircuit::ExtensionBonding(0),
-            NativeCircuit::ExtensionBonding(1),
-            NativeCircuit::ExtensionBonding(2),
-            NativeCircuit::ExtensionBonding(3),
+            NativeCircuit::ExtensionMask(0),
+            NativeCircuit::ExtensionMask(1),
+            NativeCircuit::ExtensionMask(2),
+            NativeCircuit::ExtensionMask(3),
         ]
     );
     assert_eq!(
@@ -490,8 +497,8 @@ fn extension_entries_take_their_places() {
     assert_eq!(
         circuits[circuits.len() - 2..],
         [
-            NestedCircuit::ExtensionBonding(0),
-            NestedCircuit::ExtensionBonding(1)
+            NestedCircuit::ExtensionMask(0),
+            NestedCircuit::ExtensionMask(1)
         ]
     );
     let rx = NestedRx::all::<Wider>();

@@ -3,7 +3,7 @@
 //! the walk's endoscalar and interstitials.
 //!
 //! The nested side keeps its points in one stage committed after $\beta$ and
-//! binds that stage to the transcript-absorbed bridge stages with a loading
+//! binds that stage to the transcript-absorbed bridge stages in its collapse
 //! circuit. Here the points *are* the transcript-bound stages: each input
 //! stage is committed at the point of the fuse where its points exist, its
 //! host-curve commitment rides in the bridge stage absorbed next, and the

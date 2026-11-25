@@ -10,8 +10,8 @@
 //!   ($k(y) = 1$) and the instance circuits
 //!   ([`INSTANCE`](InternalCircuitIndex::INSTANCE), $k(y)$ the nested
 //!   unified instance's)
-//! - Masking checks (every stage mask, the final staged masks, and the
-//!   loading circuit): $k(y) = 0$
+//! - Masking checks (every stage mask and the final staged masks):
+//!   $k(y) = 0$
 
 use alloc::{borrow::Cow, vec::Vec};
 use core::iter::once;
@@ -45,24 +45,10 @@ pub trait Processor<P: Profile, Rx> {
     /// Process a claim whose trace is the Horner fold (with $z$) of the given
     /// rxs, with one rx per fold slot ($k(y) = 0$).
     ///
-    /// The default implementation wraps each rx as a single-element group and
-    /// delegates to [`grouped_bonding_claim`](Self::grouped_bonding_claim).
-    fn bonding_claim(
-        &mut self,
-        id: InternalCircuitIndex,
-        rxs: impl Iterator<Item = Rx>,
-    ) -> Result<()> {
-        self.grouped_bonding_claim(id, rxs.map(core::iter::once))
-    }
-
-    /// Process a claim whose trace is the Horner fold (with $z$) of per-group
-    /// sums, where each fold slot holds the sum of one inner iterator
-    /// ($k(y) = 0$).
-    fn grouped_bonding_claim(
-        &mut self,
-        id: InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Rx>>,
-    ) -> Result<()>;
+    /// Returns `Result<()>` because the evaluation context requires fallible
+    /// fold operations.
+    fn mask_claim(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>)
+    -> Result<()>;
 }
 
 impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
@@ -83,14 +69,14 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
         self.circuit_impl(circuit_id, rx);
     }
 
-    fn grouped_bonding_claim(
+    fn mask_claim(
         &mut self,
         id: InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) -> Result<()> {
         let circuit_id = id.circuit_index::<P>();
-        let folded = self.fold_bonding_groups(groups);
-        self.bonding_impl(circuit_id, folded);
+        let folded = self.fold_mask(rxs);
+        self.mask_impl(circuit_id, folded);
         Ok(())
     }
 }
@@ -103,8 +89,8 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 ///    for each step ($k(y) = 1$), then each instance circuit
 ///    ([`INSTANCE`](InternalCircuitIndex::INSTANCE), $k(y)$ the nested
 ///    unified instance's), each interleaved across proofs
-/// 3. Masking checks ($k(y) = 0$): every stage mask, the final staged masks,
-///    and the loading circuit, each folded across proofs
+/// 3. Masking checks ($k(y) = 0$): every stage mask and the final staged
+///    masks, each folded across proofs
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
 pub fn build<P: Profile, S, Pr>(source: &S, processor: &mut Pr) -> Result<()>
@@ -138,21 +124,7 @@ where
                     .iter()
                     .position(|&circuit| circuit == id)
                     .expect("an instance circuit")];
-                let loaded = [
-                    own,
-                    RxIndex::EndoscalarStage,
-                    RxIndex::BridgeHash,
-                    RxIndex::PointsStage,
-                    RxIndex::BridgePreamble,
-                    RxIndex::BridgeSPrime,
-                    RxIndex::BridgeInnerError,
-                    RxIndex::BridgeOuterError,
-                    RxIndex::BridgeAB,
-                    RxIndex::BridgeQuery,
-                    RxIndex::BridgeF,
-                    RxIndex::BridgeEval,
-                    RxIndex::ChallengeStage,
-                ];
+                let loaded = once(own).chain(RxIndex::STAGES);
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in loaded {
                     for (i, rx) in source.rx(Rx(index)).enumerate() {
@@ -187,14 +159,14 @@ where
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
-            // An extension bonding: a stage's mask over its rx, or a final
+            // An extension mask: a stage's mask over its rx, or a final
             // mask over its circuits' rxs.
-            ExtensionBonding(j) => {
+            ExtensionMask(j) => {
                 let extension = crate::profile::nested_extension::<P>();
                 if (j as usize) < extension.stages {
-                    processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
+                    processor.mask_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
-                    processor.bonding_claim(
+                    processor.mask_claim(
                         id,
                         extension
                             .final_mask(j as usize)
@@ -203,65 +175,20 @@ where
                     )?;
                 }
             }
-            EndoscalarStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
-            }
-            PointsStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::PointsStage)))?;
-            }
             PointsFinalStaged => {
                 let num_steps = super::NumSteps::<P>::len();
                 let final_rxs = (0..num_steps)
                     .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step as u32))));
-                processor.bonding_claim(id, final_rxs)?;
-            }
-            BridgePreamble => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgePreamble)))?;
-            }
-            BridgeHash => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeHash)))?;
-            }
-            BridgeSPrime => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeSPrime)))?;
-            }
-            BridgeInnerError => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeInnerError)))?;
-            }
-            BridgeOuterError => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeOuterError)))?;
-            }
-            BridgeAB => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeAB)))?;
-            }
-            BridgeQuery => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeQuery)))?;
-            }
-            BridgeF => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeF)))?;
-            }
-            BridgeEval => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeEval)))?;
-            }
-            ChallengeStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::ChallengeStage)))?;
+                processor.mask_claim(id, final_rxs)?;
             }
             ChallengeFinalStaged => {
                 let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
-                processor.bonding_claim(id, final_rxs)?;
+                processor.mask_claim(id, final_rxs)?;
             }
-            Loading => {
-                let groups = source
-                    .rx(Rx(RxIndex::PointsStage))
-                    .zip(source.rx(Rx(RxIndex::BridgePreamble)))
-                    .zip(source.rx(Rx(RxIndex::BridgeSPrime)))
-                    .zip(source.rx(Rx(RxIndex::BridgeInnerError)))
-                    .zip(source.rx(Rx(RxIndex::BridgeAB)))
-                    .zip(source.rx(Rx(RxIndex::BridgeQuery)))
-                    .zip(source.rx(Rx(RxIndex::BridgeF)))
-                    .map(|((((((ps, bp), bs), bi), ba), bq), bf)| {
-                        [ps, bp, bs, bi, ba, bq, bf].into_iter()
-                    });
-                processor.grouped_bonding_claim(id, groups)?;
+            // Every other entry is a stage's mask, over the stage's rx.
+            _ => {
+                let stage = id.stage().expect("a stage's mask");
+                processor.mask_claim(id, source.rx(Rx(stage)))?;
             }
         }
     }

@@ -23,7 +23,7 @@ use ragu_primitives::{
 use udon::field::Field;
 
 use super::{Layout, circuit};
-use crate::profile::{BondingSlot, CircuitSlot, Extension, Profile, Registered};
+use crate::profile::{CircuitSlot, Extension, MaskSlot, Profile, Registered};
 
 mod sealed {
     pub trait Sealed {}
@@ -470,20 +470,20 @@ pub(crate) fn register_circuit<'params, F: Field, R: Rank, P: Profile, S: Side>(
     ))
 }
 
-/// A bonding belongs to the online batch or to the user's declaration.
+/// A mask belongs to the online batch or to the user's declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Bonding {
+pub(crate) enum Mask {
     /// An automatically registered online stage mask or final mask.
-    Online(OnlineBonding),
+    Online(OnlineMask),
     /// The original index passed to the profile's registration hook.
     User(usize),
 }
 
-/// One of the online batch's own bondings: its three stages' masks, the
+/// One of the online batch's own masks: its three stages' masks, the
 /// helper's final mask and the final mask of the consumers that end at the
 /// query stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OnlineBonding {
+pub(crate) enum OnlineMask {
     /// The input stage's mask.
     InputMask,
     /// The query stage's mask.
@@ -496,8 +496,8 @@ pub(crate) enum OnlineBonding {
     ConsumersFinal,
 }
 
-impl OnlineBonding {
-    /// Registers this bonding in `slot`, recording its stage's gates for the
+impl OnlineMask {
+    /// Registers this mask in `slot`, recording its stage's gates for the
     /// registry to check against the merged declaration.
     ///
     /// # Errors
@@ -505,40 +505,40 @@ impl OnlineBonding {
     /// Propagates the mask's construction error.
     pub fn register<'params, F: Field, R: Rank, P: Profile, S: Side>(
         self,
-        slot: BondingSlot<'params, F, R>,
+        slot: MaskSlot<'params, F, R>,
     ) -> Result<Registered<'params, F, R>> {
         match self {
-            Self::InputMask => slot.register_mask::<InputStage<P, S>>(),
-            Self::QueryMask => slot.register_mask::<QueryStage<P, S>>(),
-            Self::EvalMask => slot.register_mask::<EvalStage<P, S>>(),
+            Self::InputMask => slot.register_stage_mask::<InputStage<P, S>>(),
+            Self::QueryMask => slot.register_stage_mask::<QueryStage<P, S>>(),
+            Self::EvalMask => slot.register_stage_mask::<EvalStage<P, S>>(),
             Self::HelperFinal => slot.register_final_mask::<EvalStage<P, S>>(),
             Self::ConsumersFinal => slot.register_final_mask::<QueryStage<P, S>>(),
         }
     }
 }
 
-/// Resolves a merged bonding index to its online mask or original user index.
+/// Resolves a merged mask index to its online mask or original user index.
 ///
 /// # Errors
 ///
-/// Rejects an index past the merged declaration's bondings.
-pub(crate) fn bonding<P: Profile, S: Side>(index: usize) -> Result<Bonding> {
+/// Rejects an index past the merged declaration's masks.
+pub(crate) fn mask<P: Profile, S: Side>(index: usize) -> Result<Mask> {
     let offset = stage_offset::<P, S>();
     let declared = declared::<P, S>();
-    if index >= layout::<P, S>().bondings() {
+    if index >= layout::<P, S>().masks() {
         return Err(Error::Initialization(
-            "online batch bonding index is out of range".into(),
+            "online batch mask index is out of range".into(),
         ));
     }
     if offset == 0 {
-        return Ok(Bonding::User(index));
+        return Ok(Mask::User(index));
     }
-    Ok(Bonding::Online(match index {
-        0 => OnlineBonding::InputMask,
-        1 => OnlineBonding::QueryMask,
-        2 => OnlineBonding::EvalMask,
-        j if j < offset + declared.bondings() => return Ok(Bonding::User(j - offset)),
-        j if j == offset + declared.bondings() => OnlineBonding::HelperFinal,
-        _ => OnlineBonding::ConsumersFinal,
+    Ok(Mask::Online(match index {
+        0 => OnlineMask::InputMask,
+        1 => OnlineMask::QueryMask,
+        2 => OnlineMask::EvalMask,
+        j if j < offset + declared.masks() => return Ok(Mask::User(j - offset)),
+        j if j == offset + declared.masks() => OnlineMask::HelperFinal,
+        _ => OnlineMask::ConsumersFinal,
     }))
 }

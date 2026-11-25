@@ -8,7 +8,9 @@ use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
     Circuit,
     polynomials::{Rank, sparse},
-    staging::{MultiStage, StageReader, stage_wire_indices, wire_degree, wires_of},
+    staging::{
+        MultiStage, Stage, StageExt, StageReader, stage_wire_indices, wire_degree, wires_of,
+    },
 };
 use ragu_core::{
     Coeff, Cycle, FixedGenerators, Result,
@@ -493,20 +495,7 @@ where
 
 fn nested_collapse_trace(proof: &Proof<C, R>) -> sparse::Polynomial<Fq, R> {
     let mut nested_trace = proof.nested_collapse_rx.clone();
-    for stage in [
-        nested::RxIndex::EndoscalarStage,
-        nested::RxIndex::BridgeHash,
-        nested::RxIndex::PointsStage,
-        nested::RxIndex::BridgePreamble,
-        nested::RxIndex::BridgeSPrime,
-        nested::RxIndex::BridgeInnerError,
-        nested::RxIndex::BridgeOuterError,
-        nested::RxIndex::BridgeAB,
-        nested::RxIndex::BridgeQuery,
-        nested::RxIndex::BridgeF,
-        nested::RxIndex::BridgeEval,
-        nested::RxIndex::ChallengeStage,
-    ] {
+    for stage in nested::RxIndex::STAGES {
         nested_trace.add_assign(&proof[stage]);
     }
     nested_trace
@@ -627,6 +616,129 @@ fn nested_collapse_uses_challenge_stage_y_even_in_bootstrap() -> Result<()> {
                 !constraints.hold(&changed),
                 "{case}: substituted instance y"
             );
+        }
+        Ok(())
+    })
+}
+
+/// Nested collapse equates each walked point with a wire of another stage.
+///
+/// The walked points are the points stage's initial point and its inputs.
+/// For each of their coordinates, exactly one constraint is the difference
+/// of that wire and one other wire among the stages' gates, and the other
+/// wire lies outside the points stage. An interstitial has no such
+/// constraint: no stage holds a copy of it. Changing any one walked
+/// coordinate of an honest trace leaves the circuit unsatisfied.
+#[test]
+fn nested_collapse_holds_every_walked_point_to_another_stage() -> Result<()> {
+    type Points = nested::PointsStage<EqAffine, crate::profile::Standard>;
+    type Challenges = challenges::Stage<EqAffine, R, crate::profile::Standard>;
+
+    let n = R::n();
+    let degrees = |wires: Vec<usize>| wires.into_iter().map(wire_degree::<R>).collect::<Vec<_>>();
+    let walked = degrees(stage_wire_indices::<Fq, R, Points>(|points| {
+        let mut wires = wires_of(&points.initial)?;
+        for input in points.inputs.iter() {
+            wires.extend(wires_of(input)?);
+        }
+        Ok(wires)
+    })?);
+    let interstitials = degrees(stage_wire_indices::<Fq, R, Points>(|points| {
+        let mut wires = Vec::new();
+        for interstitial in points.interstitials.iter() {
+            wires.extend(wires_of(interstitial)?);
+        }
+        Ok(wires)
+    })?);
+    assert_eq!(walked.len(), 2 * nested::NUM_ENDOSCALING_POINTS);
+    assert_eq!(interstitials.len(), 2 * nested::NUM_ENDOSCALING_STEPS);
+
+    // The gate of a stage value's wire, which is an a wire or a d wire.
+    let stage_gate = |degree: usize| match degree / n {
+        1 => Some(2 * n - 1 - degree),
+        3 => Some(4 * n - 1 - degree),
+        _ => None,
+    };
+    let points_gates = <Points as Stage<Fq, R>>::skip_gates()
+        ..<Points as Stage<Fq, R>>::skip_gates() + <Points as StageExt<Fq, R>>::num_gates();
+    let stages_end =
+        <Challenges as Stage<Fq, R>>::skip_gates() + <Challenges as StageExt<Fq, R>>::num_gates();
+
+    let mut constraints = TraceConstraints {
+        gates: 1,
+        linear: Vec::new(),
+    };
+    MultiStage::new(nested::circuits::collapse::Circuit::<
+        EqAffine,
+        R,
+        crate::profile::Standard,
+    >::new())
+    .witness(&mut constraints, Empty)?;
+
+    // The stage wires each constraint equates `degree` with: the other wire
+    // of every constraint that is the difference of the two.
+    let equated = |degree: usize| {
+        constraints
+            .linear
+            .iter()
+            .filter_map(|(_, equation)| {
+                let mut wires: Vec<usize> = equation.terms.iter().map(|&(i, _)| i).collect();
+                wires.sort_unstable();
+                wires.dedup();
+                wires.retain(|&i| equation.coefficient(i) != Fq::ZERO);
+                let [first, second] = wires[..] else {
+                    return None;
+                };
+                let other = if first == degree { second } else { first };
+                let difference = equation.constant == Fq::ZERO
+                    && (first == degree || second == degree)
+                    && equation.coefficient(first) + equation.coefficient(second) == Fq::ZERO;
+                (difference && stage_gate(other).is_some_and(|gate| gate < stages_end))
+                    .then_some(other)
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut copies = Vec::with_capacity(walked.len());
+    for &degree in &walked {
+        let others = equated(degree);
+        assert_eq!(others.len(), 1, "a walked coordinate has one held copy");
+        let gate = stage_gate(others[0]).expect("a stage value's wire");
+        assert!(gate >= 1 && !points_gates.contains(&gate));
+        copies.push(others[0]);
+    }
+    for &degree in &interstitials {
+        assert!(
+            equated(degree).is_empty(),
+            "no stage copies an interstitial"
+        );
+    }
+
+    support::with_app(|app| {
+        let bootstrap = app.bootstrap_pcd();
+        let mut rng = StdRng::seed_from_u64(873011);
+        let (ordinary, _) = app.fuse(
+            &mut rng,
+            Seed::new(),
+            Fp::from(7),
+            bootstrap.clone(),
+            bootstrap.clone(),
+        )?;
+        for (case, proof) in [
+            ("bootstrap", bootstrap.proof()),
+            ("non-base", ordinary.proof()),
+        ] {
+            let trace = nested_collapse_trace(proof);
+            let coefficients: Vec<_> = trace.iter_coeffs().collect();
+            assert!(constraints.hold(&coefficients), "{case}: honest trace");
+            for (&degree, &copy) in walked.iter().zip(&copies) {
+                assert_eq!(coefficients[degree], coefficients[copy]);
+                let mut changed = coefficients.clone();
+                changed[degree] += Fq::ONE;
+                assert!(
+                    !constraints.hold(&changed),
+                    "{case}: a changed walked point"
+                );
+            }
         }
         Ok(())
     })
@@ -1366,8 +1478,8 @@ fn forged_base_case_under_another_circuit_id_is_rejected() {
 /// folded at. A prover that swaps in the same trace under another alpha
 /// after $y$ is squeezed is rejected. The swapped trace satisfies the
 /// step's circuit as the committed one does, which the same edit made
-/// before the trace is committed shows, so only the `loading` circuit's
-/// hold of the walked commitment to the bridge's copy can reject it.
+/// before the trace is committed shows, so only the nested `collapse`
+/// circuit's hold of the walked commitment to the bridge's copy can reject it.
 #[test]
 fn application_trace_swapped_after_y_is_rejected() {
     support::with_app(|app| {

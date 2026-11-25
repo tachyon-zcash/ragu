@@ -236,18 +236,18 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
         )))
     }
 
-    fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::CircuitField, R>,
+    fn register_native_mask<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::CircuitField, R>,
         _: &'params Base::Params,
     ) -> Result<Registered<'params, Base::CircuitField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        match bonding {
-            0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+        match mask {
+            0 => slot.register_stage_mask::<DigitsStage<Base::CircuitField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
-            _ => unreachable!("two bondings"),
+            _ => unreachable!("two masks"),
         }
     }
 
@@ -265,18 +265,18 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
         )))
     }
 
-    fn register_nested_bonding<'params, Base, R: Rank>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::ScalarField, R>,
+    fn register_nested_mask<'params, Base, R: Rank>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::ScalarField, R>,
         _: &'params Base::Params,
     ) -> Result<Registered<'params, Base::ScalarField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        match bonding {
-            0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+        match mask {
+            0 => slot.register_stage_mask::<DigitsStage<Base::ScalarField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
-            _ => unreachable!("two bondings"),
+            _ => unreachable!("two masks"),
         }
     }
 }
@@ -874,18 +874,18 @@ impl Profile for Crossing {
         )))
     }
 
-    fn register_nested_bonding<'params, Base, R: Rank>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::ScalarField, R>,
+    fn register_nested_mask<'params, Base, R: Rank>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::ScalarField, R>,
         _: &'params Base::Params,
     ) -> Result<Registered<'params, Base::ScalarField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        match bonding {
-            0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+        match mask {
+            0 => slot.register_stage_mask::<DigitsStage<Base::ScalarField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
-            _ => unreachable!("two bondings"),
+            _ => unreachable!("two masks"),
         }
     }
 
@@ -1002,18 +1002,18 @@ impl Profile for CrossingBack {
         )))
     }
 
-    fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
-        bonding: usize,
-        slot: BondingSlot<'params, Base::CircuitField, R>,
+    fn register_native_mask<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+        mask: usize,
+        slot: MaskSlot<'params, Base::CircuitField, R>,
         _: &'params Base::Params,
     ) -> Result<Registered<'params, Base::CircuitField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        match bonding {
-            0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+        match mask {
+            0 => slot.register_stage_mask::<DigitsStage<Base::CircuitField, R>>(),
             1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
-            _ => unreachable!("two bondings"),
+            _ => unreachable!("two masks"),
         }
     }
 

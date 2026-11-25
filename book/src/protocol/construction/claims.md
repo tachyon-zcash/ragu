@@ -23,26 +23,32 @@ loads stages is the [sum](staging.md#stage-polynomial) of its own polynomial and
 the polynomials of those stages, so the $a$ side of a circuit claim is in
 general a sum.
 
-A **bonding claim** is the check of a [bonding polynomial](staging.md#bonding).
+A **mask claim** is the check of a [mask](staging.md#masks).
 It has no gate equations to enforce, so one claim serves a whole list of partial
 traces $r_1, r_2, \dots$:
 
 $$\left( \text{Horner}_z[r_1, r_2, \dots],\ s_j(X, y);\ 0 \right).$$
 
-It holds as an identity in $y$ and $z$ exactly when each entry of the list
-separately satisfies the constraints of $s_j$. An entry may itself be a sum of
-polynomials, in which case the constraints apply to the sum. If some entry of a
-list of $L$ violates a constraint, the claim holds for $y$ and $z$ drawn
-uniformly from a set $S$ with probability at most
-$(4n - 2 + L)/|S|$.[^bonding-bound]
+A registered mask is a sum of powers of $XY$ over a set $M$ of wire positions,
+$\sum_{i \in M} w_i \, (XY)^i$, with $w_{4n-1} = \kappa$ and every other weight
+equal to one. For a polynomial $r$ with coefficients $r_d$, its revdot product
+with the mask reads off the masked coefficients of $r$:
 
-[^bonding-bound]: The product of the claim is
-    $z^{L-1} \revdot{r_1}{s_j(X, y)} + \dots + \revdot{r_L}{s_j(X, y)}$. Each
-    $\revdot{r}{s_j(X, Y)}$ is a polynomial in $Y$ of degree at most $4n - 1$
-    whose coefficients are the values of the constraints on $r$. The product
-    is therefore a polynomial in $y$ and $z$ of total degree at most
-    $(4n - 1) + (L - 1)$, it is nonzero when some entry violates a constraint,
-    and the bound is that of Schwartz–Zippel.
+$$\revdot{r}{s_j(X, y)} = \sum_{i \in M} w_i \, r_{4n-1-i} \, y^i.$$
+
+The claim therefore holds as an identity in $y$ and $z$ exactly when every
+entry of the list is zero at each masked position, and at $X^0$ when
+$\kappa \neq 0$. If some entry of a list of $L$ is not, the claim holds for $y$
+and $z$ drawn uniformly from a set $S$ with probability at most
+$(4n - 2 + L)/|S|$.[^mask-bound]
+
+[^mask-bound]: The product of the claim is
+    $z^{L-1} \revdot{r_1}{s_j(X, y)} + \dots + \revdot{r_L}{s_j(X, y)}$, and
+    each $\revdot{r}{s_j(X, Y)}$ is the polynomial in $Y$ above, of degree at
+    most $4n - 1$. The product is therefore a polynomial in $y$ and $z$ of
+    total degree at most $(4n - 1) + (L - 1)$, it is nonzero when some entry
+    has a nonzero masked coefficient, and the bound is that of
+    Schwartz–Zippel.
 
 A **raw claim** $(A, B;\ c)$ has no such structure. It is what a fold leaves
 behind, and each child brings one.
@@ -244,8 +250,8 @@ registry, and a position is a claim's place in its list.
 
 The native list has the raw claim of each child, then the claim of the fuse's
 own step circuit, then one circuit claim for each of the $37$ internal circuits
-of each child's [frontier](proof.md#frontier). It ends with one bonding claim
-for each of the $18$ native bonding polynomials. Sixteen of these cover both
+of each child's [frontier](proof.md#frontier). It ends with one mask claim
+for each of the $18$ native masks. Sixteen of these cover both
 children, and the two of the application stage cover the fuse's own polynomials.
 
 In each row, $i$ ranges over the children, left before right. We abbreviate the
@@ -265,14 +271,14 @@ $$r^{(i)}[\text{points}] = r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{Poi
 | $19 + i$ | circuit | 8 | $r^{(i)}[\texttt{BindBeta}] + r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{Preamble}]$ | $k^{(i)}_{\text{uni}}(y)$ |
 | $21 + i$ | circuit | 9 | $r^{(i)}[\texttt{BindEndoscalar}] + r^{(i)}[\text{points}]$ | $k^{(i)}_{\text{uni}}(y)$ |
 | $23 + 2s + i$, $s < 27$ | circuit | $10 + s$ | $r^{(i)}[\texttt{EndoscalingStep}(s)] + r^{(i)}[\text{points}]$ | $1$ |
-| $77, \dots, 87$ | bonding | $37, \dots, 47$ | $z \, r^{(0)}[S] + r^{(1)}[S]$ for the stage $S$ of the mask: `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | $0$ |
-| 88 | bonding | 48 | $z \, r^{(0)}[\texttt{Collapse}] + r^{(1)}[\texttt{Collapse}]$ | $0$ |
-| 89 | bonding | 49 | $\text{Horner}_z$ of `Hashes1` then `Hashes2` | $0$ |
-| 90 | bonding | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..=3)` | $0$ |
-| 91 | bonding | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..=26)` | $0$ |
-| 92 | bonding | 52 | $z \, r^{(0)}[\texttt{BindBeta}] + r^{(1)}[\texttt{BindBeta}]$ | $0$ |
-| 93 | bonding | 53 | $r[\texttt{ApplicationStage}]$ | $0$ |
-| 94 | bonding | 54 | $r[\texttt{Application}]$ | $0$ |
+| $77, \dots, 87$ | mask | $37, \dots, 47$ | $z \, r^{(0)}[S] + r^{(1)}[S]$ for the stage $S$ of the mask: `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | $0$ |
+| 88 | mask | 48 | $z \, r^{(0)}[\texttt{Collapse}] + r^{(1)}[\texttt{Collapse}]$ | $0$ |
+| 89 | mask | 49 | $\text{Horner}_z$ of `Hashes1` then `Hashes2` | $0$ |
+| 90 | mask | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..=3)` | $0$ |
+| 91 | mask | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..=26)` | $0$ |
+| 92 | mask | 52 | $z \, r^{(0)}[\texttt{BindBeta}] + r^{(1)}[\texttt{BindBeta}]$ | $0$ |
+| 93 | mask | 53 | $r[\texttt{ApplicationStage}]$ | $0$ |
+| 94 | mask | 54 | $r[\texttt{Application}]$ | $0$ |
 | $95, 96, 97$ | padding | | $0$ | $0$ |
 
 In rows $89$ to $91$, each named polynomial contributes its left and then its
@@ -334,15 +340,13 @@ parent to bind in the same way.
 ## Nested Claims {#nested-claims}
 
 The nested list has the same shape: for each child, the raw claim and one
-circuit claim for each of the $33$ nested circuits, and then one bonding claim
-for each of the $15$ nested bonding polynomials.
+circuit claim for each of the $33$ nested circuits, and then one mask claim
+for each of the $14$ nested masks.
 
 Here the challenges are $y_q$ and $z_q$ and the registry is $m_q$. We abbreviate
-two sums of a child's stage polynomials.
+the sum of a child's stage polynomials.
 
-$$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nested stages } S,$$
-
-$$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\texttt{PointsStage}, \texttt{BridgePreamble}, \texttt{BridgeSPrime}, \texttt{BridgeInnerError}, \texttt{BridgeAB}, \texttt{BridgeQuery}, \texttt{BridgeF}\}.$$
+$$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nested stages } S.$$
 
 | Position $k$ | Kind | Registry Index | $a$ Side | Target |
 |---|---|---|---|---|
@@ -350,18 +354,16 @@ $$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\
 | $2 + 2s + i$, $s < 31$ | circuit | $s$ | $r_q^{(i)}[\texttt{EndoscalingStep}(s)] + r_q^{(i)}[\texttt{EndoscalarStage}] + r_q^{(i)}[\texttt{PointsStage}]$ | $1$ |
 | $64 + i$ | circuit | 31 | $r_q^{(i)}[\texttt{Collapse}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
 | $66 + i$ | circuit | 32 | $r_q^{(i)}[\texttt{ComputeV}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
-| 68, 69 | bonding | 33, 34 | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for `EndoscalarStage`, `PointsStage` | $0$ |
-| 70 | bonding | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
-| $71, \dots, 80$ | bonding | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
-| 81 | bonding | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
-| 82 | bonding | 47 | $z_q \, r_q^{(0)}[\text{loading}] + r_q^{(1)}[\text{loading}]$ | $0$ |
-| $83, \dots, 87$ | padding | | $0$ | $0$ |
+| 68, 69 | mask | 33, 34 | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for `EndoscalarStage`, `PointsStage` | $0$ |
+| 70 | mask | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
+| $71, \dots, 80$ | mask | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
+| 81 | mask | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
+| $82, \dots, 87$ | padding | | $0$ | $0$ |
 
 As on the native side, a Horner list takes the left and then the right instance
 of each named polynomial. Row $70$ is the final mask of the endoscaling steps,
-row $81$ is the final mask of the two instance circuits, and row $82$ is the
-[loading](internal_circuits.md#loading) relation. Rows $83$ to $87$ pad the
-list to $11 \cdot 8 = 88$ claims.
+and row $81$ is the final mask of the two instance circuits. Rows $82$ to $87$
+pad the list to $11 \cdot 8 = 88$ claims.
 
 ### Nested Targets {#nested-targets}
 
@@ -381,10 +383,10 @@ the registry index of the claim's wiring polynomial, with $\text{id}$ for the
 fuse's own step circuit. An index that appears twice is an internal circuit,
 which is claimed once for each child: the first cell is the claim of child $0$
 and the second that of child $1$, as the two cells marked raw are the raw
-claims of child $0$ and of child $1$. The step circuit and each bonding
+claims of child $0$ and of child $1$. The step circuit and each mask
 polynomial appear once. The circuits are the indices $0$ to $36$ of the native
-grid and $0$ to $32$ of the nested grid, and the bonding polynomials are the
-indices $37$ to $54$ and $33$ to $47$. A cell marked $\star$ holds the
+grid and $0$ to $32$ of the nested grid, and the masks are the
+indices $37$ to $54$ and $33$ to $46$. A cell marked $\star$ holds the
 randomizer claim, the cell marked half holds the half-claim, and a cell marked
 pad holds the zero claim.
 
@@ -422,7 +424,7 @@ The nested grid has $12$ groups of $9$.
 | $g = 7$ | $27$ | $27$ | $28$ | $28$ | $29$ | $29$ | $30$ | $30$ | $\star$ |
 | $g = 8$ | $31$ | $31$ | $32$ | $32$ | $33$ | $34$ | $35$ | $36$ | $\star$ |
 | $g = 9$ | $37$ | $38$ | $39$ | $40$ | $41$ | $42$ | $43$ | $44$ | $\star$ |
-| $g = 10$ | $45$ | $46$ | $47$ | pad | pad | pad | pad | pad | $\star$ |
+| $g = 10$ | $45$ | $46$ | pad | pad | pad | pad | pad | pad | $\star$ |
 | $g = 11$ | half | pad | pad | pad | pad | pad | pad | pad | pad |
 
 A group is not aligned with the kinds of claim or with the children: the two

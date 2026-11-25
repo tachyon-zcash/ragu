@@ -24,20 +24,19 @@
 //! exponent of its index $i$; see [`CircuitIndex::omega_j`]) is in the domain,
 //! it selects a wiring polynomial.
 //!
-//! The zero polynomial is not a special case: a bonding polynomial is precisely
-//! a wiring polynomial with $s(X, 0) = 0$, so the zero polynomial *is* one. The
-//! domain thus holds circuit wiring polynomials ($s(X, 0) = 1$) and bonding
-//! polynomials ($s(X, 0) = 0$) — the latter being both the explicitly registered
-//! ones (see [`register_bonding`](RegistryBuilder::register_bonding)) and the
-//! unassigned points. See [`BondingObject`] for how this $s(X, 0)$ distinction
-//! keeps one kind from standing in for the other.
+//! The zero polynomial is not a special case: it has $s(X, 0) = 0$, as every
+//! mask polynomial does. The domain thus holds circuit wiring polynomials
+//! ($s(X, 0) = 1$) and polynomials with $s(X, 0) = 0$ — the latter being both
+//! the registered masks (see [`register_mask`](RegistryBuilder::register_mask))
+//! and the unassigned points. See [`MaskObject`] for how this $s(X, 0)$
+//! distinction keeps one kind from standing in for the other.
 //!
 //! This is why selecting by domain membership alone is safe. A verifier that
-//! expects a circuit fixes $\mathbf{k}_0 = 1$, which no bonding polynomial can
-//! satisfy, so permitting an arbitrary in-domain index already confines the
-//! selection to the registered circuits by construction — registered bonding
-//! polynomials and unassigned points are excluded by that same mechanism, not by
-//! a bounds check.
+//! expects a circuit fixes $\mathbf{k}_0 = 1$, which no polynomial with
+//! $s(X, 0) = 0$ can satisfy, so permitting an arbitrary in-domain index
+//! already confines the selection to the registered circuits by construction —
+//! registered masks and unassigned points are excluded by that same mechanism,
+//! not by a bounds check.
 //!
 //! [`circuit_in_domain`](Registry::circuit_in_domain) reports domain membership
 //! only; it does *not* report whether anything was explicitly registered at that
@@ -54,6 +53,7 @@
 //! [registry chapter]: https://tachyon.z.cash/ragu/protocol/construction/registry.html
 
 use alloc::{boxed::Box, vec::Vec};
+use core::ops::Range;
 
 use blake2b_simd::Params;
 use ragu_core::{Error, Result};
@@ -63,7 +63,7 @@ use udon::{
 };
 
 use crate::{
-    BondingObject, Circuit, WiringObject,
+    Circuit, MaskObject, WiringObject,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
 };
@@ -115,7 +115,8 @@ impl From<CircuitIndex> for usize {
 ///
 /// Circuits are organized into four categories:
 /// - Internal circuits: system circuits for the PCD construction
-/// - Bonding: bonding polynomials for well-formedness enforcement
+/// - Masks: the stage masks and final masks that keep each stage polynomial
+///   and each circuit's own polynomial within its gates
 /// - Internal steps: internal step circuits (e.g. rerandomize, trivial)
 /// - Application steps: user-defined application step circuits
 ///
@@ -124,7 +125,7 @@ impl From<CircuitIndex> for usize {
 /// proper PCD indexing.
 pub struct RegistryBuilder<'params, F: Field, R: Rank> {
     internal_circuits: Vec<Box<dyn WiringObject<F, R> + 'params>>,
-    bonding: Vec<Box<dyn WiringObject<F, R> + 'params>>,
+    masks: Vec<MaskObject<R>>,
     internal_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     /// A tag to install instead of the derived one; a test seam only.
@@ -143,7 +144,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     pub fn new() -> Self {
         Self {
             internal_circuits: Vec::new(),
-            bonding: Vec::new(),
+            masks: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
             #[cfg(any(test, feature = "test-utils"))]
@@ -165,9 +166,9 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
         self
     }
 
-    /// Returns the number of internal circuits (circuits + bonding).
+    /// Returns the number of internal circuits (circuits + masks).
     pub fn num_internal_circuits(&self) -> usize {
-        self.bonding.len() + self.internal_circuits.len()
+        self.masks.len() + self.internal_circuits.len()
     }
 
     /// Returns the total number of circuits across all categories.
@@ -225,9 +226,9 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
         Ok(self)
     }
 
-    /// Registers a bonding polynomial.
-    pub fn register_bonding(mut self, bonding: BondingObject<'params, F, R>) -> Self {
-        self.bonding.push(bonding.into_inner());
+    /// Registers a mask polynomial.
+    pub fn register_mask(mut self, mask: MaskObject<R>) -> Self {
+        self.masks.push(mask);
         self
     }
 
@@ -236,7 +237,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     ///
     /// Circuits are concatenated in the following order for proper indexing:
     /// 1. Internal circuits: System circuits for the PCD construction
-    /// 2. Bonding: bonding polynomials
+    /// 2. Masks: stage masks and final masks
     /// 3. Internal steps: Internal step circuits (e.g. rerandomize, trivial)
     /// 4. Application steps: User-defined step circuits
     ///
@@ -258,13 +259,16 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
         let log2_circuits = self.log2_circuits();
         let domain = F::domain(log2_circuits).expect("supported registry domain");
 
-        let circuits: Vec<_> = self
-            .internal_circuits
-            .into_iter()
-            .chain(self.bonding)
-            .chain(self.internal_steps)
-            .chain(self.application_steps)
-            .collect();
+        let masks = self.internal_circuits.len()..self.num_internal_circuits();
+        let circuits: Vec<_> =
+            self.internal_circuits
+                .into_iter()
+                .chain(self.masks.into_iter().map(|mask| {
+                    Box::new(mask.into_inner()) as Box<dyn WiringObject<F, R> + 'params>
+                }))
+                .chain(self.internal_steps)
+                .chain(self.application_steps)
+                .collect();
 
         // Compute floor plans for each circuit.
         let floor_plans: Vec<Vec<ConstraintSegment>> = circuits
@@ -279,6 +283,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
         Ok(Registry {
             domain,
             circuits,
+            masks,
             floor_plans,
             tag,
         })
@@ -424,6 +429,11 @@ impl<F: Field> Tag<F> {
 pub struct Registry<'params, F: Field, R: Rank> {
     domain: Domain<F>,
     circuits: Vec<Box<dyn WiringObject<F, R> + 'params>>,
+
+    /// The indices of `circuits` that hold masks. A mask's `sxy`, `sx` and
+    /// `sy` return only its $-\text{notch}$ term, and the registry adds the
+    /// shared $S\_{\text{global}}$ term once for all of them.
+    masks: Range<usize>,
 
     /// Per-circuit floor plans computed during finalization.
     floor_plans: Vec<Vec<ConstraintSegment>>,
@@ -581,7 +591,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     fn circuit_sxy(&self, i: usize, x: F, y: F, global: F) -> F {
         let circuit = &self.circuits[i];
         let value = circuit.sxy(x, y, &self.floor_plans[i]);
-        if circuit.is_mask() {
+        if self.masks.contains(&i) {
             value + global
         } else {
             value
@@ -732,17 +742,17 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// domain.
     ///
     /// This reports domain membership, and nothing more. Every domain point is a
-    /// wiring polynomial — a registered circuit, a registered bonding
+    /// wiring polynomial — a registered circuit, a registered mask
     /// polynomial, or (at points left over when
     /// [`num_circuits`](Self::num_circuits) is not a power of two) the zero
-    /// polynomial, which is itself a bonding polynomial. All are selected the
+    /// polynomial, which has $s(X, 0) = 0$ as a mask does. All are selected the
     /// same way by [`circuit_y`](Self::circuit_y) /
     /// [`circuit_xy`](Self::circuit_xy), so a `true` result means "in domain",
     /// not "a circuit is registered here".
     ///
     /// A caller expecting a circuit does not need it to mean more than that: it
-    /// fixes $\mathbf{k}_0 = 1$, and no bonding polynomial ($s(X, 0) = 0$) can
-    /// satisfy such a claim; see [`BondingObject`]. An index whose $\omega^j$
+    /// fixes $\mathbf{k}_0 = 1$, and no polynomial with $s(X, 0) = 0$ can
+    /// satisfy such a claim; see [`MaskObject`]. An index whose $\omega^j$
     /// falls *outside* the domain (returns `false`) escapes that argument — it
     /// evaluates the registry interpolation at an arbitrary point, mixing all
     /// domain points together.
@@ -850,24 +860,17 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     }
 
     /// Sums Lagrange coefficients for masking polynomials at the given $W$ point.
-    ///
-    /// Only circuits where [`WiringObject::is_mask`] returns `true` contribute.
     fn mask_coeff_sum(&self, cache: &LagrangeCache<F>) -> F {
         match cache {
-            LagrangeCache::Arbitrary(coeffs) => {
-                let mut sum = F::ZERO;
-                for (i, circuit) in self.circuits.iter().enumerate() {
-                    if circuit.is_mask() {
-                        let j = self.bitreversed_index(i);
-                        sum += coeffs[j];
-                    }
-                }
-                sum
-            }
+            LagrangeCache::Arbitrary(coeffs) => self
+                .masks
+                .clone()
+                .map(|i| coeffs[self.bitreversed_index(i)])
+                .sum(),
             LagrangeCache::Assigned(i) => {
                 // W is exactly omega^bit_reverse(i), so the Lagrange
                 // coefficient for circuit i is ONE and all others are ZERO.
-                if self.circuits[*i].is_mask() {
+                if self.masks.contains(i) {
                     F::ONE
                 } else {
                     F::ZERO
@@ -1067,7 +1070,6 @@ fn add_restriction<F: Field, R: Rank>(
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
 
     use ragu_core::{Result, pasta::Fp};
     use rand::Rng;
@@ -1092,7 +1094,7 @@ mod tests {
             }
             for &(skip, num) in masks {
                 let mask = StageMask::<TestRank>::new(skip, num)?;
-                builder = builder.register_bonding(crate::BondingObject::new(Box::new(mask)));
+                builder = builder.register_mask(crate::MaskObject::new(mask));
             }
             Ok(builder.finalize()?.tag())
         };
@@ -1171,21 +1173,17 @@ mod tests {
         Ok(())
     }
 
-    /// A registry holding every kind of wiring polynomial: circuits, stage
-    /// masks and a bonding polynomial, with domain points left unassigned.
+    /// A registry holding every kind of wiring polynomial: circuits, a stage
+    /// mask and a final mask, with domain points left unassigned.
     fn mixed_registry() -> Result<Registry<'static, Fp, TestRank>> {
-        use crate::staging::{bonding::Stripped, final_stage_mask, stage_mask};
+        use crate::staging::{final_mask, stage_mask};
 
-        let stripped = Stripped::new(crate::into_wiring_object::<_, _, TestRank>(
-            SquareCircuit { times: 3 },
-        )?);
         let registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_internal_circuit(SquareCircuit { times: 1 })?
-            .register_bonding(stage_mask(1, 3)?)
-            .register_bonding(final_stage_mask(2)?)
-            .register_bonding(crate::BondingObject::new(Box::new(stripped)))
+            .register_mask(stage_mask(1, 3)?)
+            .register_mask(final_mask(2)?)
             .finalize()?;
         assert!(registry.num_circuits() < registry.domain.size());
         Ok(registry)
@@ -1193,8 +1191,8 @@ mod tests {
 
     /// What the tag hashes is what the registry evaluates: at every domain
     /// point, the registry polynomial is the monomials hashed for the circuit
-    /// registered there plus the tag term, for circuits, stage masks and
-    /// bonding polynomials alike.
+    /// registered there plus the tag term, for circuits and stage masks
+    /// alike.
     #[test]
     fn hashed_monomials_are_the_registry_polynomial() -> Result<()> {
         let registry = mixed_registry()?;
@@ -1216,8 +1214,7 @@ mod tests {
     /// The tag hashes the monomial driver's walk of each circuit, and the
     /// registry evaluates the walks of the `sxy`, `sx` and `sy` drivers. At a
     /// point drawn afresh on every run, all four agree at every domain point:
-    /// those holding circuits, stage masks and bonding polynomials, and those
-    /// left unassigned.
+    /// those holding circuits and stage masks, and those left unassigned.
     #[test]
     fn monomial_driver_agrees_with_the_wiring_drivers() -> Result<()> {
         let registry = mixed_registry()?;
@@ -1244,8 +1241,8 @@ mod tests {
                 builder = builder.register_circuit(SquareCircuit { times: i })?;
             }
             if count != 0 {
-                builder = builder.register_bonding(crate::BondingObject::new(
-                    alloc::boxed::Box::new(crate::staging::mask::StageMask::<TestRank>::new(2, 3)?),
+                builder = builder.register_mask(crate::MaskObject::new(
+                    crate::staging::mask::StageMask::<TestRank>::new(2, 3)?,
                 ));
             }
             let registry = builder.finalize()?;
@@ -1598,10 +1595,10 @@ mod tests {
 
     /// A registry whose circuit count is not a power of two has padded domain
     /// points with nothing explicitly registered. Such an index is *in the
-    /// domain* yet carries the zero polynomial, which has $s(X, 0) = 0$ and is
-    /// therefore a bonding polynomial, unlike a registered circuit whose
+    /// domain* yet carries the zero polynomial, which has $s(X, 0) = 0$ as a
+    /// mask polynomial does, unlike a registered circuit whose
     /// $s(X, 0) = 1$. That is what makes an unregistered in-domain id safe: a
-    /// verifier expecting a circuit fixes $\mathbf{k}_0 = 1$, which no bonding
+    /// verifier expecting a circuit fixes $\mathbf{k}_0 = 1$, which no such
     /// polynomial can satisfy.
     #[test]
     fn test_padded_slot_is_zero_wiring_polynomial() -> Result<()> {
@@ -1622,7 +1619,7 @@ mod tests {
         assert!(usize::from(padded) >= registry.num_circuits());
         assert!(registry.circuit_in_domain(padded));
 
-        // s(X, 0) distinguishes the two: a bonding polynomial has s(X, 0) = 0,
+        // s(X, 0) distinguishes the two: the zero polynomial has s(X, 0) = 0,
         // whereas a circuit wiring polynomial has s(X, 0) = 1.
         let s_padded = registry.circuit_y(padded, Fp::ZERO);
         let s_registered = registry.circuit_y(registered, Fp::ZERO);

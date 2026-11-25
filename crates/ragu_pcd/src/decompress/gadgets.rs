@@ -321,7 +321,7 @@ pub(crate) mod revdot {
                     let b = public.restriction(circuit).add(dr, &at_r.tz_at_r);
                     b_terms.push(b_i.mul(dr, &b)?);
                 }
-                Kind::Bonding(circuit) => {
+                Kind::Mask(circuit) => {
                     b_terms.push(b_i.mul(dr, public.restriction(circuit))?);
                 }
                 Kind::Masked(m) => {
@@ -751,7 +751,7 @@ pub(crate) mod derive {
 
     /// The processor that builds the claims' points, the counterpart of the
     /// compressed verifier's shaper over points: a circuit claim sums its
-    /// components, a bonding claim Horner-folds its groups' sums under $z$.
+    /// components, a mask claim Horner-folds its components under $z$.
     /// The processor's methods cannot fail, so the first error waits in
     /// `error` and stops the rest.
     #[cfg(test)]
@@ -780,18 +780,15 @@ pub(crate) mod derive {
             self.push(Kind::Circuit(circuit), a, None);
         }
 
-        fn bonding(
+        fn mask(
             &mut self,
             circuit: CircuitIndex,
-            groups: impl Iterator<Item = impl Iterator<Item = Point<'dr, D, C>>>,
+            rxs: impl Iterator<Item = Point<'dr, D, C>>,
         ) -> Result<()> {
-            let mut sums = Vec::new();
-            for group in groups {
-                sums.push(Some(sum(self.dr, group, self.bank)?));
-            }
-            let a = horner(self.dr, sums, self.z, self.bank)?
-                .ok_or_else(|| Error::InvalidWitness("a bonding claim has a group".into()));
-            self.push(Kind::Bonding(circuit), a, None);
+            let rxs: Vec<_> = rxs.map(Some).collect();
+            let a = horner(self.dr, rxs, self.z, self.bank)?
+                .ok_or_else(|| Error::InvalidWitness("a mask claim has a component".into()));
+            self.push(Kind::Mask(circuit), a, None);
             Ok(())
         }
 
@@ -836,12 +833,12 @@ pub(crate) mod derive {
             self.circuit(id.circuit_index::<Standard>(), rxs);
         }
 
-        fn grouped_bonding_claim(
+        fn mask_claim(
             &mut self,
             id: native::InternalCircuitIndex,
-            groups: impl Iterator<Item = impl Iterator<Item = Point<'dr, D, C>>>,
+            rxs: impl Iterator<Item = Point<'dr, D, C>>,
         ) -> Result<()> {
-            self.bonding(id.circuit_index::<Standard>(), groups)
+            self.mask(id.circuit_index::<Standard>(), rxs)
         }
     }
 
@@ -861,12 +858,12 @@ pub(crate) mod derive {
             self.circuit(id.circuit_index::<Standard>(), rxs);
         }
 
-        fn grouped_bonding_claim(
+        fn mask_claim(
             &mut self,
             id: nested::InternalCircuitIndex,
-            groups: impl Iterator<Item = impl Iterator<Item = Point<'dr, D, C>>>,
+            rxs: impl Iterator<Item = Point<'dr, D, C>>,
         ) -> Result<()> {
-            self.bonding(id.circuit_index::<Standard>(), groups)
+            self.mask(id.circuit_index::<Standard>(), rxs)
         }
     }
 

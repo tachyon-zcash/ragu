@@ -66,7 +66,7 @@ mod revdot {
     ) -> Vec<(CircuitIndex, F)> {
         let mut circuits: Vec<CircuitIndex> = Vec::new();
         for shape in shapes {
-            if let Kind::Circuit(circuit) | Kind::Bonding(circuit) = shape.kind
+            if let Kind::Circuit(circuit) | Kind::Mask(circuit) = shape.kind
                 && !circuits.contains(&circuit)
             {
                 circuits.push(circuit);

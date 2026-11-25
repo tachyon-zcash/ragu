@@ -209,7 +209,7 @@ fn registry_public_parts<F: Field, R: Rank, B: Backend, Id: Sync>(
     let mut circuits: Vec<_> = shapes
         .iter()
         .filter_map(|shape| match shape.kind {
-            Kind::Circuit(circuit) | Kind::Bonding(circuit) => Some(circuit),
+            Kind::Circuit(circuit) | Kind::Mask(circuit) => Some(circuit),
             _ => None,
         })
         .collect();
@@ -240,7 +240,7 @@ fn registry_public_parts<F: Field, R: Rank, B: Backend, Id: Sync>(
 
 /// A claim's public parts of $a$ and $b$ at `r`, by kind: a wire binding
 /// subtracts its expected values from $a$ and has its mask for $b$, a
-/// circuit claim's $b$ holds the restriction and $t(z, X)$, a bonding
+/// circuit claim's $b$ holds the restriction and $t(z, X)$, a mask
 /// claim's the restriction alone.
 fn public<F: Field, R: Rank, Id>(
     kind: Kind,
@@ -252,7 +252,7 @@ fn public<F: Field, R: Rank, Id>(
     match kind {
         Kind::Raw => (F::ZERO, F::ZERO),
         Kind::Circuit(circuit) => (F::ZERO, restriction(circuit) + gate),
-        Kind::Bonding(circuit) => (F::ZERO, restriction(circuit)),
+        Kind::Mask(circuit) => (F::ZERO, restriction(circuit)),
         Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<R>(r)),
     }
 }

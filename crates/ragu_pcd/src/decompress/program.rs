@@ -1039,14 +1039,10 @@ impl Planner {
         });
     }
 
-    fn bonding(
-        &mut self,
-        circuit: CircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = usize>>,
-    ) {
+    fn mask(&mut self, circuit: CircuitIndex, rxs: impl Iterator<Item = usize>) {
         self.claims.push(ClaimPlan {
-            kind: Kind::Bonding(circuit),
-            groups: groups.map(|group| group.collect()).collect(),
+            kind: Kind::Mask(circuit),
+            groups: rxs.map(|rx| vec![rx]).collect(),
             b: None,
         });
     }
@@ -1087,12 +1083,12 @@ impl native::claims::Processor<Standard, usize, CircuitIndex> for Planner {
         self.circuit(id.circuit_index::<Standard>(), rxs);
     }
 
-    fn grouped_bonding_claim(
+    fn mask_claim(
         &mut self,
         id: native::InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = usize>>,
+        rxs: impl Iterator<Item = usize>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<Standard>(), groups);
+        self.mask(id.circuit_index::<Standard>(), rxs);
         Ok(())
     }
 }
@@ -1110,12 +1106,12 @@ impl nested::claims::Processor<Standard, usize> for Planner {
         self.circuit(id.circuit_index::<Standard>(), rxs);
     }
 
-    fn grouped_bonding_claim(
+    fn mask_claim(
         &mut self,
         id: nested::InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = usize>>,
+        rxs: impl Iterator<Item = usize>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<Standard>(), groups);
+        self.mask(id.circuit_index::<Standard>(), rxs);
         Ok(())
     }
 }
@@ -1501,9 +1497,9 @@ impl Builder {
         );
     }
 
-    /// The claims' points: sums of their groups' components into work
-    /// slots, and for a claim with several groups the Horner fold of the
-    /// group sums under $z$.
+    /// The claims' points. A circuit claim's point is the sum of its one
+    /// group's components. A mask claim's groups hold one component each,
+    /// which it copies into work slots and Horner-folds under $z$.
     fn claims(&mut self, claims: &[ClaimPlan], z: ChallengeRef) {
         let commitments = self.layout.instance.commitments;
         let claim_points = self.slots.points(claims.len());
@@ -1717,7 +1713,7 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
         .scalar_claims
         .iter()
         .map(|claim| match claim.kind {
-            Kind::Circuit(circuit) | Kind::Bonding(circuit) => {
+            Kind::Circuit(circuit) | Kind::Mask(circuit) => {
                 Some(match named.iter().find(|(listed, _)| *listed == circuit) {
                     Some(&(_, slot)) => slot,
                     None => {

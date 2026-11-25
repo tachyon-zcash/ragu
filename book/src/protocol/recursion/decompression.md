@@ -222,7 +222,7 @@ $x^{(i)},y^{(i)}$ are those of the wallet proof's child $i$. The polynomial
 $m$ of this section is the wallet's registry, and not the aggregator's own.
 
 Open each of the first two restrictions at every internal registry point
-$\omega_j$, including the bonding polynomials' points. Also open
+$\omega_j$, including the masks' points. Also open
 $m(W,x_F,y_F)$ at $w_F$, the wallet proof's own circuit point (native only),
 $u_F$, and the wallet compression's $w_C$. Open each of the other seven
 restrictions at $w_F$.

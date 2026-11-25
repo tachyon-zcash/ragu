@@ -72,7 +72,7 @@ use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
 #[cfg(test)]
-use ragu_circuits::BondingObject;
+use ragu_circuits::MaskObject;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::{Stage, StageBuilder, StageExt, StageGuard},
@@ -102,7 +102,7 @@ use crate::{
     compress::{Messages, instance::OPENED, revdot::fold::Derived},
     internal::nested,
     ipa::IpaCycle,
-    profile::{BondingSlot, Profile, ProfiledCycle, Registered, Standard},
+    profile::{MaskSlot, Profile, ProfiledCycle, Registered, Standard},
 };
 
 /// The nested commitments the instance lists, then the nested registry
@@ -1029,9 +1029,9 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     /// # Errors
     ///
     /// Fails past the last stage.
-    fn register_mask<'params>(
+    fn register_stage_mask<'params>(
         index: usize,
-        slot: BondingSlot<'params, Self::F, R>,
+        slot: MaskSlot<'params, Self::F, R>,
     ) -> Result<Registered<'params, Self::F, R>>;
 
     /// Stage `index`'s mask.
@@ -1040,7 +1040,7 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     ///
     /// Fails past the last stage.
     #[cfg(test)]
-    fn mask(index: usize) -> Result<BondingObject<'static, Self::F, R>>;
+    fn stage_mask(index: usize) -> Result<MaskObject<R>>;
 
     /// Stage `index`'s polynomial over `prepared` with `alpha`, which a
     /// stage committed with a zero alpha ignores.
@@ -1113,22 +1113,22 @@ where
         })
     }
 
-    fn register_mask<'params>(
+    fn register_stage_mask<'params>(
         index: usize,
-        slot: BondingSlot<'params, Self::F, R>,
+        slot: MaskSlot<'params, Self::F, R>,
     ) -> Result<Registered<'params, Self::F, R>> {
         match index {
-            0 => slot.register_mask::<InstanceStage<C, Native, K, R, HEADER_SIZE>>(),
-            1 => slot.register_mask::<MessagesStage<C, Native, K, R, HEADER_SIZE>>(),
+            0 => slot.register_stage_mask::<InstanceStage<C, Native, K, R, HEADER_SIZE>>(),
+            1 => slot.register_stage_mask::<MessagesStage<C, Native, K, R, HEADER_SIZE>>(),
             _ => no_such_stage(),
         }
     }
 
     #[cfg(test)]
-    fn mask(index: usize) -> Result<BondingObject<'static, Self::F, R>> {
+    fn stage_mask(index: usize) -> Result<MaskObject<R>> {
         match index {
-            0 => InstanceStage::<C, Native, K, R, HEADER_SIZE>::mask(),
-            1 => MessagesStage::<C, Native, K, R, HEADER_SIZE>::mask(),
+            0 => InstanceStage::<C, Native, K, R, HEADER_SIZE>::stage_mask(),
+            1 => MessagesStage::<C, Native, K, R, HEADER_SIZE>::stage_mask(),
             _ => no_such_stage(),
         }
     }
@@ -1197,25 +1197,25 @@ where
         slots.finish()
     }
 
-    fn register_mask<'params>(
+    fn register_stage_mask<'params>(
         index: usize,
-        slot: BondingSlot<'params, Self::F, R>,
+        slot: MaskSlot<'params, Self::F, R>,
     ) -> Result<Registered<'params, Self::F, R>> {
         if index < num_runs::<K>() {
-            K::Last::register_mask::<C, K, R>(index, slot)
+            K::Last::register_stage_mask::<C, K, R>(index, slot)
         } else if index == num_runs::<K>() {
-            slot.register_mask::<TrailingStage<C, K, R>>()
+            slot.register_stage_mask::<TrailingStage<C, K, R>>()
         } else {
             no_such_stage()
         }
     }
 
     #[cfg(test)]
-    fn mask(index: usize) -> Result<BondingObject<'static, Self::F, R>> {
+    fn stage_mask(index: usize) -> Result<MaskObject<R>> {
         if index < num_runs::<K>() {
-            K::Last::mask::<C, K, R>(index)
+            K::Last::stage_mask::<C, K, R>(index)
         } else if index == num_runs::<K>() {
-            TrailingStage::<C, K, R>::mask()
+            TrailingStage::<C, K, R>::stage_mask()
         } else {
             no_such_stage()
         }
@@ -1444,9 +1444,9 @@ pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
         D: Driver<'dr, F = C::ScalarField>;
 
     /// Registers run `index`'s stage's mask, for `index` at most this run's.
-    fn register_mask<'params, C, K, R>(
+    fn register_stage_mask<'params, C, K, R>(
         index: usize,
-        slot: BondingSlot<'params, C::ScalarField, R>,
+        slot: MaskSlot<'params, C::ScalarField, R>,
     ) -> Result<Registered<'params, C::ScalarField, R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -1455,7 +1455,7 @@ pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
 
     /// Run `index`'s stage's mask, for `index` at most this run's.
     #[cfg(test)]
-    fn mask<C, K, R>(index: usize) -> Result<BondingObject<'static, C::ScalarField, R>>
+    fn stage_mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,
@@ -1568,9 +1568,9 @@ impl RunIndex for Z {
         load_run::<C, K, R, Z, D>(guard, dr, witness, into)
     }
 
-    fn register_mask<'params, C, K, R>(
+    fn register_stage_mask<'params, C, K, R>(
         index: usize,
-        slot: BondingSlot<'params, C::ScalarField, R>,
+        slot: MaskSlot<'params, C::ScalarField, R>,
     ) -> Result<Registered<'params, C::ScalarField, R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -1578,21 +1578,21 @@ impl RunIndex for Z {
         R: Rank,
     {
         if index == 0 {
-            slot.register_mask::<RunStage<C, K, R, Z>>()
+            slot.register_stage_mask::<RunStage<C, K, R, Z>>()
         } else {
             no_such_stage()
         }
     }
 
     #[cfg(test)]
-    fn mask<C, K, R>(index: usize) -> Result<BondingObject<'static, C::ScalarField, R>>
+    fn stage_mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,
         R: Rank,
     {
         if index == 0 {
-            RunStage::<C, K, R, Z>::mask()
+            RunStage::<C, K, R, Z>::stage_mask()
         } else {
             no_such_stage()
         }
@@ -1684,9 +1684,9 @@ impl<N: RunIndex> RunIndex for Succ<N> {
         load_run::<C, K, R, Succ<N>, D>(own, dr, witness, into)
     }
 
-    fn register_mask<'params, C, K, R>(
+    fn register_stage_mask<'params, C, K, R>(
         index: usize,
-        slot: BondingSlot<'params, C::ScalarField, R>,
+        slot: MaskSlot<'params, C::ScalarField, R>,
     ) -> Result<Registered<'params, C::ScalarField, R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -1694,23 +1694,23 @@ impl<N: RunIndex> RunIndex for Succ<N> {
         R: Rank,
     {
         if index == Self::INDEX {
-            slot.register_mask::<RunStage<C, K, R, Succ<N>>>()
+            slot.register_stage_mask::<RunStage<C, K, R, Succ<N>>>()
         } else {
-            N::register_mask::<C, K, R>(index, slot)
+            N::register_stage_mask::<C, K, R>(index, slot)
         }
     }
 
     #[cfg(test)]
-    fn mask<C, K, R>(index: usize) -> Result<BondingObject<'static, C::ScalarField, R>>
+    fn stage_mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,
         R: Rank,
     {
         if index == Self::INDEX {
-            RunStage::<C, K, R, Succ<N>>::mask()
+            RunStage::<C, K, R, Succ<N>>::stage_mask()
         } else {
-            N::mask::<C, K, R>(index)
+            N::stage_mask::<C, K, R>(index)
         }
     }
 

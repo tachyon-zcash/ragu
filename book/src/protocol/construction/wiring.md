@@ -209,7 +209,7 @@ the weights of the `SYSTEM` wires that all wiring polynomials have in common.
 
 All wiring polynomials share the same layout. Circuit wiring polynomials have
 $s(X, 0) = 1$ (because of the `ONE` constraint against $\v{k}_0$) but
-[bonding polynomials](staging.md#bonding) skip this constraint with
+[masks](staging.md#masks) skip this constraint with
 $s(X, 0) = 0$. Likewise, $\v{d}_0$ is $1$ in the trace of a circuit and $0$ in a
 [stage polynomial](staging.md#stage-polynomial).
 

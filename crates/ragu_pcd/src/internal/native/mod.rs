@@ -29,7 +29,7 @@ use ragu_primitives::vec::{ConstLen, FixedVec, Len};
 
 use crate::{
     internal::{endoscalar, nested, revdot::Parameters},
-    profile::{BondingSlot, CircuitSlot, Profile, ProfiledCycle, Shape},
+    profile::{CircuitSlot, MaskSlot, Profile, ProfiledCycle, Shape},
     step,
 };
 
@@ -111,12 +111,12 @@ impl<P: Profile> Len for NumExtensionStages<P> {
     }
 }
 
-/// Length type for the bondings of the profile's native extension.
-pub struct NumExtensionBondings<P: Profile>(PhantomData<P>);
+/// Length type for the masks of the profile's native extension.
+pub struct NumExtensionMasks<P: Profile>(PhantomData<P>);
 
-impl<P: Profile> Len for NumExtensionBondings<P> {
+impl<P: Profile> Len for NumExtensionMasks<P> {
     fn len() -> usize {
-        crate::profile::extension_lengths::<P>(false).bondings
+        crate::profile::extension_lengths::<P>(false).masks
     }
 }
 
@@ -157,12 +157,12 @@ pub const FOLD_GROUP_SIZE: usize = 8;
 
 /// The native revdot claims of profile `P` the fuse folds: the two
 /// children's raw claims, the step's own application claim, each internal
-/// circuit's claim per child, and each bonding's claim across both.
+/// circuit's claim per child, and each mask's claim across both.
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(false);
     let circuits = 6 + NUM_BINDERS + NumSteps::<P>::len() + extension.circuits;
-    let bondings = 18 + extension.bondings;
-    2 + 1 + 2 * circuits + bondings
+    let masks = 18 + extension.masks;
+    2 + 1 + 2 * circuits + masks
 }
 
 /// Length type for the native fold's groups in profile `P`: the standard
@@ -277,10 +277,10 @@ pub enum InternalCircuitIndex {
     /// The final mask of the step circuits, whose only stage is the
     /// application stage.
     ApplicationFinalStaged,
-    /// A bonding of the profile's native extension, a stage's mask or a
-    /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
+    /// A mask of the profile's native extension, a stage mask or a final
+    /// mask, in [`Extension::masks`](crate::profile::Extension::masks)
     /// order.
-    ExtensionBonding(u32),
+    ExtensionMask(u32),
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -364,24 +364,24 @@ impl InternalCircuitIndex {
 
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
-    /// profile's extension circuits after the walk and its bondings last.
+    /// profile's extension circuits after the walk and its masks last.
     /// The index tests compare this order with [`Self::circuit_index`].
     pub fn all<P: Profile>() -> Vec<Self> {
         let extension = crate::profile::native_extension::<P>();
         let all = Self::all_with(
             NumSteps::<P>::len(),
             extension.circuits.len(),
-            extension.bondings(),
+            extension.masks(),
         );
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
 
     /// [`ALL`](Self::ALL) with the walk resized to `num_steps` steps,
-    /// `circuits` extension circuits after it and `bondings` extension
-    /// bondings after the fuse's masks.
-    pub(crate) fn all_with(num_steps: usize, circuits: usize, bondings: usize) -> Vec<Self> {
-        let mut all = Vec::with_capacity(NUM_FIXED_INTERNAL + num_steps + circuits + bondings);
+    /// `circuits` extension circuits after it and `masks` extension
+    /// masks after the fuse's masks.
+    pub(crate) fn all_with(num_steps: usize, circuits: usize, masks: usize) -> Vec<Self> {
+        let mut all = Vec::with_capacity(NUM_FIXED_INTERNAL + num_steps + circuits + masks);
         for &id in &Self::ALL {
             match id {
                 Self::EndoscalingStep(0) => {
@@ -392,7 +392,7 @@ impl InternalCircuitIndex {
                 id => all.push(id),
             }
         }
-        all.extend((0..bondings as u32).map(Self::ExtensionBonding));
+        all.extend((0..masks as u32).map(Self::ExtensionMask));
         all
     }
 
@@ -402,7 +402,7 @@ impl InternalCircuitIndex {
         let steps = NumSteps::<P>::len();
         let extension = crate::profile::extension_lengths::<P>(false);
         let endoscaling = 6 + NUM_BINDERS;
-        let bonding = endoscaling + steps + extension.circuits;
+        let mask = endoscaling + steps + extension.circuits;
         let pos = match self {
             Hashes1Circuit => 0,
             Hashes2Circuit => 1,
@@ -415,33 +415,33 @@ impl InternalCircuitIndex {
             ExtensionCircuit(i) => {
                 endoscaling + steps + super::checked_index(i, extension.circuits)
             }
-            PreambleStage => bonding,
-            InnerErrorStage => bonding + 1,
-            OuterErrorStage => bonding + 2,
-            QueryStage => bonding + 3,
-            EvalStage => bonding + 4,
-            PointsBindingStage => bonding + 5,
-            PointsPreambleStage => bonding + 6,
-            PointsRegistryWxStage => bonding + 7,
-            PointsAbStage => bonding + 8,
-            PointsFStage => bonding + 9,
-            PointsWalkStage => bonding + 10,
-            InnerErrorFinalStaged => bonding + 11,
-            OuterErrorFinalStaged => bonding + 12,
-            EvalFinalStaged => bonding + 13,
-            PointsWalkFinalStaged => bonding + 14,
-            PreambleFinalStaged => bonding + 15,
-            ApplicationStage => bonding + 16,
-            ApplicationFinalStaged => bonding + 17,
-            ExtensionBonding(i) => bonding + 18 + super::checked_index(i, extension.bondings),
+            PreambleStage => mask,
+            InnerErrorStage => mask + 1,
+            OuterErrorStage => mask + 2,
+            QueryStage => mask + 3,
+            EvalStage => mask + 4,
+            PointsBindingStage => mask + 5,
+            PointsPreambleStage => mask + 6,
+            PointsRegistryWxStage => mask + 7,
+            PointsAbStage => mask + 8,
+            PointsFStage => mask + 9,
+            PointsWalkStage => mask + 10,
+            InnerErrorFinalStaged => mask + 11,
+            OuterErrorFinalStaged => mask + 12,
+            EvalFinalStaged => mask + 13,
+            PointsWalkFinalStaged => mask + 14,
+            PreambleFinalStaged => mask + 15,
+            ApplicationStage => mask + 16,
+            ApplicationFinalStaged => mask + 17,
+            ExtensionMask(i) => mask + 18 + super::checked_index(i, extension.masks),
         };
         CircuitIndex::new(pos)
     }
 
-    /// Whether `self` is registered as a bonding, a stage's mask or a final
+    /// Whether `self` is registered as a mask, a stage mask or a final
     /// mask, rather than as a circuit.
     #[cfg(test)]
-    pub fn is_bonding(self) -> bool {
+    pub fn is_mask(self) -> bool {
         use InternalCircuitIndex::*;
         match self {
             Hashes1Circuit
@@ -471,7 +471,7 @@ impl InternalCircuitIndex {
             | PreambleFinalStaged
             | ApplicationStage
             | ApplicationFinalStaged
-            | ExtensionBonding(_) => true,
+            | ExtensionMask(_) => true,
         }
     }
 }
@@ -513,8 +513,8 @@ pub struct InternalCircuitValues<T, P: Profile> {
     pub preamble_final_staged: T,
     pub application_stage: T,
     pub application_final_staged: T,
-    /// One per bonding of the profile's native extension.
-    pub extension_bondings: FixedVec<T, NumExtensionBondings<P>>,
+    /// One per mask of the profile's native extension.
+    pub extension_masks: FixedVec<T, NumExtensionMasks<P>>,
 }
 
 impl<T, P: Profile> InternalCircuitValues<T, P> {
@@ -565,7 +565,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             PreambleFinalStaged => &self.preamble_final_staged,
             ApplicationStage => &self.application_stage,
             ApplicationFinalStaged => &self.application_final_staged,
-            ExtensionBonding(j) => &self.extension_bondings[j as usize],
+            ExtensionMask(j) => &self.extension_masks[j as usize],
         }
     }
 
@@ -620,7 +620,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             preamble_final_staged: f(PreambleFinalStaged)?,
             application_stage: f(ApplicationStage)?,
             application_final_staged: f(ApplicationFinalStaged)?,
-            extension_bondings: try_fixed_vec(|j| f(ExtensionBonding(j as u32)))?,
+            extension_masks: try_fixed_vec(|j| f(ExtensionMask(j as u32)))?,
         })
     }
 }
@@ -966,7 +966,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
 
     let extension = crate::profile::native_extension::<C::Profile>();
     let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
-    let mut extension_bondings = alloc::vec::Vec::with_capacity(extension.bondings());
+    let mut extension_masks = alloc::vec::Vec::with_capacity(extension.masks());
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
@@ -989,100 +989,100 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 extension_circuits.push(registration);
                 registry
             }
-            ExtensionBonding(j) => {
+            ExtensionMask(j) => {
                 use crate::profile::online::stages::{self as extension, Native};
-                let slot = BondingSlot::new(registry);
+                let slot = MaskSlot::new(registry);
                 let (registry, registration) =
-                    match extension::bonding::<C::Profile, Native>(j as usize)? {
-                        extension::Bonding::Online(bonding) => {
-                            bonding.register::<_, R, C::Profile, Native>(slot)?
+                    match extension::mask::<C::Profile, Native>(j as usize)? {
+                        extension::Mask::Online(mask) => {
+                            mask.register::<_, R, C::Profile, Native>(slot)?
                         }
-                        extension::Bonding::User(index) => {
-                            C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
+                        extension::Mask::User(index) => {
+                            C::Profile::register_native_mask::<C::Base, R, HEADER_SIZE>(
                                 index, slot, params,
                             )?
                         }
                     }
                     .into_parts();
-                extension_bondings.push(registration);
+                extension_masks.push(registration);
                 registry
             }
             PreambleStage => {
-                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_mask(stages::preamble::Stage::<C, R, HEADER_SIZE>::stage_mask()?)
             }
             ApplicationStage => {
-                registry.register_bonding(ragu_circuits::staging::stage_mask(1, stage_gates)?)
+                registry.register_mask(ragu_circuits::staging::stage_mask(1, stage_gates)?)
             }
-            ApplicationFinalStaged => registry
-                .register_bonding(ragu_circuits::staging::final_stage_mask(1 + stage_gates)?),
-            InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
+            ApplicationFinalStaged => {
+                registry.register_mask(ragu_circuits::staging::final_mask(1 + stage_gates)?)
+            }
+            InnerErrorStage => registry.register_mask(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
-            >::mask()?),
-            OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
+            >::stage_mask()?),
+            OuterErrorStage => registry.register_mask(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
-            >::mask()?),
+            >::stage_mask()?),
             QueryStage => {
-                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_mask(stages::query::Stage::<C, R, HEADER_SIZE>::stage_mask()?)
             }
             EvalStage => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_mask(stages::eval::Stage::<C, R, HEADER_SIZE>::stage_mask()?)
             }
-            InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
+            InnerErrorFinalStaged => registry.register_mask(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
             >::final_mask()?),
-            OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
+            OuterErrorFinalStaged => registry.register_mask(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
             >::final_mask()?),
             EvalFinalStaged => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry.register_mask(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
             PreambleFinalStaged => {
-                registry
-                    .register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry.register_mask(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
-            PointsBindingStage => registry.register_bonding(<stages::points::BindingStage<
+            PointsBindingStage => registry.register_mask(<stages::points::BindingStage<
                 C::NestedCurve,
                 C::Profile,
-            > as StageExt<C::CircuitField, R>>::mask(
+            > as StageExt<C::CircuitField, R>>::stage_mask(
             )?),
-            PointsPreambleStage => registry.register_bonding(<stages::points::PreambleStage<
+            PointsPreambleStage => registry.register_mask(<stages::points::PreambleStage<
                 C::NestedCurve,
                 C::Profile,
-            > as StageExt<C::CircuitField, R>>::mask(
+            > as StageExt<C::CircuitField, R>>::stage_mask(
             )?),
-            PointsRegistryWxStage => registry.register_bonding(<stages::points::RegistryWxStage<
+            PointsRegistryWxStage => registry.register_mask(<stages::points::RegistryWxStage<
                 C::NestedCurve,
                 C::Profile,
-            > as StageExt<C::CircuitField, R>>::mask(
+            > as StageExt<C::CircuitField, R>>::stage_mask(
             )?),
-            PointsAbStage => registry.register_bonding(<stages::points::AbStage<
+            PointsAbStage => registry.register_mask(<stages::points::AbStage<
                 C::NestedCurve,
                 C::Profile,
-            > as StageExt<C::CircuitField, R>>::mask(
+            > as StageExt<C::CircuitField, R>>::stage_mask(
             )?),
-            PointsFStage => registry.register_bonding(<stages::points::FStage<
+            PointsFStage => registry.register_mask(<stages::points::FStage<
                 C::NestedCurve,
                 C::Profile,
-            > as StageExt<C::CircuitField, R>>::mask(
+            > as StageExt<C::CircuitField, R>>::stage_mask(
             )?),
-            PointsWalkStage => registry.register_bonding(<stages::points::WalkStage<
+            PointsWalkStage => registry.register_mask(<stages::points::WalkStage<
                 C::NestedCurve,
                 C::Profile,
-            > as StageExt<C::CircuitField, R>>::mask(
+            > as StageExt<C::CircuitField, R>>::stage_mask(
             )?),
-            PointsWalkFinalStaged => registry.register_bonding(<stages::points::WalkStage<
+            PointsWalkFinalStaged => registry.register_mask(<stages::points::WalkStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::final_mask(
@@ -1135,7 +1135,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             }
         };
     }
-    extension.check_registered("native", &extension_circuits, &extension_bondings)?;
+    extension.check_registered("native", &extension_circuits, &extension_masks)?;
 
     assert_eq!(
         registry.num_internal_circuits(),
@@ -1153,7 +1153,7 @@ mod index_positions {
 
     fn check<P: Profile>() {
         let all = InternalCircuitIndex::all::<P>();
-        let circuits = all.iter().filter(|id| !id.is_bonding()).count();
+        let circuits = all.iter().filter(|id| !id.is_mask()).count();
         assert_eq!(
             num_claims::<P>(),
             2 + 1 + 2 * circuits + all.len() - circuits

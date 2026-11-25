@@ -70,7 +70,7 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 ### Round 3 {#fuse-round-3}
 
 13. Build the $95$ [native claims](claims.md#native-claims) at $(y, z)$ and the
-    $83$ [nested claims](claims.md#nested-claims) at $(y_q, z_q)$, and lay each
+    $82$ [nested claims](claims.md#nested-claims) at $(y_q, z_q)$, and lay each
     list out over its [grid](claims.md#randomizer) with the randomizer claim
     and the half-claim.
 14. Compute the [first-layer quotients](claims.md#fold-layer-1)
@@ -125,7 +125,7 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 ### Round 7 {#fuse-round-7}
 
 31. Compute $f$ over the $180$ [native openings](batch.md#native-openings) and
-    $f_q$ over the $158$ [nested openings](batch.md#nested-openings), with $[f]$
+    $f_q$ over the $157$ [nested openings](batch.md#nested-openings), with $[f]$
     and $[f_q]$.
 32. Set $r[\texttt{PointsF}]$ to the stage of $[m_q(W, x_q, y_q)]$, $[f_q]$ and
     $[p_{q,\star}]$. Set $r_q[\texttt{BridgeF}]$ to the stage of $[f]$,
@@ -208,7 +208,7 @@ and the table names them by path inside it.
 |---|---|---|
 | revdot product, dilation and $t(X, z)$ | [Arithmetization](arithmetization.md) | `sparse::Polynomial::revdot` and `dilate`, and `Rank::tz`, in `ragu_circuits::polynomials` |
 | registry, its restrictions and its capacity | [Registry](registry.md), [Registry Chain](batch.md#registry-chain) | `ragu_circuits::registry`: `Registry::xy` gives $m(W, x, y)$, and `Registry::at` fixes $w$, after which `RegistryAt::x` gives $m(w, x, Y)$ and `RegistryAt::y` gives $m(w, X, y)$; `RegistryBuilder::finalize` |
-| stages and masks | [Stages and Bonding Polynomials](staging.md) | `ragu_circuits::staging` |
+| stages and masks | [Stages and Masks](staging.md) | `ragu_circuits::staging` |
 | claim lists and targets | [Claims and Fold](claims.md#native-claims) | `internal::native::claims`, `internal::nested::claims`, the shared `internal::revdot::Builder`, and `internal::ky` for the targets |
 | fold, quotients and grid | [Fold](claims.md#fold), [Randomizer](claims.md#randomizer) | `internal::revdot`: `randomized`, `fold_inner`, `fold_outer`, and the in-circuit `ClaimFolder` and `EvaluationFolder`; `fuse::randomizer` |
 | opening lists and batch | [Batched Opening](batch.md) | `internal::native::circuits::compute_v`, `internal::nested::pcs`, `fuse::_08_f` |

@@ -127,7 +127,7 @@ pub(crate) enum Kind {
     /// $s$.
     Circuit(CircuitIndex),
     /// $b = s(X, y)$; $k = 0$.
-    Bonding(CircuitIndex),
+    Mask(CircuitIndex),
     /// The wire binding at this position of the verifier's list: $a = Q -
     /// E$ over the stage polynomial the shape's `a` lists, $b = M$, $k = 0$.
     Masked(usize),
@@ -135,12 +135,12 @@ pub(crate) enum Kind {
 
 impl Kind {
     /// Whether the claim's $k$ is one of the verifier's targets rather than
-    /// zero: true for raw and circuit claims, false for bonding and wire
+    /// zero: true for raw and circuit claims, false for mask and wire
     /// binding claims.
     pub(crate) fn takes_target(self) -> bool {
         match self {
             Kind::Raw | Kind::Circuit(_) => true,
-            Kind::Bonding(_) | Kind::Masked(_) => false,
+            Kind::Mask(_) | Kind::Masked(_) => false,
         }
     }
 }
@@ -207,22 +207,18 @@ impl<Id, F: Field> Shaper<Id, F> {
         self.push(Kind::Circuit(circuit), a, Vec::new());
     }
 
-    /// A bonding claim over the Horner fold of per-group sums under $z$, as
+    /// A mask claim over the Horner fold of `rxs` under $z$, as
     /// [`sparse::Polynomial::fold`](ragu_circuits::polynomials::sparse::Polynomial::fold)
     /// weights it.
-    fn bonding(
-        &mut self,
-        circuit: CircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Id>>,
-    ) {
+    fn mask(&mut self, circuit: CircuitIndex, rxs: impl Iterator<Item = Id>) {
         let mut a: Vec<(F, Id)> = Vec::new();
-        for group in groups {
+        for rx in rxs {
             for (weight, _) in &mut a {
                 *weight *= self.z;
             }
-            a.extend(group.map(|rx| (F::ONE, rx)));
+            a.push((F::ONE, rx));
         }
-        self.push(Kind::Bonding(circuit), a, Vec::new());
+        self.push(Kind::Mask(circuit), a, Vec::new());
     }
 }
 
@@ -243,12 +239,12 @@ impl<P: Profile, Id, F: Field> native::claims::Processor<P, Id, CircuitIndex> fo
         self.circuit(id.circuit_index::<P>(), rxs);
     }
 
-    fn grouped_bonding_claim(
+    fn mask_claim(
         &mut self,
         id: native::InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Id>>,
+        rxs: impl Iterator<Item = Id>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<P>(), groups);
+        self.mask(id.circuit_index::<P>(), rxs);
         Ok(())
     }
 }
@@ -266,12 +262,12 @@ impl<P: Profile, Id, F: Field> nested::claims::Processor<P, Id> for Shaper<Id, F
         self.circuit(id.circuit_index::<P>(), rxs);
     }
 
-    fn grouped_bonding_claim(
+    fn mask_claim(
         &mut self,
         id: nested::InternalCircuitIndex,
-        groups: impl Iterator<Item = impl Iterator<Item = Id>>,
+        rxs: impl Iterator<Item = Id>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index::<P>(), groups);
+        self.mask(id.circuit_index::<P>(), rxs);
         Ok(())
     }
 }

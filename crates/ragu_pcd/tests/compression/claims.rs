@@ -79,7 +79,7 @@ fn check<F: Field, Id: Copy>(
                 b.add_assign(&TestR::tz(z));
                 b
             }
-            Kind::Bonding(circuit) => {
+            Kind::Mask(circuit) => {
                 assert!(shape.b.is_empty());
                 registry.circuit_y(circuit, y)
             }
