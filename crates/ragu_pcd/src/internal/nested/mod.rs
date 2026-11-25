@@ -173,6 +173,9 @@ pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 12;
 /// polynomials' circuits and stages, and the two final stage masks.
 pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 2;
 
+/// The masks among them: every one but the instance circuits.
+pub const NUM_FIXED_MASKS: usize = NUM_FIXED_INTERNAL - NUM_INSTANCE_CIRCUITS;
+
 /// The minimum groups for the nested quotient fold: eleven groups with
 /// eight claims each provide room for 88 claims, and the twelfth holds the
 /// randomizer's half-claim (see
@@ -189,7 +192,7 @@ pub const FOLD_GROUP_SIZE: usize = 9;
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(true);
     let circuits = 2 + NumSteps::<P>::len() + extension.circuits;
-    let masks = 14 + extension.masks;
+    let masks = NUM_FIXED_MASKS + extension.masks;
     2 + 2 * circuits + masks
 }
 
@@ -467,9 +470,29 @@ impl InternalCircuitIndex {
             BridgeEval => mask + 11,
             ChallengeStage => mask + 12,
             ChallengeFinalStaged => mask + 13,
-            ExtensionMask(i) => mask + 14 + super::checked_index(i, extension.masks),
+            ExtensionMask(i) => mask + NUM_FIXED_MASKS + super::checked_index(i, extension.masks),
         };
         CircuitIndex::new(pos)
+    }
+
+    /// The stage whose mask `self` is, and `None` for a circuit, a final
+    /// mask or an extension's mask.
+    pub fn stage(self) -> Option<RxIndex> {
+        Some(match self {
+            Self::EndoscalarStage => RxIndex::EndoscalarStage,
+            Self::PointsStage => RxIndex::PointsStage,
+            Self::BridgePreamble => RxIndex::BridgePreamble,
+            Self::BridgeHash => RxIndex::BridgeHash,
+            Self::BridgeSPrime => RxIndex::BridgeSPrime,
+            Self::BridgeInnerError => RxIndex::BridgeInnerError,
+            Self::BridgeOuterError => RxIndex::BridgeOuterError,
+            Self::BridgeAB => RxIndex::BridgeAB,
+            Self::BridgeQuery => RxIndex::BridgeQuery,
+            Self::BridgeF => RxIndex::BridgeF,
+            Self::BridgeEval => RxIndex::BridgeEval,
+            Self::ChallengeStage => RxIndex::ChallengeStage,
+            _ => return None,
+        })
     }
 
     /// Whether `self` is registered as a mask, a stage's or a final one,
@@ -539,6 +562,24 @@ impl RxIndex {
     /// The rx polynomials of the instance circuits, in
     /// [`InternalCircuitIndex::INSTANCE`] order.
     pub const INSTANCE: [Self; NUM_INSTANCE_CIRCUITS] = [Self::Collapse, Self::ComputeV];
+
+    /// The twelve nested stages, in the order of their gates: the chain an
+    /// instance circuit reserves and loads (see
+    /// [`load_all`](circuits::common::load_all)).
+    pub const STAGES: [Self; 12] = [
+        Self::EndoscalarStage,
+        Self::BridgeHash,
+        Self::PointsStage,
+        Self::BridgePreamble,
+        Self::BridgeSPrime,
+        Self::BridgeInnerError,
+        Self::BridgeOuterError,
+        Self::BridgeAB,
+        Self::BridgeQuery,
+        Self::BridgeF,
+        Self::BridgeEval,
+        Self::ChallengeStage,
+    ];
 
     /// The bridge stages, in the unified instance's order: the stages whose
     /// commitments the unified instance carries, which the parent binds to

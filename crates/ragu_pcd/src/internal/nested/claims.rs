@@ -124,21 +124,7 @@ where
                     .iter()
                     .position(|&circuit| circuit == id)
                     .expect("an instance circuit")];
-                let loaded = [
-                    own,
-                    RxIndex::EndoscalarStage,
-                    RxIndex::BridgeHash,
-                    RxIndex::PointsStage,
-                    RxIndex::BridgePreamble,
-                    RxIndex::BridgeSPrime,
-                    RxIndex::BridgeInnerError,
-                    RxIndex::BridgeOuterError,
-                    RxIndex::BridgeAB,
-                    RxIndex::BridgeQuery,
-                    RxIndex::BridgeF,
-                    RxIndex::BridgeEval,
-                    RxIndex::ChallengeStage,
-                ];
+                let loaded = once(own).chain(RxIndex::STAGES);
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in loaded {
                     for (i, rx) in source.rx(Rx(index)).enumerate() {
@@ -189,51 +175,20 @@ where
                     )?;
                 }
             }
-            EndoscalarStage => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
-            }
-            PointsStage => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::PointsStage)))?;
-            }
             PointsFinalStaged => {
                 let num_steps = super::NumSteps::<P>::len();
                 let final_rxs = (0..num_steps)
                     .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step as u32))));
                 processor.mask_claim(id, final_rxs)?;
             }
-            BridgePreamble => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgePreamble)))?;
-            }
-            BridgeHash => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeHash)))?;
-            }
-            BridgeSPrime => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeSPrime)))?;
-            }
-            BridgeInnerError => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeInnerError)))?;
-            }
-            BridgeOuterError => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeOuterError)))?;
-            }
-            BridgeAB => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeAB)))?;
-            }
-            BridgeQuery => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeQuery)))?;
-            }
-            BridgeF => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeF)))?;
-            }
-            BridgeEval => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::BridgeEval)))?;
-            }
-            ChallengeStage => {
-                processor.mask_claim(id, source.rx(Rx(RxIndex::ChallengeStage)))?;
-            }
             ChallengeFinalStaged => {
                 let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
                 processor.mask_claim(id, final_rxs)?;
+            }
+            // Every other entry is a stage's mask, over the stage's rx.
+            _ => {
+                let stage = id.stage().expect("a stage's mask");
+                processor.mask_claim(id, source.rx(Rx(stage)))?;
             }
         }
     }
