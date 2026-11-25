@@ -415,6 +415,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             + Present::<C::Profile, Nested, 2>::len()
     }
 
+    /// After the query stage, or, for a profile that lays the native
+    /// stages side by side
+    /// ([`Pages::native_branches`](crate::profile::Pages::native_branches)),
+    /// from the first gate, beside it: no circuit then loads the two
+    /// together, except in pages that load them apart (see
+    /// [`ragu_circuits::paging`]).
+    fn skip_gates() -> usize {
+        if <C::Profile as Profile>::PAGES.native_branches {
+            1
+        } else {
+            <Self::Parent as staging::Stage<C::CircuitField, R>>::skip_gates()
+                + <Self::Parent as StageExt<C::CircuitField, R>>::num_gates()
+        }
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,

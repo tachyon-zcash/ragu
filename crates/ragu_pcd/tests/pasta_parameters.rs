@@ -105,39 +105,37 @@ fn baked_ipa_generators_are_pinned() {
     );
 }
 
-/// The stage reach baked into the Standard parameters: the nested
-/// generators of the first `STAGE_REACH` gates of a stage trace at the
-/// aggregator rank, which the compression's runs land on past the Standard
-/// table, pinned in full and, under the Aggregator tables, the same points
-/// as the table's at those indices.
+/// The stage reach of the Standard parameters: the nested generators of
+/// the first `STAGE_REACH` gates of a stage trace at the aggregator rank,
+/// which the compression's runs land on. That rank is the wallet's, so
+/// they are generators of the Standard table: pinned in full and, under
+/// the Aggregator tables, the same points as the table's at those indices.
 #[test]
 fn stage_reach_is_pinned() {
     use ragu_pcd::pasta::STAGE_REACH;
 
     let params = ragu_pcd::pasta::baked();
-    let n = 1usize << 13;
+    let standard = Pasta::nested_generators(params).g();
+    let n = 1usize << 11;
     let indices: Vec<usize> = (2 * n - 1 - STAGE_REACH..2 * n - 1)
         .chain(4 * n - 1 - STAGE_REACH..4 * n - 1)
         .collect();
     let mut loaded = Vec::new();
     for &index in &indices {
         let point = Pasta::nested_generator(params, index).expect("within the stage reach");
+        assert_eq!(point, standard[index]);
         let (x, y) = point.coordinates().expect("nonidentity generator");
         loaded.extend_from_slice(x.to_bytes().as_ref());
         loaded.extend_from_slice(y.to_bytes().as_ref());
     }
     assert_eq!(loaded.len(), 2 * STAGE_REACH * 64);
-    assert_eq!(Pasta::nested_generator(params, 2 * n - 1), None);
-    assert_eq!(Pasta::nested_generator(params, 4 * n - 1), None);
-    assert_eq!(
-        Pasta::nested_generator(params, 2 * n - 2 - STAGE_REACH),
-        None
-    );
+    // Past the Standard table the parameters reach no generator.
+    assert_eq!(Pasta::nested_generator(params, standard.len()), None);
 
     let digest = blake2b_simd::Params::new().hash_length(32).hash(&loaded);
     assert_eq!(
         digest.to_hex().as_str(),
-        "8dfdb0d3662c659dac55b3cc6cc9e24fc5b6f64a65df83ac663bed7a0b40105c"
+        "f21f02718c8b69f60395cf228b316fa16e53eb805ebfa168208c08013e106dc3"
     );
 
     #[cfg(feature = "baked-aggregator")]

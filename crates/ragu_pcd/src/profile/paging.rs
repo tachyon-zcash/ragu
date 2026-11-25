@@ -22,7 +22,12 @@
 //!
 //! A profile may tell a page to hold no gates of its circuit's own
 //! ([`Cut::idle`]): it loads stages the other pages do not and holds the
-//! carry stage to what they read of them.
+//! carry stage to what they read of them. It may also set a circuit's
+//! first pages apart, in groups ([`Cut::apart`]): a group's pages hold no
+//! gates either and load a carry stage of the group's own, one more
+//! extension stage, in place of the circuit's. They hold what the circuit
+//! enforces between stages that none of its other pages loads together,
+//! which may be more than one carry stage has the room for.
 //!
 //! A profile that pages nothing never reaches this module: the fuse calls
 //! the profile's [`register_internal`](Profile::register_internal) and
@@ -116,6 +121,53 @@ macro_rules! paged_internal_circuits {
     };
 }
 
+/// The stages a page of a circuit over the nested stages can be told to
+/// load ([`Cut::loading`]), by their place among those a nested circuit
+/// reserves: the endoscalar stage (0) and the bridge-hash stage (1), then
+/// five branches, which
+/// [`Pages::nested_branches`](super::Pages::nested_branches) lays side by
+/// side: the points stage (2); the `preamble` and `s_prime` stages (3, 4);
+/// the `inner_error`, `outer_error` and `ab` stages (5 to 7); the `query`
+/// stage (8); and the `f`, `eval` and challenge stages (9 to 11).
+pub mod nested_loads {
+    /// The first two stages and the points stage.
+    pub const POINTS: &[u32] = &[0, 1, 2];
+    /// The first two stages and the `preamble` branch.
+    pub const PREAMBLE: &[u32] = &[0, 1, 3, 4];
+    /// The first two stages and the `inner_error` branch.
+    pub const ERRORS: &[u32] = &[0, 1, 5, 6, 7];
+    /// The first two stages and the `query` stage.
+    pub const QUERY: &[u32] = &[0, 1, 8];
+    /// The first two stages and the `f` branch.
+    pub const EVAL: &[u32] = &[0, 1, 9, 10, 11];
+    /// A step's page that loads the endoscalar's bits alone.
+    pub const STEP_BITS: &[u32] = &[0];
+}
+
+/// The stages a page of a native circuit can be told to load
+/// ([`Cut::loading`]), by their place among those its circuit reserves.
+///
+/// A circuit over the points stages, a step or `bind_endoscalar`, reserves
+/// the five points input stages (0 to 4), then the walk stage (5), which
+/// holds the endoscalar's bits. A circuit over the eval stage, `compute_v`
+/// or a `bind_challenges` circuit, reserves the points binding stage (0),
+/// the preamble stage (1), the query stage (2) and the eval stage (3).
+/// [`Pages::native_branches`](super::Pages::native_branches) lays the walk
+/// stage beside the points input stages, and the query stage and the eval
+/// stage each beside the first two.
+pub mod native_loads {
+    /// The points input stages.
+    pub const INPUTS: &[u32] = &[0, 1, 2, 3, 4];
+    /// The walk stage.
+    pub const WALK: &[u32] = &[5];
+    /// The points binding stage and the preamble stage.
+    pub const PREAMBLE: &[u32] = &[0, 1];
+    /// The query stage.
+    pub const QUERY: &[u32] = &[2];
+    /// The eval stage.
+    pub const EVAL: &[u32] = &[3];
+}
+
 /// An internal circuit a profile can page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Circuit {
@@ -197,12 +249,15 @@ impl Circuit {
 
     /// Whether the circuit's claims can tell the stages each page loads:
     /// the nested circuits' and those of the native circuits over the
-    /// points stages, whose claims list the stages they reserve.
+    /// eval stage and over the points stages, whose claims list the stages
+    /// they reserve.
     const fn tells_loads(self) -> bool {
         matches!(
             self,
             Self::NestedCollapse
                 | Self::NestedComputeV
+                | Self::ComputeV
+                | Self::BindChallenges(_)
                 | Self::BindEndoscalar
                 | Self::EndoscalingStep(_)
                 | Self::NestedEndoscalingStep(_)
@@ -221,9 +276,14 @@ impl Circuit {
 }
 
 /// The polynomials paging adds for a circuit cut by `cut`: one for each
-/// page before the last, and the carry stage's.
+/// page before the last, the carry stage's, and that of the carry stage of
+/// each group of pages apart and of each group that shares one.
 pub(crate) const fn added(cut: Cut) -> usize {
-    if cut.pages > 1 { cut.pages } else { 0 }
+    if cut.pages > 1 {
+        cut.pages + cut.apart.len() + cut.local.len()
+    } else {
+        0
+    }
 }
 
 /// The polynomials paging adds to one side's extension, the walk's steps
@@ -254,7 +314,9 @@ pub(crate) struct Slot {
     /// The extension circuits that are its pages before the last, in
     /// order.
     pub circuits: Range<u32>,
-    /// The extension stage that is its carry stage.
+    /// The extension stage that is its carry stage. The carry stages of
+    /// its groups of pages apart are the extension stages after it, and
+    /// those of its groups of pages that share one come after them.
     pub carry: u32,
     /// The extension masks that are the masks of its pages' own
     /// polynomials, each with the pages it is for.
@@ -276,6 +338,44 @@ impl Slot {
         self.cut.pages - 1
     }
 
+    /// The extension stages that are its carry stages: the circuit's, then
+    /// that of each group of pages apart.
+    pub(crate) fn carries(&self) -> Range<u32> {
+        self.carry..self.carry + 1 + (self.cut.apart.len() + self.cut.local.len()) as u32
+    }
+
+    /// The group of pages page `page` shares a carry stage with, if it
+    /// shares one.
+    fn local_of(&self, page: usize) -> Option<usize> {
+        self.cut
+            .local
+            .iter()
+            .position(|&(first, pages)| (first as usize..(first + pages) as usize).contains(&page))
+    }
+
+    /// The extension stages that are the carry stages page `page` loads,
+    /// in gate order: the one it shares with its group, if it shares one,
+    /// then its group's if it is apart and the circuit's otherwise.
+    pub(crate) fn carries_of(&self, page: usize) -> Vec<u32> {
+        let shared = self
+            .local_of(page)
+            .map(|group| self.carry + 1 + (self.cut.apart.len() + group) as u32);
+        shared.into_iter().chain([self.carry_of(page)]).collect()
+    }
+
+    /// The extension stage that is the carry stage page `page` loads: its
+    /// group's if it is apart, and the circuit's otherwise.
+    pub(crate) fn carry_of(&self, page: usize) -> u32 {
+        let mut end = 0;
+        for (group, &pages) in self.cut.apart.iter().enumerate() {
+            end += pages as usize;
+            if page < end {
+                return self.carry + 1 + group as u32;
+            }
+        }
+        self.carry
+    }
+
     /// The page extension circuit `circuit` is, if one of this circuit's.
     pub(crate) fn page(&self, circuit: u32) -> Option<usize> {
         self.circuits
@@ -292,23 +392,36 @@ impl Slot {
     }
 }
 
-/// The pages that share a mask over their own gates: those that load the
-/// same stages, whose own gates then start at the same gate. Under its
-/// last stage's final mask, the last page's start past that stage whatever
-/// it loads, so it has a mask to itself when the loads are told.
+/// The pages that share a mask over their own gates: the pages of a group
+/// apart, which hold none, and of the others those that load the same
+/// stages and the same carry stages, whose own gates then start and end at
+/// the same gates. Under its last stage's final mask, the last page's
+/// start past that stage whatever it loads, so it has a mask to itself
+/// when the loads are told.
 fn groups(cut: Cut, sealed: bool) -> Vec<Vec<usize>> {
-    let apart = usize::from(sealed && !cut.loads.is_empty());
+    // The group of pages a page shares a carry stage with.
+    let local = |page: usize| {
+        cut.local
+            .iter()
+            .position(|&(first, pages)| (first as usize..(first + pages) as usize).contains(&page))
+    };
     let mut groups: Vec<Vec<usize>> = Vec::new();
-    for page in 0..cut.pages - apart {
-        match groups
-            .iter_mut()
-            .find(|group| cut.loads.get(group[0]) == cut.loads.get(page))
-        {
+    let mut held = 0;
+    for &pages in cut.apart {
+        groups.push((held..held + pages as usize).collect());
+        held += pages as usize;
+    }
+    let others = groups.len();
+    let alone = usize::from(sealed && !cut.loads.is_empty());
+    for page in held..cut.pages.saturating_sub(alone) {
+        match groups[others..].iter_mut().find(|group| {
+            cut.loads.get(group[0]) == cut.loads.get(page) && local(group[0]) == local(page)
+        }) {
             Some(group) => group.push(page),
             None => groups.push(vec![page]),
         }
     }
-    if apart == 1 {
+    if alone == 1 {
         groups.push(vec![cut.pages - 1]);
     }
     groups
@@ -329,11 +442,15 @@ fn base<P: Profile>(nested: bool) -> Extension {
 fn slots_over<P: Profile>(base: &Extension, nested: bool) -> Vec<Slot> {
     let paged = Circuit::paged::<P>(nested);
     let mut circuit = base.circuits.len() as u32;
-    let mut mask = (base.stages + paged.len() + base.final_masks.len()) as u32;
+    let carries: usize = paged
+        .iter()
+        .map(|(_, cut)| 1 + cut.apart.len() + cut.local.len())
+        .sum();
+    let mut carry = base.stages as u32;
+    let mut mask = (base.stages + carries + base.final_masks.len()) as u32;
     paged
         .iter()
-        .enumerate()
-        .map(|(position, &(which, cut))| {
+        .map(|&(which, cut)| {
             let circuits = circuit..circuit + cut.pages as u32 - 1;
             circuit = circuits.end;
             let masks: Vec<(u32, Vec<usize>)> = groups(cut, which.sealed())
@@ -342,13 +459,15 @@ fn slots_over<P: Profile>(base: &Extension, nested: bool) -> Vec<Slot> {
                 .map(|(pages, mask)| (mask, pages))
                 .collect();
             mask += masks.len() as u32;
-            Slot {
+            let slot = Slot {
                 circuit: which,
                 cut,
                 circuits,
-                carry: (base.stages + position) as u32,
+                carry,
                 masks,
-            }
+            };
+            carry = slot.carries().end;
+            slot
         })
         .collect()
 }
@@ -370,9 +489,9 @@ pub(crate) fn extend<P: Profile>(extension: &mut Extension, nested: bool) {
     for slot in &slots {
         extension
             .circuits
-            .extend(slot.circuits.clone().map(|_| vec![slot.carry]));
+            .extend((0..slot.last()).map(|page| slot.carries_of(page)));
+        extension.stages += slot.carries().len();
     }
-    extension.stages += slots.len();
     for slot in &slots {
         for (_, pages) in &slot.masks {
             extension.final_masks.push(
@@ -417,8 +536,15 @@ fn split_within<F: Field, R: Rank, S: MultiStageCircuit<F, R>>(
     cut: Cut,
     limit: usize,
 ) -> Result<Paged<F, MultiStage<F, R, S>>> {
-    let mut stages =
-        Stages::of::<F, R, S>().idling(cut.idle.iter().map(|&page| page as usize).collect());
+    let mut stages = Stages::of::<F, R, S>()
+        .idling(cut.idle.iter().map(|&page| page as usize).collect())
+        .apart(cut.apart.iter().map(|&pages| pages as usize).collect())
+        .sharing(
+            cut.local
+                .iter()
+                .map(|&(first, pages)| first as usize..(first + pages) as usize)
+                .collect(),
+        );
     if !sealed {
         stages = stages.unsealed();
     }
@@ -436,7 +562,7 @@ fn split_within<F: Field, R: Rank, S: MultiStageCircuit<F, R>>(
     } else if !tells_loads {
         return refuse(
             which,
-            "declares the stages its pages load, which only a nested circuit's can".into(),
+            "declares the stages its pages load, which its claims cannot tell".into(),
         );
     } else {
         stages.loading(
@@ -466,12 +592,14 @@ type Register<'params, F, R> = Box<
 struct Pending<'params, F: Field, R: Rank> {
     /// The pages before the last.
     pages: Vec<Option<Register<'params, F, R>>>,
-    carry_mask: Option<MaskObject<R>>,
+    /// The carry stages' masks, each with the stage's gates in the
+    /// polynomials of the pages that load it: the circuit's, then that of
+    /// each group of pages apart, then that of each group that shares
+    /// one.
+    carries: Vec<(Option<MaskObject<R>>, Range<usize>)>,
     /// The masks of the pages' own polynomials, each with the gates it
     /// leaves them, in the order of the slot's.
     masks: Vec<Option<(MaskObject<R>, Range<usize>)>>,
-    /// The carry stage's gates in every page's polynomial.
-    carry: Range<usize>,
 }
 
 /// An extension mask, as the registrar finds it.
@@ -493,6 +621,14 @@ pub struct Registrar<'params, F: Field, R: Rank> {
     /// The stages and final masks of the extension before paging's entries.
     base: (usize, usize),
     pending: Vec<Option<Pending<'params, F, R>>>,
+}
+
+impl<'params, F: Field, R: Rank> Pending<'params, F, R> {
+    /// The gates of the carry stage that is extension stage `stage`, one of
+    /// `slot`'s.
+    fn carry(&mut self, slot: &Slot, stage: u32) -> &mut (Option<MaskObject<R>>, Range<usize>) {
+        &mut self.carries[(stage - slot.carry) as usize]
+    }
 }
 
 impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
@@ -549,11 +685,20 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
                 Some(register)
             })
             .collect();
+        let mut carries = vec![(Some(paged.carry_mask::<R>()?), layout.carry.clone())];
+        for (group, (_, carry)) in layout.apart.iter().enumerate() {
+            carries.push((Some(paged.apart_mask::<R>(group)?), carry.clone()));
+        }
+        for (group, (_, carry)) in layout.local.iter().enumerate() {
+            carries.push((Some(paged.local_mask::<R>(group)?), carry.clone()));
+        }
+        if carries.len() != slot.carries().len() {
+            return refuse(which, "is cut into other groups of pages".into());
+        }
         self.pending[position] = Some(Pending {
             pages,
-            carry_mask: Some(paged.carry_mask::<R>()?),
+            carries,
             masks,
-            carry: layout.carry.clone(),
         });
         registry.register_internal_circuit(paged.last())
     }
@@ -588,15 +733,17 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
             .enumerate()
             .find_map(|(position, slot)| Some((position, slot.page(circuit)?)))
             .expect("a page");
-        let which = self.slots[position].circuit;
+        let slot = self.slots[position].clone();
         let pending = self.pending(position)?;
         let Some(register) = pending.pages[page].take() else {
-            return refuse(which, "registers a page twice".into());
+            return refuse(slot.circuit, "registers a page twice".into());
         };
-        Ok((
-            register(registry)?,
-            Registration::Staged(vec![pending.carry.clone()]),
-        ))
+        let carries = slot
+            .carries_of(page)
+            .into_iter()
+            .map(|stage| pending.carry(&slot, stage).1.clone())
+            .collect();
+        Ok((register(registry)?, Registration::Staged(carries)))
     }
 
     /// Registers extension mask `index` if it is one of paging's: a carry
@@ -613,18 +760,22 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         index: usize,
     ) -> Result<Slotted<'params, F, R>> {
         let (stages, final_masks) = self.base;
-        let paged = self.slots.len();
+        let paged: usize = self.slots.iter().map(|slot| slot.carries().len()).sum();
         if index < stages {
             return Ok(Slotted::Other(registry, index));
         }
         if index < stages + paged {
-            let position = index - stages;
-            let which = self.slots[position].circuit;
-            let pending = self.pending(position)?;
-            let Some(mask) = pending.carry_mask.take() else {
-                return refuse(which, "registers its carry stage's mask twice".into());
+            let position = self
+                .slots
+                .iter()
+                .position(|slot| slot.carries().contains(&(index as u32)))
+                .expect("a carry stage of one of the paged circuits");
+            let slot = self.slots[position].clone();
+            let (mask, carry) = self.pending(position)?.carry(&slot, index as u32);
+            let Some(mask) = mask.take() else {
+                return refuse(slot.circuit, "registers a carry stage's mask twice".into());
             };
-            let carry = pending.carry.clone();
+            let carry = carry.clone();
             return Ok(Slotted::Paged(
                 registry.register_mask(mask),
                 Registration::StageMask(carry),
@@ -662,8 +813,10 @@ pub struct Prover<F: Field, R: Rank> {
     slots: Vec<Slot>,
     /// The pages' polynomials before each circuit's last, by paged circuit.
     pages: Vec<Option<Vec<sparse::Polynomial<F, R>>>>,
-    /// The carry stages' polynomials, by paged circuit.
-    carries: Vec<Option<sparse::Polynomial<F, R>>>,
+    /// The carry stages' polynomials, by paged circuit: the circuit's, then
+    /// that of each group of pages apart, then that of each group that
+    /// shares one.
+    carries: Vec<Option<Vec<sparse::Polynomial<F, R>>>>,
 }
 
 impl<F: Field, R: Rank> Prover<F, R> {
@@ -721,8 +874,15 @@ impl<F: Field, R: Rank> Prover<F, R> {
         let last_rx = registry.assemble(&last, own, &mut *rng)?;
         traces.push(Some(last));
         let last = last_rx;
-        self.carries[position] =
-            Some(paged.carry_rx::<R>(Blind::random(&mut *rng), &traces, stages)?);
+        let mut carries = vec![paged.carry_rx::<R>(Blind::random(&mut *rng), &traces, stages)?];
+        for group in 0..paged.num_apart() {
+            carries.push(paged.apart_rx::<R>(group, Blind::random(&mut *rng), stages)?);
+        }
+        for group in 0..paged.num_local() {
+            let blind = Blind::random(&mut *rng);
+            carries.push(paged.local_rx::<R>(group, blind, &traces, stages)?);
+        }
+        self.carries[position] = Some(carries);
         self.pages[position] = Some(pages);
         Ok((last, aux))
     }
@@ -734,12 +894,12 @@ impl<F: Field, R: Rank> Prover<F, R> {
     ///
     /// Fails if a paged circuit was not proven.
     pub(crate) fn finish(self, rxs: &mut ExtensionRxs<F, R>) -> Result<()> {
-        for ((slot, pages), carry) in self.slots.iter().zip(self.pages).zip(self.carries) {
-            let (Some(pages), Some(carry)) = (pages, carry) else {
+        for ((slot, pages), carries) in self.slots.iter().zip(self.pages).zip(self.carries) {
+            let (Some(pages), Some(carries)) = (pages, carries) else {
                 return refuse(slot.circuit, "was not proven".into());
             };
             rxs.circuits.extend(pages);
-            rxs.stages.push(carry);
+            rxs.stages.extend(carries);
         }
         Ok(())
     }
@@ -760,6 +920,10 @@ pub struct Sizing {
     pub stages: Vec<Range<usize>>,
     /// The gates of its own, past its stages.
     pub own: usize,
+    /// What each twentieth of those gates, in the order the circuit
+    /// allocates them, reads of each stage: the distinct wires its
+    /// constraints name (see [`ragu_circuits::paging::reads`]).
+    pub reads: Vec<Vec<usize>>,
     /// How it is cut.
     pub cut: Cut,
     /// The layout of its pages and how it spreads over them, checked
@@ -773,10 +937,15 @@ pub struct Sizing {
         String,
     >,
     /// For a circuit that does not cut: how it would spread over the same
-    /// pages if they had all the room it takes, which tells what each
-    /// would have to hold.
+    /// pages in polynomials of [`SLACK`] more gates, if it then cuts, which
+    /// tells what its pages are short of.
     pub unbounded: Option<ragu_circuits::paging::PagingReport>,
 }
+
+/// The gates past a polynomial's that a census gives the pages of a circuit
+/// that does not cut, to tell what they are short of.
+#[cfg(feature = "test-utils")]
+pub const SLACK: usize = 600;
 
 #[cfg(feature = "test-utils")]
 fn sized<F: Field, R: Rank, S: MultiStageCircuit<F, R>>(
@@ -794,6 +963,7 @@ fn sized<F: Field, R: Rank, S: MultiStageCircuit<F, R>>(
         .map_or(cut, |&(_, cut)| cut);
     let (gates, constraints) = ragu_circuits::paging::size(&*circuit)?;
     let stages = Stages::of::<F, R, S>();
+    let reads = ragu_circuits::paging::reads(&*circuit, &stages, 20)?;
     let pages = split_within(name, (true, sealed), circuit.clone(), cut, R::blind_gate())
         .and_then(|paged| {
             paged.check()?;
@@ -802,7 +972,7 @@ fn sized<F: Field, R: Rank, S: MultiStageCircuit<F, R>>(
         .map_err(|error| format!("{error:?}"));
     let unbounded = match pages {
         Ok(_) => None,
-        Err(_) => split_within(name, (true, sealed), circuit, cut, 1 << 24)
+        Err(_) => split_within(name, (true, sealed), circuit, cut, R::blind_gate() + SLACK)
             .ok()
             .map(|paged| paged.report().clone()),
     };
@@ -811,6 +981,7 @@ fn sized<F: Field, R: Rank, S: MultiStageCircuit<F, R>>(
         gates,
         constraints,
         own: gates.saturating_sub(stages.own_start()),
+        reads,
         stages: stages.spans,
         cut,
         pages,
@@ -864,19 +1035,23 @@ pub fn native_census<C: super::ProfiledCycle, R: Rank, const HEADER_SIZE: usize>
             circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(),
         )?,
     ];
-    census.push(crate::with_binder!(
-        0,
-        C,
-        R,
-        HEADER_SIZE,
-        params,
-        |circuit| sized(
-            "native.bind_challenges_0",
-            pages.bind_challenges,
-            cuts,
-            circuit
-        )?
-    ));
+    // The binding circuits read different stages: each is sized.
+    const BINDERS: [&str; native::NUM_BINDERS] = [
+        "native.bind_challenges_0",
+        "native.bind_challenges_1",
+        "native.bind_challenges_2",
+        "native.bind_challenges_3",
+    ];
+    for (k, name) in BINDERS.into_iter().enumerate() {
+        census.push(crate::with_binder!(
+            k,
+            C,
+            R,
+            HEADER_SIZE,
+            params,
+            |circuit| sized(name, pages.bind_challenges, cuts, circuit)?
+        ));
+    }
     census.push(sized(
         "native.bind_beta",
         pages.bind_beta,

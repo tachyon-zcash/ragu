@@ -102,8 +102,8 @@
 //! application's [`Decompression`](crate::profile::Decompression) holds,
 //! so each child carries the extension's polynomials, which
 //! [`Shape`](crate::profile::Shape) counts, for the fuse to hash, evaluate
-//! and fold, which the fuse's circuits carry at four times the wallet
-//! rank's budget. The decompression
+//! and fold, which the fuse's circuits do in pages at that rank, the
+//! wallet's (see [`paging`](crate::profile::paging)). The decompression
 //! step runs the chunks over the wallet's proof it is given and outputs
 //! that proof's header, which the statement circuit's claim holds to the
 //! header the chunks verified.
@@ -182,7 +182,7 @@
 //!   $y$, and in the decompression step the digest fixed the round
 //!   challenges before $w$, and so before $y$. The opening point is the
 //!   lift of a 143-bit endoscalar and the polynomials have at most
-//!   $2^{15}$ coefficients at the aggregator rank, so another polynomial
+//!   $2^{13}$ coefficients at the aggregator rank, so another polynomial
 //!   passes with probability at most $2^{-128}$.
 //!
 //! The nested checks run in every step, but only the decompression step

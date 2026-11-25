@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `Rank` support for `R<14>` and `R<15>`, and the `AggregatorRank`
-  alias for `R<15>`, for extension circuits that exceed the wallet rank's
-  capacity. `WalletRank` remains `R<13>`.
+  alias, which is `R<13>` as `WalletRank` is: circuits that exceed that
+  rank's capacity are cut into pages (`paging`) rather than proven at a
+  larger rank.
 - Added `Blind`, the three coefficients of an rx polynomial that no wiring
   polynomial reads: `a[0]` of the SYSTEM gate, and `a[n - 1]` and `d[n - 1]`
   of the blind gate (`Rank::blind_gate`), the last gate of the rank.

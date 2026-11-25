@@ -564,8 +564,8 @@ pub(crate) const NESTED: Layout = Layout {
     values: Values::NESTED.len(),
 };
 
-const INDICES: &[u32; 128] = &{
-    let mut indices = [0; 128];
+const INDICES: &[u32; 256] = &{
+    let mut indices = [0; 256];
     let mut i = 0;
     while i < indices.len() {
         indices[i] = i as u32;

@@ -23,13 +23,13 @@ const DEFAULT_EQ_K: usize = 13;
 // checked by Bento too.
 const AGGREGATOR_EP_K: usize = 15;
 const AGGREGATOR_EQ_K: usize = 15;
-// Copies of `pasta::STAGE_REACH` and of the aggregator rank's $n$, $2^{13}$:
+// Copies of `pasta::STAGE_REACH` and of the aggregator rank's $n$, $2^{11}$:
 // a stage trace at that rank lands the even wire of gate $g$ at degree
 // $2n - 1 - g$ and the odd at $4n - 1 - g$, and the stage artifact holds the
 // nested generators of the first `STAGE_REACH` gates after the SYSTEM gate,
 // each range ascending.
 const STAGE_REACH: usize = 256;
-const STAGE_N: usize = 1 << (15 - 2);
+const STAGE_N: usize = 1 << (13 - 2);
 
 /// A checked affine point from the hash of `message`.
 fn point_of<C: PastaCurve>(hash: &impl Fn(&[u8]) -> [u8; 32], message: &[u8]) -> AffinePoint<C> {

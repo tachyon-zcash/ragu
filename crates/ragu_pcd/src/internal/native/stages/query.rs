@@ -350,6 +350,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             + <crate::profile::online::stages::PhaseCoordinatesLen<C::Profile,Nested,3> as ragu_primitives::vec::Len>::len()
     }
 
+    /// After the preamble stage, or, for a profile that lays the native
+    /// stages side by side
+    /// ([`Pages::native_branches`](crate::profile::Pages::native_branches)),
+    /// from the first gate, beside the points binding stage and the
+    /// preamble stage: no circuit then loads it with them, except in pages
+    /// that load them apart (see [`ragu_circuits::paging`]). The eval stage
+    /// is then beside it too.
+    fn skip_gates() -> usize {
+        if <C::Profile as Profile>::PAGES.native_branches {
+            1
+        } else {
+            <Self::Parent as staging::Stage<C::CircuitField, R>>::skip_gates()
+                + <Self::Parent as staging::StageExt<C::CircuitField, R>>::num_gates()
+        }
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,

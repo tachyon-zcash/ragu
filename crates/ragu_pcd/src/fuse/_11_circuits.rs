@@ -178,7 +178,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &self.native_registry,
             native::InternalCircuitIndex::ComputeVCircuit.circuit_index::<C::Profile>(),
             extension_index,
-            &[],
+            &builder.native_eval_stage_rxs(),
             || native::circuits::compute_v::Witness {
                 online_fold: online_fold.clone(),
                 binding: &native_points.binding,
@@ -203,7 +203,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     native::InternalCircuitIndex::BindChallengesCircuit(k as u32)
                         .circuit_index::<C::Profile>(),
                     extension_index,
-                    &[],
+                    &builder.native_eval_stage_rxs(),
                     || native::circuits::bind_challenges::Witness {
                         unified: unified.duplicate(),
                         preamble_witness,

@@ -91,10 +91,10 @@ impl IpaCycle for Pasta {
         AffineAdapter::from_ref(&PALLAS_U)
     }
 
-    /// The table's generator where it reaches, and past it the stage
-    /// reach's, which the aggregator table holds too: a Standard application
-    /// compresses over `baked()` and its aggregator decompresses over
-    /// `baked_aggregator()`, at the same generators.
+    /// The table's generator where it reaches, which the stage reach's
+    /// are at the aggregator rank, and the aggregator table holds them too:
+    /// a Standard application compresses and its aggregator decompresses
+    /// at the same generators, over either.
     fn nested_generator(
         params: &PastaParams,
         index: usize,

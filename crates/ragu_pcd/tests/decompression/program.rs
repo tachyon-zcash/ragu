@@ -406,25 +406,30 @@ fn aggregator_rank_schedules_are_consistent() {
     schedules_are_consistent::<AggregatorRank>();
 }
 
-/// The wallet rank's limits are the fitted ones; the aggregator rank's
-/// hold twice the work per chunk, a full-width scaling in one chunk, and
-/// pack circuits to all of the budget but a sixty-fourth.
+/// The wallet rank's limits are the fitted ones, and so are the
+/// aggregator rank's, which is the same. A rank of four times the gates
+/// holds twice the work per chunk, a full-width scaling in fewer chunks,
+/// and packs circuits to all of the budget but a sixty-fourth.
 #[test]
 fn limits_scale_with_the_rank() {
+    type Larger = ragu_circuits::polynomials::R<15>;
+
     assert_eq!(Limits::at::<WalletRank>(), Limits::FITTED);
+    assert_eq!(Limits::at::<AggregatorRank>(), Limits::FITTED);
     let fitted = Limits::FITTED;
     assert_eq!(
-        Limits::at::<AggregatorRank>(),
+        Limits::at::<Larger>(),
         Limits {
             scalings: 2 * fitted.scalings,
+            reads: 2 * fitted.reads,
             permutations: 2 * fitted.permutations,
             lifts: 2 * fitted.lifts,
             checks: 2 * fitted.checks,
             sums: 2 * fitted.sums,
             digits: 2 * fitted.digits,
             curve: 2 * fitted.curve,
-            scale_parts: 1,
-            fill: AggregatorRank::n() - AggregatorRank::n() / 64,
+            scale_parts: fitted.scale_parts.div_ceil(2),
+            fill: Larger::n() - Larger::n() / 64,
         }
     );
 }
@@ -509,6 +514,11 @@ fn circuits_pack_the_chunks<R: Rank>() {
 #[test]
 fn aggregator_rank_circuits_pack_the_chunks() {
     circuits_pack_the_chunks::<AggregatorRank>();
+}
+
+#[test]
+fn wallet_rank_circuits_pack_the_chunks() {
+    circuits_pack_the_chunks::<WalletRank>();
 }
 
 /// Each side's schedule is built once and kept under `std`: the hooks and

@@ -179,6 +179,17 @@ fn own(circuit: paging::Circuit) -> RxIndex {
     }
 }
 
+/// The pageable circuit whose own slot polynomial `own` is.
+fn pageable(own: RxIndex) -> paging::Circuit {
+    match own {
+        RxIndex::ComputeV => paging::Circuit::ComputeV,
+        RxIndex::BindChallenges(k) => paging::Circuit::BindChallenges(k),
+        RxIndex::BindEndoscalar => paging::Circuit::BindEndoscalar,
+        RxIndex::EndoscalingStep(step) => paging::Circuit::EndoscalingStep(step),
+        _ => unreachable!("a circuit that can tell its pages' stages"),
+    }
+}
+
 /// The polynomials at `indices`, for each proof.
 fn per_proof<S>(source: &S, indices: impl IntoIterator<Item = RxIndex>) -> Vec<Vec<S::Rx>>
 where
@@ -197,23 +208,33 @@ where
 }
 
 /// The stages page `page` of a paged circuit loads, and its carry stage.
-/// Only the circuits over the points stages can tell a page's stages, which
-/// are those they reserve; a page of another loads what its circuit does.
+/// The circuits over the points stages and those over the eval stage can
+/// tell a page's stages, by their place among those they reserve; a page of
+/// another loads what its circuit does.
 fn page_stages<P: Profile>(slot: &paging::Slot, page: usize) -> Vec<RxIndex> {
     slot.loads(page, &loaded::<P>(slot.circuit))
         .into_iter()
-        .chain([RxIndex::ExtensionStage(slot.carry)])
+        .flatten()
+        .chain(
+            slot.carries_of(page)
+                .into_iter()
+                .map(RxIndex::ExtensionStage),
+        )
         .collect()
 }
 
 /// The fuse's stages a pageable circuit's claim loads, which each of its
 /// pages' claims loads too unless it is told its own: the lists of
-/// [`build`]'s arms.
-fn loaded<P: Profile>(circuit: paging::Circuit) -> Vec<RxIndex> {
+/// [`build`]'s arms. For a circuit that can tell its pages' stages, the
+/// list is of the stages it reserves, in order, with nothing for one whose
+/// polynomial its claim leaves out: the circuit reserves that stage's gates
+/// and names none of its wires.
+fn loaded<P: Profile>(circuit: paging::Circuit) -> Vec<Option<RxIndex>> {
     use RxIndex::*;
+    let all = |stages: &[RxIndex]| stages.iter().copied().map(Some).collect();
     match circuit {
-        paging::Circuit::Hashes1 => alloc::vec![Preamble, OuterError],
-        paging::Circuit::Hashes2 => alloc::vec![OuterError],
+        paging::Circuit::Hashes1 => all(&[Preamble, OuterError]),
+        paging::Circuit::Hashes2 => all(&[OuterError]),
         paging::Circuit::Collapse => {
             let bound = crate::profile::native_extension::<P>().binding.is_some()
                 || !P::NESTED_ONLINE.is_empty();
@@ -221,19 +242,24 @@ fn loaded<P: Profile>(circuit: paging::Circuit) -> Vec<RxIndex> {
                 .then_some(PointsBinding)
                 .into_iter()
                 .chain([Preamble, InnerError, OuterError])
+                .map(Some)
                 .collect()
         }
-        paging::Circuit::ComputeV => (!P::NESTED_ONLINE.is_empty())
-            .then_some(PointsBinding)
-            .into_iter()
-            .chain([Preamble, Query, Eval])
-            .collect(),
-        paging::Circuit::BindChallenges(_) => alloc::vec![Preamble, Query, Eval],
-        paging::Circuit::BindBeta => alloc::vec![PointsBinding, Preamble],
+        paging::Circuit::ComputeV => alloc::vec![
+            (!P::NESTED_ONLINE.is_empty()).then_some(PointsBinding),
+            Some(Preamble),
+            Some(Query),
+            Some(Eval),
+        ],
+        paging::Circuit::BindChallenges(_) => {
+            alloc::vec![None, Some(Preamble), Some(Query), Some(Eval)]
+        }
+        paging::Circuit::BindBeta => all(&[PointsBinding, Preamble]),
         paging::Circuit::BindEndoscalar | paging::Circuit::EndoscalingStep(_) => {
             POINTS_INPUT_STAGES
                 .into_iter()
                 .chain([PointsWalk])
+                .map(Some)
                 .collect()
         }
         paging::Circuit::NestedCollapse
@@ -271,6 +297,15 @@ where
     let carry_stage =
         |circuit: paging::Circuit| slot(circuit).map(|slot| ExtensionStage(slot.carry));
     let carries = |circuit: paging::Circuit| carry_stage(circuit).map(|index| source.rx(Rx(index)));
+    // What the claim of a circuit that can tell its pages' stages loads:
+    // its stages whole, or its last page's and its carry stage.
+    let last = |own: RxIndex| -> Vec<RxIndex> {
+        let circuit = pageable(own);
+        match slot(circuit) {
+            Some(slot) => page_stages::<P>(slot, slot.last()),
+            None => loaded::<P>(circuit).into_iter().flatten().collect(),
+        }
+    };
 
     // Internal circuits and stages in canonical order.
     for id in InternalCircuitIndex::all::<P>() {
@@ -329,37 +364,16 @@ where
             // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
             // when it exports the nested online input-stage commitment.
             ComputeVCircuit => {
-                let mut carries = carries(paging::Circuit::ComputeV);
-                for ((((cv, pb), pre), q), e) in source
-                    .rx(Rx(ComputeV))
-                    .zip(source.rx(Rx(PointsBinding)))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(Query)))
-                    .zip(source.rx(Rx(Eval)))
-                {
-                    let mut rxs = alloc::vec![cv];
-                    if !P::NESTED_ONLINE.is_empty() {
-                        rxs.push(pb);
-                    }
-                    rxs.extend([pre, q, e]);
-                    rxs.extend(next_carry(&mut carries));
+                for rxs in per_proof(source, [ComputeV].into_iter().chain(last(ComputeV))) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
             // bind_challenges: BindChallenges(k) + Preamble + Query + Eval
             BindChallengesCircuit(k) => {
-                let mut carries = carries(paging::Circuit::BindChallenges(k));
-                for (((bc, pre), q), e) in source
-                    .rx(Rx(BindChallenges(k)))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(Query)))
-                    .zip(source.rx(Rx(Eval)))
-                {
-                    processor.internal_circuit_claim(
-                        id,
-                        [bc, pre, q, e].into_iter().chain(next_carry(&mut carries)),
-                    );
+                let stages = last(BindChallenges(k));
+                for rxs in per_proof(source, [BindChallenges(k)].into_iter().chain(stages)) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
@@ -381,10 +395,7 @@ where
             // bind_endoscalar: BindEndoscalar + every points input stage +
             // PointsWalk
             BindEndoscalarCircuit => {
-                let stages = match slot(paging::Circuit::BindEndoscalar) {
-                    Some(slot) => page_stages::<P>(slot, slot.last()),
-                    None => loaded::<P>(paging::Circuit::BindEndoscalar),
-                };
+                let stages = last(BindEndoscalar);
                 for rxs in per_proof(source, [BindEndoscalar].into_iter().chain(stages)) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
@@ -393,11 +404,7 @@ where
             // endoscaling step k: its rx + every points input stage +
             // PointsWalk (k(y) = 1)
             EndoscalingStep(step) => {
-                let which = paging::Circuit::EndoscalingStep(step);
-                let stages = match slot(which) {
-                    Some(slot) => page_stages::<P>(slot, slot.last()),
-                    None => loaded::<P>(which),
-                };
+                let stages = last(RxIndex::EndoscalingStep(step));
                 let loaded = [RxIndex::EndoscalingStep(step)].into_iter().chain(stages);
                 for rxs in per_proof(source, loaded) {
                     processor.internal_circuit_claim(id, rxs.into_iter());

@@ -1704,31 +1704,68 @@ fn report_fuse_gates(
         .collect()
 }
 
-/// Every fuse circuit of the aggregator profile fits the aggregator rank's
-/// budget with the decompression extension's polynomials, for a small
-/// header and the aggregator's pinned 195-element header.
+/// The fuse circuits the aggregator profile registers whole fit the
+/// aggregator rank's budget with the decompression extension's
+/// polynomials, for a small header and the aggregator's pinned 195-element
+/// header. The others the profile cuts into pages, each a polynomial of
+/// that rank, which registering them holds to the same budget.
 #[test]
 fn test_aggregator_fuse_fits_the_budget() {
     use ragu_circuits::polynomials::AggregatorRank;
 
-    use crate::profile::{Aggregator, Profiled};
+    use crate::profile::{Aggregator, Cut, Pages, Profile, Profiled};
+
+    /// The circuits of `gates` that `pages` leaves whole, by their indices'
+    /// names: the native side's, or the nested side's.
+    fn whole(
+        pages: &Pages,
+        nested: bool,
+        gates: alloc::vec::Vec<(alloc::string::String, usize)>,
+    ) -> alloc::vec::Vec<(alloc::string::String, usize)> {
+        gates
+            .into_iter()
+            .filter(|(name, _)| {
+                let cut = match (nested, name.as_str()) {
+                    (true, "Collapse") => pages.nested_collapse,
+                    (true, "ComputeV") => pages.nested_compute_v,
+                    (true, _) => pages.nested_endoscaling_step,
+                    (false, "Hashes1Circuit") => pages.hashes_1,
+                    (false, "Hashes2Circuit") => pages.hashes_2,
+                    (false, "CollapseCircuit") => pages.collapse,
+                    (false, "ComputeVCircuit") => pages.compute_v,
+                    (false, "BindBetaCircuit") => pages.bind_beta,
+                    (false, "BindEndoscalarCircuit") => pages.bind_endoscalar,
+                    (false, name) if name.starts_with("BindChallengesCircuit") => {
+                        pages.bind_challenges
+                    }
+                    (false, _) => pages.endoscaling_step,
+                };
+                cut == Cut::WHOLE
+            })
+            .collect()
+    }
 
     let budget = AggregatorRank::blind_gate();
     let mut over = alloc::vec::Vec::new();
     {
         type C = Profiled<Pasta, Aggregator<4>>;
+        let pages = <Aggregator<4> as Profile>::PAGES;
         let (native, nested) = fuse_gates!(C, AggregatorRank, 4, Aggregator<4>);
+        let (native, nested) = (whole(&pages, false, native), whole(&pages, true, nested));
+        assert!(!native.is_empty(), "the profile keeps some circuit whole");
         over.extend(report_fuse_gates("native, header size 4", &native, budget));
         over.extend(report_fuse_gates("nested, header size 4", &nested, budget));
     }
     {
         type C = Profiled<Pasta, Aggregator<AGGREGATOR_HEADER_SIZE>>;
+        let pages = <Aggregator<AGGREGATOR_HEADER_SIZE> as Profile>::PAGES;
         let (native, nested) = fuse_gates!(
             C,
             AggregatorRank,
             AGGREGATOR_HEADER_SIZE,
             Aggregator<AGGREGATOR_HEADER_SIZE>
         );
+        let (native, nested) = (whole(&pages, false, native), whole(&pages, true, nested));
         over.extend(report_fuse_gates(
             &alloc::format!("native, header size {AGGREGATOR_HEADER_SIZE}"),
             &native,

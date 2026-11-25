@@ -56,10 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MaskSlot::register_stage_mask` and `register_final_mask`; a mask of another
   shape cannot be registered.
 - Added optional `baked-aggregator` parameters through
-  `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank
-  the aggregator profile proves at. Standard's `baked()` keeps its original
-  `R<13>` tables and adds the stage reach past them (`pasta::STAGE_REACH`),
-  including when the additional Aggregator parameters are enabled and loaded.
+  `pasta::baked_aggregator()`, sized for `R<15>`. The aggregator profile
+  proves at `AggregatorRank`, which is `R<13>`, and does not need them.
+  Standard's `baked()` keeps its original `R<13>` tables and carries the
+  stage reach (`pasta::STAGE_REACH`) beside them, including when the
+  additional Aggregator parameters are enabled and loaded.
 - Added sealed, static computational-backend selection between Ragu's reference
   and accelerated implementations, defaulting to
   `ragu_acceleration::AcceleratedBackend` for both proving and verification.

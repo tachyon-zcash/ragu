@@ -1207,6 +1207,25 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             .collect()
     }
 
+    /// The polynomials of the stages a native circuit over the eval stage
+    /// reserves, in order: the points binding stage's, the preamble
+    /// stage's, the query stage's and the eval stage's.
+    pub(crate) fn native_eval_stage_rxs(&self) -> [&sparse::Polynomial<C::CircuitField, R>; 4] {
+        macro_rules! set {
+            ($field:ident) => {
+                self.$field
+                    .as_ref()
+                    .expect(concat!(stringify!($field), " not set"))
+            };
+        }
+        [
+            set!(native_points_binding_rx),
+            set!(native_preamble_rx),
+            set!(native_query_rx),
+            set!(native_eval_rx),
+        ]
+    }
+
     /// The polynomials of the native points input stages, in the order a
     /// native walk's circuit reserves them, before the walk stage's.
     pub(crate) fn native_points_input_rxs(&self) -> [&sparse::Polynomial<C::CircuitField, R>; 5] {

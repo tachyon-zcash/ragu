@@ -106,7 +106,11 @@ fn page_stages(slot: &paging::Slot, page: usize) -> Vec<RxIndex> {
     slot.loads(page, &pageable(slot.circuit).1)
         .into_iter()
         .flatten()
-        .chain([RxIndex::ExtensionStage(slot.carry)])
+        .chain(
+            slot.carries_of(page)
+                .into_iter()
+                .map(RxIndex::ExtensionStage),
+        )
         .collect()
 }
 

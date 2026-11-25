@@ -104,6 +104,21 @@ pub struct Cut {
     /// Such a page loads stages the others do not, and holds the carry
     /// stage to what they read of them.
     pub idle: &'static [u32],
+    /// The first pages, set apart in groups: the pages of each group, in
+    /// order. A group's pages hold no gates of the circuit's own and load
+    /// a carry stage of the group's own, one more polynomial. They hold
+    /// what the circuit enforces between stages that none of its other
+    /// pages loads together, as much of it as their carry stage has the
+    /// room for (see [`ragu_circuits::paging`]).
+    pub apart: &'static [u32],
+    /// Groups of the other pages, each as its first page and how many
+    /// pages it has, that share a carry stage of the group's own beside
+    /// the circuit's, one more polynomial. What a page of a group reads
+    /// of another page of it, or of a stage another page of it loads, is
+    /// carried there and takes no gates on the pages outside the group:
+    /// a group whose first page loads a stage and holds no gates hands
+    /// the others the part of that stage each reads.
+    pub local: &'static [(u32, u32)],
 }
 
 impl Cut {
@@ -116,6 +131,8 @@ impl Cut {
             pages,
             loads: &[],
             idle: &[],
+            apart: &[],
+            local: &[],
         }
     }
 
@@ -125,6 +142,8 @@ impl Cut {
             pages: loads.len(),
             loads,
             idle: &[],
+            apart: &[],
+            local: &[],
         }
     }
 
@@ -132,6 +151,20 @@ impl Cut {
     /// circuit's own.
     pub const fn idling(mut self, idle: &'static [u32]) -> Self {
         self.idle = idle;
+        self
+    }
+
+    /// The same cut, with its first pages apart, in groups of `groups`
+    /// pages each.
+    pub const fn apart(mut self, groups: &'static [u32]) -> Self {
+        self.apart = groups;
+        self
+    }
+
+    /// The same cut, with each of `groups`, a first page and a number of
+    /// pages, sharing a carry stage of its own.
+    pub const fn sharing(mut self, groups: &'static [(u32, u32)]) -> Self {
+        self.local = groups;
         self
     }
 }
@@ -149,10 +182,15 @@ impl Cut {
 /// the circuit's own slot. The cuts are declared because they size the
 /// proof; the registration fails if the pages do not have the room.
 ///
-/// A page of a nested circuit may load only some of the stages its circuit
+/// A page of a nested circuit, or of a native circuit over the eval stage
+/// or the points stages, may load only some of the stages its circuit
 /// reserves ([`Cut::loading`]): what it reads of the others is carried.
 /// With [`nested_branches`](Self::nested_branches), the nested stages are
-/// laid side by side, so that their gates need not all fit one polynomial.
+/// laid side by side, so that their gates need not all fit one polynomial,
+/// and [`native_branches`](Self::native_branches) does as much for the
+/// native stages. What a circuit enforces between two stages laid side by
+/// side is carried whole, and pages set apart ([`Cut::apart`]) hold it over
+/// carry stages of their own.
 ///
 /// A walk's steps are all cut alike. A step reads little of the points
 /// stage it reserves, so its pages can leave that stage to one page, which
@@ -184,19 +222,22 @@ pub struct Pages {
     pub endoscaling_step: Cut,
     /// Each step's of the nested walk.
     pub nested_endoscaling_step: Cut,
-    /// Whether the native walk stage, which holds the endoscalar and the
-    /// walk's interstitials, is laid beside the points input stages, from
-    /// the first gate, rather than after them: a page of a native step
-    /// that loads it alone then has most of its polynomial for the step.
-    /// The two native circuits that reserve those stages, the steps and
-    /// `bind_endoscalar`, are then cut into pages that say which they
-    /// load.
+    /// Whether two native stages are laid from the first gate, beside the
+    /// stages they otherwise follow. The walk stage, which holds the
+    /// endoscalar and the walk's interstitials, is beside the points input
+    /// stages: a page of a native step that loads it alone then has most
+    /// of its polynomial for the step. The query stage and the eval stage
+    /// are each beside the points binding stage and the preamble stage: a
+    /// page that loads one of the two has room for more of its circuit.
+    /// The native circuits that reserve those stages, the
+    /// steps and `bind_endoscalar`, `compute_v` and the `bind_challenges`
+    /// circuits, are then cut into pages that say which they load.
     pub native_branches: bool,
     /// Whether the nested stages past the bridge-hash stage are laid side
-    /// by side, in four branches that each start where that stage ends:
+    /// by side, in five branches that each start where that stage ends:
     /// the points stage; the `preamble` and `s_prime` stages; the
-    /// `inner_error`, `outer_error` and `ab` stages; and the `query`, `f`,
-    /// `eval` and challenge stages. A page of a nested circuit then loads
+    /// `inner_error`, `outer_error` and `ab` stages; the `query` stage;
+    /// and the `f`, `eval` and challenge stages. A page of a nested circuit then loads
     /// stages of one branch, and the two nested circuits that reserve more
     /// than one are cut into pages that say which.
     pub nested_branches: bool,
@@ -929,15 +970,22 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                     .into(),
             ));
         }
-        // As for the native walk stage beside the points input stages.
+        // As for the native stages: the walk stage beside the points input
+        // stages, and the query stage beside the points binding stage and
+        // the preamble stage.
         if pages.native_branches
-            && [pages.bind_endoscalar, pages.endoscaling_step]
-                .iter()
-                .any(|cut| cut.pages < 2 || cut.loads.len() != cut.pages)
+            && [
+                pages.bind_endoscalar,
+                pages.endoscaling_step,
+                pages.compute_v,
+                pages.bind_challenges,
+            ]
+            .iter()
+            .any(|cut| cut.pages < 2 || cut.loads.len() != cut.pages)
         {
             return Err(Error::Initialization(
-                "the profile lays its native walk stage beside the points input stages without \
-                 telling which each page of the circuits over them loads"
+                "the profile lays its native stages side by side without telling which each \
+                 page of the circuits over them loads"
                     .into(),
             ));
         }

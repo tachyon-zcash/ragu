@@ -55,30 +55,6 @@ impl Profile for PagedEverything {
     ragu_pcd::paged_internal_circuits!();
 }
 
-/// The stages a nested circuit reserves, by their place: the endoscalar
-/// and bridge-hash stages, then four branches, the points stage (2), the
-/// `preamble` and `s_prime` stages (3, 4), the `inner_error`, `outer_error`
-/// and `ab` stages (5 to 7), and the `query`, `f`, `eval` and challenge
-/// stages (8 to 11).
-mod nested_stages {
-    pub const POINTS: &[u32] = &[0, 1, 2];
-    pub const PREAMBLE: &[u32] = &[0, 1, 3, 4];
-    pub const ERRORS: &[u32] = &[0, 1, 5, 6, 7];
-    pub const QUERY: &[u32] = &[0, 1, 8];
-    pub const EVAL: &[u32] = &[0, 1, 8, 9, 10, 11];
-    /// A step's pages after its first, which loads [`POINTS`]: they load
-    /// the endoscalar's bits alone.
-    pub const STEP_BITS: &[u32] = &[0];
-}
-
-/// The stages a native circuit over the points stages reserves: the five
-/// points input stages, then the walk stage, which holds the endoscalar's
-/// bits.
-mod native_stages {
-    pub const INPUTS: &[u32] = &[0, 1, 2, 3, 4];
-    pub const WALK: &[u32] = &[5];
-}
-
 /// The standard profile laid out as a profile whose stages do not fit one
 /// polynomial end to end would be:
 ///
@@ -101,23 +77,46 @@ impl Profile for SideBySide {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const PAGES: Pages = {
-        use native_stages::{INPUTS, WALK};
-        use nested_stages::{ERRORS, EVAL, POINTS, PREAMBLE, QUERY, STEP_BITS};
+        use ragu_pcd::profile::paging::{
+            native_loads::{self as native, INPUTS, WALK},
+            nested_loads::{ERRORS, EVAL, POINTS, PREAMBLE, QUERY, STEP_BITS},
+        };
         Pages {
-            // The pages' polynomials are more for these to take the
-            // evaluations and the challenges of than they do whole.
-            compute_v: Cut::pages(3),
-            bind_challenges: Cut::pages(2),
+            // A page for the first two stages and one for the query stage.
+            // Then a page that loads the query stage and holds no gates
+            // hands one that loads the eval stage what it reads of it,
+            // over a carry stage the two share. The last loads the eval
+            // stage.
+            compute_v: Cut::loading(&[
+                native::PREAMBLE,
+                native::QUERY,
+                native::QUERY,
+                native::EVAL,
+                native::EVAL,
+            ])
+            .idling(&[2])
+            .sharing(&[(2, 2)]),
+            // The circuits read little of their stages: a page that loads
+            // the first two alone has most of one.
+            bind_challenges: Cut::loading(&[native::PREAMBLE, native::EVAL]),
             bind_endoscalar: Cut::loading(&[INPUTS, WALK]),
             endoscaling_step: Cut::loading(&[INPUTS, WALK, WALK, WALK]).idling(&[0]),
             native_branches: true,
             // The circuit holds the points to their copies in the other
-            // branches, so its pages carry them.
-            nested_collapse: Cut::loading(&[POINTS, PREAMBLE, ERRORS, EVAL]),
-            // A page for the `preamble` stage, which the circuit reads
-            // little of, then one with less of the last branch than the
-            // last.
-            nested_compute_v: Cut::loading(&[PREAMBLE, QUERY, EVAL]),
+            // branches: two pages apart hold them to those of the
+            // `preamble` branch, which are most of them, over a carry
+            // stage of their own.
+            nested_collapse: Cut::loading(&[
+                POINTS, PREAMBLE, POINTS, PREAMBLE, ERRORS, QUERY, EVAL,
+            ])
+            .apart(&[2])
+            .idling(&[5]),
+            // A page for the `preamble` stage and one for the `inner_error`
+            // branch, which the circuit reads little of, then as the
+            // native `compute_v`.
+            nested_compute_v: Cut::loading(&[PREAMBLE, ERRORS, QUERY, QUERY, EVAL, EVAL])
+                .idling(&[1, 3])
+                .sharing(&[(3, 2)]),
             nested_endoscaling_step: Cut::loading(&[POINTS, STEP_BITS, STEP_BITS]),
             nested_branches: true,
             ..Pages::WHOLE
@@ -260,6 +259,10 @@ macro_rules! census {
                 "CENSUS {} {}: gates={} constraints={} own={} stages={sizes:?}",
                 $label, sizing.name, sizing.gates, sizing.constraints, sizing.own,
             );
+            println!(
+                "CENSUS {} {}   reads by twentieth: {:?}",
+                $label, sizing.name, sizing.reads
+            );
             match &sizing.pages {
                 Err(error) => {
                     println!("CENSUS {} {}   DOES NOT CUT: {error}", $label, sizing.name);
@@ -267,8 +270,10 @@ macro_rules! census {
                         let gates: Vec<usize> =
                             report.pages.iter().map(|page| page.gates).collect();
                         println!(
-                            "CENSUS {} {}   with all the room: gates={gates:?} slots={}",
-                            $label, sizing.name, report.slots
+                            "CENSUS {} {}   with 600 more gates: gates={gates:?} slots={} cuts={:?} in={:?} out={:?}",
+                            $label, sizing.name, report.slots, report.cuts,
+                            report.pages.iter().map(|page| page.imported_slots).collect::<Vec<_>>(),
+                            report.pages.iter().map(|page| page.exported_wires).collect::<Vec<_>>(),
                         );
                     }
                 }
@@ -304,12 +309,14 @@ macro_rules! census {
                         })
                         .collect();
                     println!(
-                        "CENSUS {} {}   pages={} carry={:?} slots={} cuts={:?} {}",
+                        "CENSUS {} {}   pages={} carry={:?} slots={} apart={:?} local={:?} cuts={:?} {}",
                         $label,
                         sizing.name,
                         report.pages.len(),
                         layout.carry,
                         report.slots,
+                        report.apart,
+                        report.local,
                         report.cuts,
                         pages.join(" "),
                     );
@@ -320,93 +327,40 @@ macro_rules! census {
     }};
 }
 
-/// `N` native and `Q` nested extension circuits, each side's over one
-/// stage: a profile as wide as an aggregator's would be at the wallet
-/// rank, cut as such a profile has to be. Only its shape matters to the
-/// census; it registers nothing.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Wide<const N: usize, const Q: usize>;
-
-impl<const N: usize, const Q: usize> Profile for Wide<N, Q> {
-    const NAME: &'static str = "wide";
-    const NATIVE_EXTENSION: usize = N + 1;
-    const NESTED_EXTENSION: usize = Q + 1;
-    const PAGES: Pages = {
-        use native_stages::{INPUTS, WALK};
-        use nested_stages::{ERRORS, EVAL, POINTS, PREAMBLE, QUERY, STEP_BITS as BITS};
-        Pages {
-            hashes_1: Cut::pages(2),
-            hashes_2: Cut::pages(2),
-            collapse: Cut::pages(3),
-            compute_v: Cut::pages(22),
-            bind_challenges: Cut::pages(4),
-            bind_beta: Cut::pages(2),
-            bind_endoscalar: Cut::loading(&[INPUTS, INPUTS, INPUTS, WALK]),
-            endoscaling_step: Cut::loading(&[
-                INPUTS, WALK, WALK, WALK, WALK, WALK, WALK, WALK, WALK, WALK, WALK, WALK, WALK,
-                WALK, WALK, WALK,
-            ])
-            .idling(&[0]),
-            native_branches: true,
-            nested_collapse: Cut::loading(&[
-                POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, PREAMBLE, ERRORS, ERRORS, EVAL,
-            ]),
-            nested_compute_v: Cut::loading(&[
-                PREAMBLE, QUERY, QUERY, EVAL, EVAL, EVAL, EVAL, EVAL, EVAL, EVAL, EVAL, EVAL, EVAL,
-                EVAL, EVAL,
-            ]),
-            nested_endoscaling_step: Cut::loading(&[
-                POINTS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS,
-                BITS, BITS, BITS,
-            ]),
-            nested_branches: true,
-        }
-    };
-    const NATIVE_ENDOSCALINGS_PER_STEP: usize = 60;
-    const NESTED_ENDOSCALINGS_PER_STEP: usize = 60;
-
-    type Context<'params, Base, R, B>
-        = ()
-    where
-        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
-        R: Rank,
-        B: SelectableBackend;
-
-    fn native_extension() -> ragu_pcd::profile::Extension {
-        ragu_pcd::profile::Extension {
-            circuits: vec![vec![0]; N],
-            stages: 1,
-            final_masks: vec![(0..N as u32).collect()],
-            statement: None,
-            binding: None,
-        }
-    }
-
-    fn nested_extension() -> ragu_pcd::profile::Extension {
-        ragu_pcd::profile::Extension {
-            circuits: vec![vec![0]; Q],
-            stages: 1,
-            final_masks: vec![(0..Q as u32).collect()],
-            statement: None,
-            binding: None,
-        }
-    }
-}
-
 #[test]
 #[ignore = "prints the side-by-side profile's census"]
 fn census_side_by_side() -> Result<()> {
     census!("side-by-side", SideBySide, HEADER_SIZE, &[])
 }
 
-/// How each fuse circuit of an aggregator-sized profile cuts into
-/// polynomials of the wallet rank, the stages side by side and the walks'
-/// steps paged, and which do not: the nested `collapse` holds the points
-/// the walk folds to their copies in the other branches, so its pages
-/// carry as many values as the points stage holds, which leaves the pages
-/// that load that stage no room.
+/// How each fuse circuit of the aggregator profile cuts into polynomials
+/// of its rank, the wallet's, with the decompression extension's
+/// polynomials: the stages side by side, the walks' steps paged, the
+/// points the nested `collapse` holds to their copies on pages apart, and
+/// the quotients the two `compute_v` circuits take on pages that share a
+/// carry stage with the page that loads the `query` stage for them.
 #[test]
-#[ignore = "prints an aggregator-sized profile's census"]
-fn census_wide() -> Result<()> {
-    census!("wide-160/110", Wide<160, 110>, HEADER_SIZE, &[])
+#[ignore = "prints the aggregator profile's census"]
+fn census_aggregator() -> Result<()> {
+    census!("aggregator", ragu_pcd::profile::Aggregator<4>, 4, &[])
+}
+
+/// Prints the chunk circuit counts the aggregator profile pins: those of
+/// the schedules that verify a wallet's compressed proof in chunk circuits
+/// at the aggregator rank.
+#[test]
+#[ignore = "prints the decompression's circuit counts at the aggregator rank"]
+fn census_aggregator_counts() -> Result<()> {
+    use ragu_circuits::polynomials::AggregatorRank;
+    use ragu_pcd::profile::Aggregator;
+
+    println!(
+        "COUNTS header 4: {:?}",
+        Aggregator::<4>::scheduled::<Pasta, AggregatorRank>()?
+    );
+    println!(
+        "COUNTS header 195: {:?}",
+        Aggregator::<195>::scheduled::<Pasta, AggregatorRank>()?
+    );
+    Ok(())
 }

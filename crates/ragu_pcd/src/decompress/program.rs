@@ -756,6 +756,9 @@ impl Slots {
 pub(crate) struct Limits {
     /// Endoscalings per chain chunk.
     pub scalings: usize,
+    /// The distinct challenges a chain chunk that sums scaled terms reads:
+    /// each read is a decomposition beside the endoscalings.
+    pub reads: usize,
     /// Permutations per transcript chunk, the saved state's included.
     pub permutations: usize,
     /// Lifts per lift chunk.
@@ -789,13 +792,14 @@ impl Limits {
     /// The limits fitted to [`FITTED_GATES`].
     pub(crate) const FITTED: Limits = Limits {
         scalings: 2,
+        reads: 1,
         permutations: 4,
         lifts: 3,
-        checks: 2,
+        checks: 1,
         sums: 24,
-        digits: 3,
+        digits: 1,
         curve: 128,
-        scale_parts: 2,
+        scale_parts: 3,
         fill: fill_of(FITTED_GATES),
     };
 
@@ -808,6 +812,7 @@ impl Limits {
         let fitted = Self::FITTED;
         Limits {
             scalings: fitted.scalings * scale,
+            reads: fitted.reads * scale,
             permutations: fitted.permutations * scale,
             lifts: fitted.lifts * scale,
             checks: fitted.checks * scale,
@@ -1428,9 +1433,14 @@ impl Builder {
         let mut acc_in = init;
         let mut steps = Vec::new();
         let mut scalings = 0;
+        // The challenges the chunk reads so far.
+        let mut reads: Vec<ChallengeRef> = Vec::new();
         for (i, &(point, scale_by)) in terms.iter().enumerate() {
             let cost = usize::from(scale_by.is_some());
-            if scalings + cost > self.limits.scalings && !steps.is_empty() {
+            let read = usize::from(scale_by.is_some_and(|by| !reads.contains(&by)));
+            let full =
+                scalings + cost > self.limits.scalings || reads.len() + read > self.limits.reads;
+            if full && !steps.is_empty() {
                 let slot = self.slots.point();
                 self.chunks.push(Chunk::Chain(ChainChunk {
                     init: Some(acc_in),
@@ -1439,9 +1449,13 @@ impl Builder {
                 }));
                 acc_in = PointSrc::Work(slot);
                 scalings = 0;
+                reads.clear();
             }
             steps.push(Step::AddScaled { point, scale_by });
             scalings += cost;
+            if let Some(by) = scale_by.filter(|by| !reads.contains(by)) {
+                reads.push(by);
+            }
             if i + 1 == terms.len() {
                 self.chunks.push(Chunk::Chain(ChainChunk {
                     init: Some(acc_in),

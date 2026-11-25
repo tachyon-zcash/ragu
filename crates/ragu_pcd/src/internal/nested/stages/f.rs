@@ -60,6 +60,10 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         NUM * 2
     }
 
+    fn skip_gates() -> usize {
+        super::branch_start::<C, R, P, Self::Parent>()
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: &mut D,
