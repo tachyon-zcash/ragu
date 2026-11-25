@@ -180,9 +180,6 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
 
-    /// The payload schema version for this profile's proof formats.
-    const WIRE_SCHEMA_VERSION: u16 = 1;
-
     /// Native online polynomial and opening declarations. The application
     /// slots are separate from this layout.
     ///

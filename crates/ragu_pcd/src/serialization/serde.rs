@@ -194,12 +194,7 @@ mod tests {
     /// An envelope of `payload` declaring `rank` and `header_size`.
     fn envelope(payload: PayloadKind, rank: u32, header_size: u64) -> Vec<u8> {
         let mut bytes = Vec::new();
-        write_envelope(
-            payload,
-            Dimensions { rank },
-            <crate::profile::Standard as crate::profile::Profile>::WIRE_SCHEMA_VERSION,
-            &mut bytes,
-        );
+        write_envelope(payload, Dimensions { rank }, &mut bytes);
         bytes[20..28].copy_from_slice(&header_size.to_le_bytes());
         bytes
     }

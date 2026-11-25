@@ -6,7 +6,7 @@ use ragu_circuits::polynomials::Rank;
 
 use crate::{
     CompressedProof, Proof,
-    profile::{Profile, ProfiledCycle},
+    profile::ProfiledCycle,
     serialization::{Decode, Dimensions, Encode, Error, MAX_RANK, Reader},
 };
 
@@ -67,7 +67,16 @@ impl PayloadKind {
             Self::Compressed => 2,
         }
     }
+
+    fn schema_version(self) -> u16 {
+        match self {
+            Self::Proof => PROOF_SCHEMA_VERSION,
+            Self::Compressed => COMPRESSED_SCHEMA_VERSION,
+        }
+    }
 }
+const PROOF_SCHEMA_VERSION: u16 = 4;
+const COMPRESSED_SCHEMA_VERSION: u16 = 4;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 // Held at 1 until the first release: nothing is deployed, so a change to
 // the semantics before then, such as the lifted challenges and the run
@@ -88,12 +97,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     /// [`serialization`](crate::serialization), vectors have inconsistent
     /// lengths or any point is the identity.
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
-        encode(
-            self,
-            PayloadKind::Proof,
-            Dimensions::of::<R>(),
-            C::Profile::WIRE_SCHEMA_VERSION,
-        )
+        encode(self, PayloadKind::Proof, Dimensions::of::<R>())
     }
 
     /// The exact encoded length, including the envelope. Bound transport
@@ -112,24 +116,14 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     /// [`Application::verify_compressed`](crate::Application::verify_compressed)
     /// before accepting the proof or using it as a child.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
-        decode(
-            bytes,
-            PayloadKind::Proof,
-            Some(R::RANK),
-            C::Profile::WIRE_SCHEMA_VERSION,
-        )
+        decode(bytes, PayloadKind::Proof, Some(R::RANK))
     }
 
     /// The exact length of the encoding whose envelope `bytes` begins with,
     /// checked as [`from_bytes`](Self::from_bytes) checks it.
     #[cfg(feature = "serde")]
     pub(crate) fn framed_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
-        framed_len::<Self>(
-            bytes,
-            PayloadKind::Proof,
-            Some(R::RANK),
-            C::Profile::WIRE_SCHEMA_VERSION,
-        )
+        framed_len::<Self>(bytes, PayloadKind::Proof, Some(R::RANK))
     }
 }
 
@@ -153,12 +147,7 @@ impl<C: ProfiledCycle> CompressedProof<C> {
                 .try_into()
                 .map_err(|_| Error::Unencodable)?,
         };
-        encode(
-            self,
-            PayloadKind::Compressed,
-            dims,
-            C::Profile::WIRE_SCHEMA_VERSION,
-        )
+        encode(self, PayloadKind::Compressed, dims)
     }
 
     /// The exact encoded length for the expected rank, including the
@@ -180,35 +169,25 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// use [`Application::verify_compressed`](crate::Application::verify_compressed)
     /// before accepting the proof.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
-        decode(
-            bytes,
-            PayloadKind::Compressed,
-            None,
-            C::Profile::WIRE_SCHEMA_VERSION,
-        )
+        decode(bytes, PayloadKind::Compressed, None)
     }
 
     /// The exact length of the encoding whose envelope `bytes` begins with,
     /// checked as [`from_bytes`](Self::from_bytes) checks it.
     #[cfg(feature = "serde")]
     pub(crate) fn framed_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
-        framed_len::<Self>(
-            bytes,
-            PayloadKind::Compressed,
-            None,
-            C::Profile::WIRE_SCHEMA_VERSION,
-        )
+        framed_len::<Self>(bytes, PayloadKind::Compressed, None)
     }
 }
 
-pub(crate) fn write_envelope(
-    payload: PayloadKind,
-    dims: Dimensions,
-    schema: u16,
-    bytes: &mut Vec<u8>,
-) {
+pub(crate) fn write_envelope(payload: PayloadKind, dims: Dimensions, bytes: &mut Vec<u8>) {
     bytes.extend_from_slice(MAGIC);
-    for word in [ENVELOPE_VERSION, payload.tag(), schema, PROTOCOL_VERSION] {
+    for word in [
+        ENVELOPE_VERSION,
+        payload.tag(),
+        payload.schema_version(),
+        PROTOCOL_VERSION,
+    ] {
         bytes.extend_from_slice(&word.to_le_bytes());
     }
     bytes.extend_from_slice(&dims.rank.to_le_bytes());
@@ -220,13 +199,12 @@ fn encode<T: Encode + Decode>(
     proof: &T,
     payload: PayloadKind,
     dims: Dimensions,
-    schema: u16,
 ) -> Result<Vec<u8>, Error<'static>> {
     if dims.rank > MAX_RANK {
         return Err(Error::Unencodable);
     }
     let mut bytes = Vec::with_capacity(ENVELOPE_SIZE + T::encoded_len(dims));
-    write_envelope(payload, dims, schema, &mut bytes);
+    write_envelope(payload, dims, &mut bytes);
     proof.encode(&mut bytes, dims)?;
     Ok(bytes)
 }
@@ -235,9 +213,8 @@ fn decode<T: Decode>(
     bytes: &[u8],
     payload: PayloadKind,
     rank: Option<u32>,
-    schema: u16,
 ) -> Result<T, Error<'_>> {
-    let (mut reader, dims) = open(bytes, payload, rank, schema)?;
+    let (mut reader, dims) = open(bytes, payload, rank)?;
     let expected = ENVELOPE_SIZE + T::encoded_len(dims);
     if bytes.len() != expected {
         return Err(Error::Length {
@@ -255,9 +232,8 @@ fn framed_len<T: Decode>(
     bytes: &[u8],
     payload: PayloadKind,
     rank: Option<u32>,
-    schema: u16,
 ) -> Result<usize, Error<'_>> {
-    let (_, dims) = open(bytes, payload, rank, schema)?;
+    let (_, dims) = open(bytes, payload, rank)?;
     Ok(ENVELOPE_SIZE + T::encoded_len(dims))
 }
 
@@ -266,12 +242,11 @@ fn open<'a>(
     bytes: &'a [u8],
     payload: PayloadKind,
     expected_rank: Option<u32>,
-    schema: u16,
 ) -> Result<(Reader<'a>, Dimensions), Error<'a>> {
     let mut reader = Reader::new(bytes);
     let envelope = reader.take(ENVELOPE_SIZE)?;
     let mut known = Vec::with_capacity(ENVELOPE_SIZE);
-    write_envelope(payload, Dimensions::default(), schema, &mut known);
+    write_envelope(payload, Dimensions::default(), &mut known);
     // Report the exact rejected component. Every check precedes payload decoding.
     for (start, end, reason) in [
         (0, 8, "invalid proof magic"),
@@ -330,7 +305,7 @@ mod tests {
         let prefix_len = MAGIC.len() + 2 * size_of::<u16>();
         for kind in [PayloadKind::Proof, PayloadKind::Compressed] {
             let mut bytes = Vec::new();
-            write_envelope(kind, dims, Standard::WIRE_SCHEMA_VERSION, &mut bytes);
+            write_envelope(kind, dims, &mut bytes);
             bytes.truncate(prefix_len);
             let parsed = read_payload_kind(&bytes).unwrap();
             assert_eq!(parsed, kind);
@@ -366,16 +341,14 @@ mod tests {
         );
     }
 
-    // Schema 1 is the standard profile's shape under `ragu-pcd-v1`, with
+    // Schema v4 is the standard profile's shape under `ragu-pcd-v1`, with
     // the online polynomials (see `internal::native::online`) in the batch,
     // each step folding its own application claim, and each step's
-    // randomizers (see `fuse::randomizer`) in its fold and its batch. The
-    // schema is held at 1 until the first release; after it, a change to
-    // either moves the layout or the verifier semantics and needs a new
-    // schema or protocol version, not a silent re-pin.
+    // randomizers (see `fuse::randomizer`) in its fold and its batch. A
+    // change to either moves the layout or the verifier semantics and needs
+    // a new schema or protocol version, not a silent re-pin.
     #[test]
-    fn schema_pins_protocol_and_shape() {
-        assert_eq!(Standard::WIRE_SCHEMA_VERSION, 1);
+    fn schema_v4_pins_protocol_and_shape() {
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
         assert_eq!(crate::ipa::IPA_TAG, b"ragu-ipa-v1");
         assert_eq!(ragu_primitives::ENDOSCALAR_BITS, 143);
@@ -435,19 +408,14 @@ mod tests {
             ),
         ] {
             let mut bytes = Vec::with_capacity(length);
-            write_envelope(kind, dims, Standard::WIRE_SCHEMA_VERSION, &mut bytes);
+            write_envelope(kind, dims, &mut bytes);
             bytes.resize(length, 0);
             // Old layouts and future versions cannot be reinterpreted, even
             // when their input has the receiving type's expected length.
             for version in [1u16, 2, 4] {
                 bytes[8..10].copy_from_slice(&version.to_le_bytes());
                 assert!(matches!(
-                    open(
-                        &bytes,
-                        kind,
-                        Some(TestRank::RANK),
-                        Standard::WIRE_SCHEMA_VERSION
-                    ),
+                    open(&bytes, kind, Some(TestRank::RANK)),
                     Err(Error::Invalid {
                         offset: 8,
                         reason: "unsupported proof envelope version",
@@ -468,15 +436,10 @@ mod tests {
             // admitted: any other would be a second encoding.
             for header_size in [1, 4, u64::MAX] {
                 let mut bytes = Vec::new();
-                write_envelope(
-                    kind,
-                    Dimensions::of::<TestRank>(),
-                    Standard::WIRE_SCHEMA_VERSION,
-                    &mut bytes,
-                );
+                write_envelope(kind, Dimensions::of::<TestRank>(), &mut bytes);
                 bytes[20..28].copy_from_slice(&header_size.to_le_bytes());
                 assert!(matches!(
-                    open(&bytes, kind, expected_rank, Standard::WIRE_SCHEMA_VERSION),
+                    open(&bytes, kind, expected_rank),
                     Err(Error::Invalid {
                         offset: 20,
                         reason: "proof header size must be zero",
@@ -489,17 +452,11 @@ mod tests {
         write_envelope(
             PayloadKind::Compressed,
             Dimensions::of::<TestRank>(),
-            Standard::WIRE_SCHEMA_VERSION,
             &mut bytes,
         );
         bytes[16..20].copy_from_slice(&(MAX_RANK + 1).to_le_bytes());
         assert!(matches!(
-            open(
-                &bytes,
-                PayloadKind::Compressed,
-                None,
-                Standard::WIRE_SCHEMA_VERSION
-            ),
+            open(&bytes, PayloadKind::Compressed, None),
             Err(Error::Invalid {
                 offset: 16,
                 reason: "compressed proof rank exceeds the limit",
