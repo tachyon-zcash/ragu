@@ -220,8 +220,15 @@ pub trait Stage<F: Field, R: Rank> {
 
     /// Returns the number of gates to skip before starting this
     /// stage. The count includes the SYSTEM gate (gate 0), so the base
-    /// case `()` returns 1. **This should not be overridden by
-    /// implementations except by the base implementation for `()`**.
+    /// case `()` returns 1.
+    ///
+    /// The default lays a stage after its parent. An implementation
+    /// overrides it only to lay the stage after another stage in some
+    /// layout, at gates no circuit that loads this stage gives to another
+    /// stage it loads. A circuit then adds the stage with
+    /// [`StageBuilder::add_stage_beside`], which checks the position. The
+    /// stage's polynomial, mask and final mask all take the position from
+    /// this method.
     fn skip_gates() -> usize {
         Self::Parent::skip_gates() + Self::Parent::num_gates()
     }

@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+mod beside;
 mod error_swallowing;
 mod identity;
 mod known_routine_soundness;

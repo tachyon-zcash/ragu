@@ -215,7 +215,8 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     /// # Errors
     ///
     /// Returns a capacity error if the stage output uses more wires than its
-    /// configured value count.
+    /// configured value count, or an initialization error if the stage is
+    /// not laid at the gates that follow the current stage.
     pub fn configure_stage<Next: Stage<D::F, R, Parent = Current> + 'dr>(
         self,
         stage: Next,
@@ -223,6 +224,56 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         StageGuard<'dr, D, R, Next>,
         StageBuilder<'a, 'dr, D, R, Next, Target>,
     )> {
+        self.place(stage)
+    }
+
+    /// Adds a stage that is not a child of the current stage but is laid at
+    /// the gates that follow it.
+    ///
+    /// Two stages can be laid at the same gates when no circuit loads both:
+    /// each circuit's trace is summed with the polynomials of the stages it
+    /// loads alone. A stage's parent fixes one chain of stages before it.
+    /// A stage that overrides [`Stage::skip_gates`] to follow another stage
+    /// in some layouts is added after that stage with this method, which
+    /// checks the positions where [`configure_stage`](Self::configure_stage)
+    /// has them from the types.
+    ///
+    /// The stages a circuit adds are still one run of gates from gate one
+    /// to the end of its last stage, which is what the last stage's final
+    /// mask covers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an initialization error if the stage is not laid at the
+    /// gates that follow the current stage, or a capacity error if the
+    /// stage output uses more wires than its configured value count.
+    pub fn configure_stage_beside<Next: Stage<D::F, R> + 'dr>(
+        self,
+        stage: Next,
+    ) -> Result<(
+        StageGuard<'dr, D, R, Next>,
+        StageBuilder<'a, 'dr, D, R, Next, Target>,
+    )> {
+        self.place(stage)
+    }
+
+    /// Allocates the wires of `stage` after the current stage's.
+    fn place<Next: Stage<D::F, R> + 'dr>(
+        self,
+        stage: Next,
+    ) -> Result<(
+        StageGuard<'dr, D, R, Next>,
+        StageBuilder<'a, 'dr, D, R, Next, Target>,
+    )> {
+        // The builder allocates in order, so the stage's wires land at the
+        // gates after the current stage's. They must be the gates the
+        // stage's polynomial and mask are at.
+        if Next::skip_gates() != Current::skip_gates() + Current::num_gates() {
+            return Err(ragu_core::Error::Initialization(
+                "a stage is added at the gates that follow the stage before it".into(),
+            ));
+        }
+
         // Invoke wireless emulator with dummy witness to get gadget structure.
         // The emulator never actually reads witness input.
         let mut emulator = Emulator::counter();
@@ -274,6 +325,31 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         Next: Stage<D::F, R, Parent = Current> + Default + 'dr,
     {
         self.configure_stage(Next::default())
+    }
+
+    /// Adds a stage laid after the current one that is not its child, using
+    /// [`Self::configure_stage_beside`], assuming the stage implements
+    /// [`Default`].
+    pub fn add_stage_beside<Next>(
+        self,
+    ) -> Result<(
+        StageGuard<'dr, D, R, Next>,
+        StageBuilder<'a, 'dr, D, R, Next, Target>,
+    )>
+    where
+        Next: Stage<D::F, R> + Default + 'dr,
+    {
+        self.configure_stage_beside(Next::default())
+    }
+
+    /// Reserves the gates of a stage laid after the current one that is not
+    /// its child, without producing a gadget: [`Self::skip_stage`] for
+    /// [`Self::add_stage_beside`].
+    pub fn skip_stage_beside<Next: Stage<D::F, R> + Default + 'dr>(
+        self,
+    ) -> Result<StageBuilder<'a, 'dr, D, R, Next, Target>> {
+        let (_, builder) = self.add_stage_beside::<Next>()?;
+        Ok(builder)
     }
 
     /// Skips the next stage without producing a gadget.
