@@ -590,7 +590,12 @@ where
         }
         let (pcd, ()) = self.fuse_with_source(
             rng,
-            Decompress::<H>::new(true),
+            // The flag registration derives (see `finalize_with`), so this
+            // circuit is the registered one. `C` here is the wallet's cycle,
+            // whose profile is `Standard`: name the aggregator's.
+            Decompress::<H>::new(crate::profile::decompresses_online_polynomials::<
+                Aggregator<HEADER_SIZE>,
+            >()),
             (
                 pcd.data().clone(),
                 polynomials,
