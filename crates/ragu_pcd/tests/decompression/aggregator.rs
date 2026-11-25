@@ -1070,6 +1070,31 @@ fn decompression_accepts_a_padded_output_from_a_wallet_with_online_polynomials()
     assert!(app.verify_compressed(&compressed).unwrap());
 }
 
+/// A profile whose decompression step pads its output slots refuses every
+/// header that names an online polynomial, output or read: a decompressed
+/// statement can land at any application suffix.
+#[test]
+fn a_padding_decompression_refuses_headers_with_online_polynomials() {
+    use crate::profile::testing::{Decompressing, StatementContext};
+    type Padded = Profiled<Pasta, Decompressing>;
+    let params = crate::pasta::baked_aggregator();
+    let refused = |result: Result<Application<'_, Padded, AggregatorRank, HEADER_SIZE>>| matches!(result, Err(Error::Initialization(ref reason)) if reason.to_string().contains("names an online polynomial"));
+
+    let outputs = ApplicationBuilder::<Padded, AggregatorRank, HEADER_SIZE>::new()
+        .register(CarryingLeaf)
+        .unwrap()
+        .finalize_with(params, StatementContext::default());
+    assert!(refused(outputs), "a step that outputs `Carrying`");
+
+    let reads = ApplicationBuilder::<Padded, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .register(PadCarrying)
+        .unwrap()
+        .finalize_with(params, StatementContext::default());
+    assert!(refused(reads), "a step that reads `Carrying`");
+}
+
 #[test]
 fn decompression_preserves_both_wallet_commitments_for_the_next_fuse() {
     let params = crate::pasta::baked_aggregator();

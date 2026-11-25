@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses coefficients that do not commit to the wallet proof's commitments.
   `finalize_with` refuses an aggregator that does not register the
   wallet's own header type at every suffix the wallet's steps output.
+  Under a profile whose decompression step pads its output slots,
+  `finalize_with` refuses a step that outputs or reads a header naming an
+  online polynomial.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
   profile-specific prover context. The extension API is experimental while
   decompression is integrated. `finalize` checks a profile's declaration

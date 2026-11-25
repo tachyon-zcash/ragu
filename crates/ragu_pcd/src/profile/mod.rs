@@ -1185,7 +1185,10 @@ pub struct Extension {
     /// extension must hold its output commitments to the source proof's,
     /// as the aggregator's does. Otherwise the step leaves both output
     /// slots as padding, so every header a decompressed statement can carry
-    /// must leave its slots to padding.
+    /// must leave its slots to padding: the step accepts any application
+    /// suffix, so [`finalize_with`](crate::ApplicationBuilder::finalize_with)
+    /// refuses an application with a step that outputs or reads a header
+    /// naming an online polynomial.
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is
