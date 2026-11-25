@@ -212,7 +212,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         let beta_endo = extract_endoscalar(C::CircuitField::ONE)
             .expect("one should satisfy the endoscalar challenge range");
-        let mut trivial_rng = <rand::rngs::StdRng as rand::SeedableRng>::from_seed([0u8; 32]);
+        let mut trivial_rng = <rand::rngs::ChaCha12Rng as rand::SeedableRng>::from_seed([0u8; 32]);
 
         // The native walk over placeholder nested-curve points, in the
         // nested batch's order, delegated to the real helpers so this

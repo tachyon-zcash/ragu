@@ -11,7 +11,7 @@ use ragu_circuits::{
     staging,
 };
 use ragu_core::{Cycle, Error, FixedGenerators, PreparedMsm, Result};
-use rand::{CryptoRng, SeedableRng, rngs::StdRng};
+use rand::{CryptoRng, SeedableRng, rngs::ChaCha12Rng};
 
 use crate::{
     Pcd, Proof, SelectableBackend,
@@ -560,13 +560,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // Bootstrap the recursion once, up front, so that `seed` never pays
         // for it lazily, unless the application was given the proof. The proof
         // carries no secrets — it attests nothing and is consumed as a public
-        // child by every seed — so a fixed seed is fine. The same build and
-        // application configuration reproduce the proof, but `StdRng` may
-        // vary across versions or platforms. A deployment needing common
-        // bytes across compatible builds should share a stored proof rather
-        // than assume regeneration matches.
+        // child by every seed — so a fixed seed is fine.
         if app.bootstrap.is_none() {
-            let mut rng = StdRng::seed_from_u64(0);
+            let mut rng = ChaCha12Rng::seed_from_u64(0);
             let (pcd, ()) = app.fuse(
                 &mut rng,
                 crate::step::internal::bootstrap::Bootstrap::new(),
@@ -758,8 +754,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// The default proof depends on the application's configuration: its
     /// registries and public parameters, its profile, rank and header size,
-    /// the circuits of the Ragu version in use, the `StdRng` implementation,
-    /// and for a profile with an extension the prover context at finalization.
+    /// the Ragu version and dependency versions in use, the fixed
+    /// `ChaCha12Rng` seeds of the bootstrap fuse and its dummy children, and
+    /// for a profile with an extension the prover context at finalization.
     /// Store it with [`Proof::to_bytes`] and supply it to later applications
     /// of the same configuration with [`ApplicationBuilder::with_bootstrap`],
     /// so their finalization skips the bootstrap fuse.
@@ -828,12 +825,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// # Bootstrap linkability
     ///
-    /// The default bootstrap is generated with a fixed seed, so the same build
-    /// and application configuration reproduce the proof. `StdRng` may vary
-    /// across versions or platforms, and [`ApplicationBuilder::with_bootstrap`]
-    /// can install a different valid proof. The full uncompressed output's
-    /// bridge preamble contains the right child's commitments. The compressed
-    /// instance retains that child's native and nested `x` and `y` challenges.
+    /// The default bootstrap is generated from fixed seeds, so the same Ragu
+    /// version, dependency versions and application configuration reproduce
+    /// it (see [`Application::bootstrap_proof`]). Another version may not,
+    /// and [`ApplicationBuilder::with_bootstrap`] can install a different
+    /// valid proof. The full uncompressed output's bridge preamble contains
+    /// the right child's commitments. The compressed instance retains that
+    /// child's native and nested `x` and `y` challenges.
     /// A wallet-specific bootstrap can therefore link outputs in either form,
     /// and a version-specific bootstrap can identify a cohort. See
     /// [`ApplicationBuilder::with_bootstrap`] for the shared-proof guidance

@@ -119,6 +119,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ApplicationBuilder::finalize` fuses the default bootstrap proof with
+  `rand::rngs::ChaCha12Rng`, and the dummy children it fuses over draw from
+  `ChaCha12Rng` too, in place of `StdRng`, whose algorithm rand does not
+  promise to keep. The seeds are unchanged and `StdRng` is `ChaCha12Rng` in
+  the pinned rand, so the proof's bytes are the same. `ragu_pcd` enables
+  rand's `chacha` feature.
 - `Application::rerandomize` fuses its input twice through the
   rerandomization step, each time with the application's bootstrap proof as
   the right child, and no longer keeps a seeded unit proof of its own for
