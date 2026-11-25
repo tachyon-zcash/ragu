@@ -853,10 +853,14 @@ mod tests {
     use super::*;
     use crate::{
         internal::tests::{R, assert_stage_values},
-        profile::{Standard, testing::Proving},
+        profile::{Aggregator, Standard, testing::Proving},
     };
 
     type C = <Pasta as ragu_core::Cycle>::NestedCurve;
+
+    /// A profile whose nested online batch has polynomials at every
+    /// commitment phase, which puts points in every stage's tail.
+    type Batched = Aggregator<4>;
 
     /// Each stage's declared values are its wires, in profile `P`.
     fn stage_values_match_wire_counts_in<P: Profile>() {
@@ -874,13 +878,15 @@ mod tests {
         stage_values_match_wire_counts_in::<Standard>();
         // Beside an extension.
         stage_values_match_wire_counts_in::<Proving>();
+        // With the nested online batch's commitments in every stage.
+        stage_values_match_wire_counts_in::<Batched>();
     }
 
     /// Every input has exactly one source, and splitting the walk into the
     /// stages and reading it back is the identity, in profile `P`. The
     /// commitments of the step's nested online polynomials are the walk's
-    /// last inputs, in slot order, the ones fixed before $w$ read from the
-    /// preamble stage.
+    /// last inputs, in slot order, each read from the stage of its phase
+    /// at its index among that phase's polynomials.
     fn walk_round_trips_through_the_stages_in<P: Profile>() {
         use rand::{Rng, SeedableRng, rngs::StdRng};
         use udon::{curve::Projective, field::Field};
@@ -899,7 +905,10 @@ mod tests {
         let mut children = alloc::vec![false; num_children_points::<P>()];
         let mut sources = Vec::new();
         let mut bindings = 0;
+        // The batch's slots seen so far: slot `online_fq` is input
+        // `first_online + online_fq`.
         let mut online_fq = 0;
+        let first_online = num_inputs - FqPointsLen::<P>::len();
         for i in 0..num_inputs {
             let source = input_source::<P>(i);
             assert!(
@@ -920,10 +929,25 @@ mod tests {
                     children[k] = true;
                 }
                 InputSource::OnlineFq(j) => {
-                    assert_eq!(j, online_fq, "online Fq commitments out of slot order");
-                    assert_eq!(i, num_inputs - FqPointsLen::<P>::len() + j);
+                    assert_eq!(j, online_fq, "a commitment out of slot order");
+                    assert_eq!(i, first_online + j);
+                    assert_eq!(P::NESTED_ONLINE.polynomials[j], Phase::BeforeW);
                     // Input `i` is point `1 + i`: the initial point is first.
                     assert_eq!(inputs.preamble.online_fq[j], points[1 + i]);
+                    online_fq += 1;
+                }
+                InputSource::Auxiliary(phase, j) => {
+                    let slot = P::NESTED_ONLINE.phase_range(phase).start + j;
+                    assert_eq!(slot, online_fq, "a commitment out of slot order");
+                    assert_eq!(i, first_online + slot);
+                    assert_eq!(P::NESTED_ONLINE.polynomials[slot], phase);
+                    let staged = match phase {
+                        Phase::BeforeW => unreachable!("an early point is no auxiliary"),
+                        Phase::BeforeY => inputs.registry_wx.online_points[j],
+                        Phase::BeforeX => inputs.ab.online_points[j],
+                        Phase::BeforeAlpha => inputs.f.online_points[j],
+                    };
+                    assert_eq!(staged, points[1 + i]);
                     online_fq += 1;
                 }
                 _ => {}
@@ -931,7 +955,7 @@ mod tests {
         }
         assert_eq!(bindings, 2 * num_child_bindings::<P>());
         assert!(children.iter().all(|&c| c));
-        assert_eq!(online_fq, FqEarlyPointsLen::<P>::len());
+        assert_eq!(online_fq, FqPointsLen::<P>::len());
     }
 
     #[test]
@@ -939,6 +963,13 @@ mod tests {
         walk_round_trips_through_the_stages_in::<Standard>();
         // Beside an extension.
         walk_round_trips_through_the_stages_in::<Proving>();
+        // With the nested online batch's commitments at the walk's tail.
+        walk_round_trips_through_the_stages_in::<Batched>();
+        // The batch has a polynomial at every phase, so the round trip
+        // above read a point of every stage.
+        for phase in Phase::ALL {
+            assert!(!Batched::NESTED_ONLINE.phase_range(phase).is_empty());
+        }
     }
 
     /// A child's $P_n$ is the last of its points, where
