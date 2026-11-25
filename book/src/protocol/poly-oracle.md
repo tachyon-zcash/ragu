@@ -51,7 +51,7 @@ internal circuits.
   - `Eq` is alias for `HostCurve` type and $\E_q$ in math
   - in a `Step`, we refer to the $6$ total public online poly commitments as `[L0, L1, R0, R1, O0, O1]`
   - a header lists the kinds of polynomial its proofs carry, one unit type per slot or `Padding`, as `Header::OnlinePolyCommit`; a step reads, prepares and opens a polynomial by its kind, so a slot the header leaves to padding cannot be addressed at all
-  - Ragu proves that an opening is of the committed polynomial, not which polynomial was committed: what `Step::prepare` returns is prover data, so an output slot whose opening the step's circuit leaves unconstrained holds a polynomial of the prover's choosing. A slot the step does not open is padding: Ragu opens it at $\zeta$ and holds the value to one after the step's circuit; a slot opened and left unconstrained is a hint, as $\cm_g, \cm_h$ are [below](#changes)
+  - Ragu proves that an opening is of the committed polynomial, not which polynomial was committed: what `Step::prepare` returns is prover data, so an output slot whose opening the step's circuit leaves unconstrained holds a polynomial of the prover's choosing. A slot the step does not open is padding: Ragu opens it at $\zeta$ and holds the value to one after the step's circuit; a slot opened and left unconstrained is a hint
   - compression carries the two output commitments. Aggregator decompression preserves the header and binds its output slots to those commitments. The aggregator supplies the matching coefficients for later oracle queries.
   - the slots hold public values, and Ragu does not hide them: their commitments are deterministic, rerandomization leaves them unchanged, and compression and decompression carry them as they are. A private polynomial belongs in the application stage (C2), not in a slot
 - C2: a two-phase application circuit: an application stage, committed before $\zeta$, holds the staged values a check at $\zeta$ reads but no header carries, such as the roots $\tg_i$ of a private polynomial $\prod_i (X - \tg_i)$; the circuit, synthesized after $\zeta$, evaluates such a polynomial in-circuit from the staged values and relates it to the public slots' openings. Such a polynomial has no commitment slot; profile-internal circuits commit online polynomials through C6 below
@@ -117,25 +117,6 @@ Application steps query the header-associated slots through `Oracles`. The
 aggregator's internal circuits use separate profile slots for the IPA helpers
 and wallet registry restrictions. For what a compressed aggregator proof
 exposes, see [Decompression privacy](recursion/decompression.md#privacy).
-
-## Changes to Tachyon Proof Tree {#changes}
-
-The [capability list](#cap) above is a delicate balance between protocol complexity, cost, and feature-richness for the application circuit.
-While it suffices for the majority of Tachyon's [current steps](https://github.com/tachyon-zcash/tachyon/tree/7e502548db33845dbaacdc0efe905d1a3c45e626), a small segment of the proof trees need to be adjusted.
-
-- QR routing network, affecting `QrIntakeSplit`, `QrSideDescend`
-  - two problems: 
-    - during `QrIntakeSplit`, we have to query the NQR set $q_0(X)$ both at random challenge $\zeta$ and at discriminant $-R_j$, the only step in the entire proof tree where we query more than one point on a committed online poly. Querying at challenge is to ensure "decomposition" relation, querying at discriminant offset is to ensure "zero-value QR assignment".
-    - during `QrSideDescend`, the prover needs to commit two private online polynomials $g(X), h(X)$, see [protocol here](https://tachyon.z.cash/book/revisit.html#partition).
-    The left input proof with header `QrIntakeSides` already occupies 2 public online-poly slots, and the output proof with header `QrIntake` already occupies 1. Our app's first stage can only witness simple closed-form online polynomials in coefficient or roots form, but not directly a private commitment. Putting $\cm_g, \cm_h$ in the output proof would exceed the $2$-per-proof capacity
-  - solve both problems using one trick: a proof with a new header `QrDescendWitness` and $\cm_g, \cm_h$ in its two public polynomial commitment slots
-    - add two seed steps to generate `QrDescendWitness` for QR and NQR sides: these seed steps take `QrIntakeSides` as input and output `QrDescendWitness`, with no constraints on $g, h$ (they are hints, committed before `QrSideDescend`'s $\zeta$). Importantly, $q_0(-R_j)$ check is relocated from `QrIntakeSplit` to the seed step for NQR side here.
-    - the NQR seed's input must be the `QrIntakeSides` that `QrSideDescend` descends, and header fields alone do not bind commitments. So `QrIntakeSplit` places $q_0$ in `O1` and writes $H^{bridge}(\cm_{q_0})$ into a `QrIntakeSides` field; the NQR seed copies it (and $R_j$) into `QrDescendWitness`, and `QrSideDescend` checks they match its left input's. Equal digests mean the same $q_0$.
-    - current `QrSideDescend<Left=QrIntakeSides, Right=(), Output=QrIntake>`, change to `QrSideDescend<Left=QrIntakeSides, Right=QrDescendWitness, Output=QrIntake>` and query all 6 online polynomials within the step, perfectly fitting in our capacity
-- Anchor chain lineage, affecting `AnchorSpanSeed`, `QrStampIntakeSeed`, `SummarySeed`, `SummaryAdvance`, `SpendableInit`
-  - define $H(\ldots \in\F_p^\ast, \acc^\tg) := \mathsf{Poseidon}(\ldots, H^{bridge}(\acc^\tg))$ both natively in anchor chain definition and in-circuit constraints
-- QR bucket in an Evidence Tree, affecting `EvidenceTreeOpen`, `EvidenceTreeLeafPair`
-  - evidence tree's leaf encoding is another 8-element Poseidon hash including a $\acc^\tg$ preimage, thus use $H^{bridge}(\acc^\tg)$ accordingly
 
 ## Earlier Model of Ragu's Internals {#ragu}
 
@@ -464,7 +445,7 @@ Here we make the simplification to only allow _one query per public online polyn
 We deliberately forgo the more powerful feature of multiple queries on the same committed polynomial.
 Solutions for them either involve specifying a $(idx_i, x_i, y_i)$ where $idx_i$ selects the correct polynomial, and we need to enforce a "selector multiplier" in the `compute_v` circuit;
 or a wasteful max-$q$ queries per poly with a system parameter $q$.
-As we explained [before](#changes), this capability is sufficient for Tachyon's proof tree post minor adjustment.
+This capability is sufficient for Tachyon's proof tree.
 
 The only decision left is whether we should fold these evaluation claims in the parent step or in the current step, where `app_rx` is folded?
 Recalling our [earlier discussion](#ragu) of "folding `S.app` in `S.fold`" concludes that folding `app_rx` in the same step leads to saving.
