@@ -150,8 +150,15 @@ where
     /// Prepares the canonical decompression of `wallet`'s proofs: its
     /// bootstrap proof, compressed and run through both sides' chunks.
     ///
-    /// The wallet and aggregator have separate registries and can register
-    /// different application steps. Step indices are local to each application.
+    /// The wallet and aggregator have separate registries. The aggregator
+    /// registers every wallet application step, next to any steps of its
+    /// own. Registration is manual: a finalized `Application` does not keep
+    /// its steps, so the application registers the wallet's steps with both
+    /// builders. `finalize_with` checks headers, not steps: it refuses an
+    /// aggregator that does not register the wallet's header type at every
+    /// suffix the wallet's steps output, so a missing wallet step whose
+    /// output header another registered step also outputs is not caught.
+    /// Step indices are local to each application.
     /// Pass the network's wallet application as `wallet`, with the native
     /// and nested registries used to produce incoming wallet proofs. Ragu
     /// registers the internal `Decompress` step and its circuits in the
@@ -534,8 +541,8 @@ where
     ///
     /// # Errors
     ///
-    /// Fails if the output header is not registered for decompression, the
-    /// wallet application's verifier rejects `pcd`, or proving fails.
+    /// Fails if the wallet application's verifier rejects `pcd` or proving
+    /// fails.
     ///
     /// # Soundness
     ///

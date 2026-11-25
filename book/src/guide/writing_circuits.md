@@ -319,7 +319,7 @@ both output slots. Rerandomization preserves the input's slots.
 
 ### Decompressing with Online Polynomials
 
-Register the wallet's output header type with the aggregator and pass the
+Register every wallet step with the aggregator as well, and pass the
 coefficients in slot order to `Application::decompress_with_polynomials`.
 Decompression preserves the header and binds both output commitments to the
 wallet proof. Later fuses can open the polynomials through their input oracles.
