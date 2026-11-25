@@ -197,9 +197,9 @@ pub struct ProofInputs<
     pub circuit_id: Element<'dr, D>,
     /// What this proof's step exposed of its online openings for the
     /// statement claim's step binding, in a profile with a statement
-    /// circuit: the point and the value at which it opened its first
-    /// output slot, then the point at which it opened its left input's
-    /// first slot (see [`online::step_binding`]). Empty for a profile
+    /// circuit: the point at which it opened its left input's first
+    /// slot, which in a decompression step is the transcript digest
+    /// it staged (see [`online::step_binding`]). Empty for a profile
     /// without one.
     #[ragu(gadget)]
     pub step_binding: FixedVec<Element<'dr, D>, online::StepBindingLen<C::Profile>>,

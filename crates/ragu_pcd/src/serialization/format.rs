@@ -366,14 +366,16 @@ mod tests {
         );
     }
 
-    // Schema v4 is the standard profile's shape under `ragu-pcd-v1`, with
+    // Schema 1 is the standard profile's shape under `ragu-pcd-v1`, with
     // the online polynomials (see `internal::native::online`) in the batch,
     // each step folding its own application claim, and each step's
-    // randomizers (see `fuse::randomizer`) in its fold and its batch. A
-    // change to either moves the layout or the verifier semantics and needs
-    // a new schema or protocol version, not a silent re-pin.
+    // randomizers (see `fuse::randomizer`) in its fold and its batch. The
+    // schema is held at 1 until the first release; after it, a change to
+    // either moves the layout or the verifier semantics and needs a new
+    // schema or protocol version, not a silent re-pin.
     #[test]
-    fn schema_v4_pins_protocol_and_shape() {
+    fn schema_pins_protocol_and_shape() {
+        assert_eq!(Standard::WIRE_SCHEMA_VERSION, 1);
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
         assert_eq!(crate::ipa::IPA_TAG, b"ragu-ipa-v1");
         assert_eq!(ragu_primitives::ENDOSCALAR_BITS, 143);
