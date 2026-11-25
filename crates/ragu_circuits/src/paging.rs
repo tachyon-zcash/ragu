@@ -45,12 +45,39 @@
 //!
 //! The `ONE` wire is on every page and is never carried.
 //!
+//! # Pages apart
+//!
+//! A constraint may name the wires of stages alone, of stages no page
+//! loads together: an equality between two stages laid side by side. One
+//! such equality is one carried value, and a circuit that holds one stage
+//! to copies in the others carries a stage's worth of them, which no page
+//! that loads that stage has the room for beside the rest of the circuit.
+//! The first pages may therefore be set *apart*, in groups
+//! ([`Stages::apart`]): a group's pages hold no gates of the circuit's
+//! own and load a carry stage of the group's own in place of the
+//! circuit's. Such a constraint is held by the first group whose pages
+//! load every stage it names and whose carry stage has a slot left for
+//! it, so that a relation too large for one carry stage spreads over
+//! several.
+//!
+//! # Pages that share a carry stage
+//!
+//! The carry stage takes its gates on every page, whatever the page reads
+//! of it. Where a stretch of the circuit passes much between its own pages
+//! and little to the rest, its pages may share a second carry stage
+//! ([`Stages::local`]), which only they load, right before the first: what
+//! one of them reads of another, or of a stage another of them loads, is
+//! carried there. A group whose first page loads a stage and holds no
+//! gates thus hands the others the part of that stage each reads, and no
+//! other page gives it room.
+//!
 //! # What soundness rests on
 //!
 //! - every page's claim is checked, on the sum of its own polynomial, the
 //!   carry polynomial and the polynomials of the stages it loads;
-//! - the carry polynomial is the same one in every page's sum, and is zero
-//!   off its own wires ([`Paged::carry_mask`]);
+//! - a carry polynomial is the same one in the sum of every page that
+//!   loads it, and is zero off its own wires ([`Paged::carry_mask`],
+//!   [`Paged::apart_mask`], [`Paged::local_mask`]);
 //! - a page's own polynomial is zero off its own gates
 //!   ([`Paged::own_mask`]), which are apart from the carry stage's and from
 //!   those of every stage the page loads;
@@ -95,6 +122,20 @@ const ONE: u32 = 3;
 /// The places among a circuit's gates at which a cut is looked for.
 const GRID: usize = 1024;
 
+/// What a value on the circuit's carry stage, which every page loads,
+/// counts for against one on a carry stage that a group of pages shares,
+/// where the cuts are looked for.
+const SHARED: u64 = 4;
+
+/// The rounds a cut's carry stages are sized halfway to what they turned
+/// out to hold before they only grow.
+const SETTLING: usize = 24;
+
+/// What a carried value counts for where the cuts are looked for: a
+/// stage's wire that several stretches of the circuit read counts for a
+/// part of it in each.
+const UNIT: u64 = 1 << 10;
+
 fn refuse<T>(what: String) -> Result<T> {
     Err(Error::Initialization(what.into()))
 }
@@ -116,6 +157,18 @@ pub struct Stages {
     /// a page that only holds slots to the wires of the stages it loads,
     /// for the pages that do not load them.
     pub idle: Vec<usize>,
+    /// The first pages, set apart in groups: the pages of each group, in
+    /// order. A group's pages hold no gates of the circuit's own and load
+    /// a carry stage of the group's own. They hold the constraints that
+    /// name the wires of stages alone and that none of the other pages
+    /// loads the stages of together.
+    pub apart: Vec<usize>,
+    /// Groups of the other pages, each a range of them, that share a carry
+    /// stage of the group's own beside the circuit's. What a page of a
+    /// group reads of another page of it, or of a stage another page of
+    /// it loads, is carried there, and takes no gates on the pages
+    /// outside the group.
+    pub local: Vec<Range<usize>>,
     /// Whether the last page's own gates start past the circuit's last
     /// stage whatever it loads: the page takes the circuit's place, and a
     /// circuit's place may be under a mask that holds its polynomial off
@@ -146,6 +199,8 @@ impl Stages {
             spans,
             loads: vec![],
             idle: vec![],
+            apart: vec![],
+            local: vec![],
             sealed: true,
         }
         .pages(1)
@@ -155,6 +210,45 @@ impl Stages {
     pub fn idling(mut self, pages: Vec<usize>) -> Self {
         self.idle = pages;
         self
+    }
+
+    /// The same stages, with the first pages apart, in groups of `groups`
+    /// pages each.
+    pub fn apart(mut self, groups: Vec<usize>) -> Self {
+        self.apart = groups;
+        self
+    }
+
+    /// The same stages, with each of `groups` a range of pages that share
+    /// a carry stage of their own beside the circuit's.
+    pub fn sharing(mut self, groups: Vec<Range<usize>>) -> Self {
+        self.local = groups;
+        self
+    }
+
+    /// The group of pages `page` shares a carry stage of their own with.
+    fn local_of(&self, page: usize) -> Option<usize> {
+        self.local.iter().position(|pages| pages.contains(&page))
+    }
+
+    /// The pages apart, over every group.
+    fn num_apart(&self) -> usize {
+        self.apart.iter().sum()
+    }
+
+    /// The pages of group `group` of the pages apart.
+    fn group(&self, group: usize) -> Range<usize> {
+        let start = self.apart[..group].iter().sum();
+        start..start + self.apart[group]
+    }
+
+    /// The group page `page` is in, if it is apart.
+    fn group_of(&self, page: usize) -> Option<usize> {
+        let mut end = 0;
+        self.apart.iter().position(|&pages| {
+            end += pages;
+            page < end
+        })
     }
 
     /// The same stages, for a circuit whose place is under no mask of its
@@ -170,7 +264,8 @@ impl Stages {
     /// end before that.
     fn room(&self, page: usize, carry: usize) -> Option<usize> {
         let room = carry.checked_sub(self.first(page))?;
-        Some(if self.idle.contains(&page) { 0 } else { room })
+        let holds = !self.idle.contains(&page) && page >= self.num_apart();
+        Some(if holds { room } else { 0 })
     }
 
     /// The same stages, for `pages` pages that each load every stage.
@@ -223,10 +318,15 @@ impl Stages {
             .is_some_and(|loads| loads.contains(&stage))
     }
 
-    /// The first page that loads stage `stage`: the one that holds a slot
-    /// to its wires for the pages that do not.
-    fn exporter(&self, stage: usize) -> Option<usize> {
-        self.loads.iter().position(|loads| loads.contains(&stage))
+    /// The page that holds a slot to stage `stage`'s wires for page
+    /// `home`, which does not load it: the first page that does among
+    /// those `home` shares a carry stage of their own with, or else among
+    /// all the pages but those apart.
+    fn exporter(&self, stage: usize, home: usize) -> Option<usize> {
+        let loads = |page: &usize| self.loaded(*page, stage);
+        self.local_of(home)
+            .and_then(|group| self.local[group].clone().find(loads))
+            .or_else(|| (self.num_apart()..self.loads.len()).find(loads))
     }
 
     /// The first gate of page `page`'s polynomial that can hold a gate of
@@ -258,6 +358,28 @@ impl Stages {
         if self.idle.iter().any(|&page| page + 1 >= self.loads.len()) {
             return refuse("the last page, or one past it, is told to hold no gates".into());
         }
+        let last = self.loads.len() - 1;
+        if self.local.iter().enumerate().any(|(group, pages)| {
+            pages.is_empty()
+                || pages.start < self.num_apart()
+                || pages.end > last
+                || self.local[..group]
+                    .iter()
+                    .any(|other| other.start < pages.end && pages.start < other.end)
+        }) {
+            return refuse(
+                "a group of pages that share a carry stage has no page, a page apart, the last \
+                 page or a page of another group"
+                    .into(),
+            );
+        }
+        if self.apart.contains(&0) || self.num_apart() >= self.loads.len() {
+            return refuse(
+                "a group of pages apart has no page, or the groups leave no page for the \
+                 circuit's gates"
+                    .into(),
+            );
+        }
         for (page, loads) in self.loads.iter().enumerate() {
             for (position, &stage) in loads.iter().enumerate() {
                 let Some(span) = self.spans.get(stage) else {
@@ -284,6 +406,112 @@ impl Stages {
     }
 }
 
+/// What the cuts of a circuit are weighed by, for one order of its gates:
+/// the same whatever the carry stages' sizes, so it is counted once and
+/// the cuts looked for under each size off it.
+struct Costs {
+    /// The gates of the circuit's own between two places a page may end
+    /// at.
+    step: usize,
+    /// Those places, the last included.
+    places: usize,
+    /// For each stage, what the gates before each place read of it.
+    reads: Vec<Vec<u64>>,
+    /// For each place, the wires of the circuit's own allocated before it
+    /// that a constraint past it names.
+    crossing: Vec<i64>,
+}
+
+impl Costs {
+    /// Counts them for `recording` with its gates in `placement`'s order,
+    /// the constraints `related` gives the pages apart aside.
+    fn of<F: Field>(
+        recording: &Recording<F>,
+        placement: &Placement,
+        stages: &Stages,
+        related: &Related<F>,
+    ) -> Self {
+        let own_start = stages.own_start();
+        let own = recording.num_gates.saturating_sub(own_start);
+        // The places a page may end at, as gates of the circuit's own
+        // before them: every `step`-th, and the last.
+        let step = own.div_ceil(GRID).max(1);
+        let places = own.div_ceil(step);
+
+        // What each stretch between two places reads of each stage, and
+        // for each place the wires of the circuit's own allocated before
+        // it that a constraint past it names. A stage's wire is carried
+        // once however many constraints name it, so it counts for one
+        // [`UNIT`] over all the stretches that read it.
+        let mut reads = vec![vec![0u64; places + 1]; stages.spans.len()];
+        let mut read: BTreeSet<(u32, usize)> = BTreeSet::new();
+        let mut named: BTreeMap<u32, usize> = BTreeMap::new();
+        let place = |gate: usize| placement.place(gate).map(|place| place - own_start);
+        for (index, (emitted, terms)) in recording.constraints.iter().enumerate() {
+            if related.holds(index) {
+                continue;
+            }
+            // The constraint's home is the page of the last gate it names,
+            // or else of the last gate allocated before it.
+            let Some(position) = terms
+                .iter()
+                .filter_map(|&(wire, _)| place((wire / 4) as usize))
+                .max()
+                .or_else(|| emitted.checked_sub(1).and_then(place))
+            else {
+                continue;
+            };
+            for &(wire, _) in terms {
+                match stages.stage_of((wire / 4) as usize) {
+                    Some(_) => {
+                        read.insert((wire, position / step + 1));
+                    }
+                    None if wire >= 4 => {
+                        let last = named.entry(wire).or_insert(position);
+                        *last = (*last).max(position);
+                    }
+                    None => {}
+                }
+            }
+        }
+        let mut stretches: BTreeMap<u32, u64> = BTreeMap::new();
+        for &(wire, _) in &read {
+            *stretches.entry(wire).or_default() += 1;
+        }
+        for &(wire, stretch) in &read {
+            let (stage, _) = stages
+                .stage_of((wire / 4) as usize)
+                .expect("a stage's wire");
+            reads[stage][stretch] += (UNIT / stretches[&wire]).max(1);
+        }
+        for stage in &mut reads {
+            for place in 1..=places {
+                stage[place] += stage[place - 1];
+            }
+        }
+        let mut crossing = vec![0i64; places + 2];
+        for (&wire, &last) in &named {
+            let gate = place((wire / 4) as usize).expect("a gate of the circuit's own");
+            // The places past the wire's gate and not past its last reader.
+            let (from, to) = (gate / step + 1, last / step);
+            if from <= to {
+                crossing[from] += 1;
+                crossing[to + 1] -= 1;
+            }
+        }
+        for place in 1..crossing.len() {
+            crossing[place] += crossing[place - 1];
+        }
+
+        Costs {
+            step,
+            places,
+            reads,
+            crossing,
+        }
+    }
+}
+
 /// Where a paged circuit's gates sit in its pages' polynomials.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
@@ -304,6 +532,14 @@ pub struct Layout {
     /// The carry stage's gates, the same in every page's polynomial and
     /// past every page's own. It holds two values per gate.
     pub carry: Range<usize>,
+    /// For each group of pages apart, its pages and the gates of its own
+    /// carry stage, which its pages load in place of
+    /// [`carry`](Self::carry).
+    pub apart: Vec<(Range<usize>, Range<usize>)>,
+    /// For each group of pages that share a carry stage of their own, its
+    /// pages and that stage's gates, which its pages load beside
+    /// [`carry`](Self::carry): right before it, past their own.
+    pub local: Vec<(Range<usize>, Range<usize>)>,
 }
 
 impl Layout {
@@ -324,6 +560,12 @@ impl Layout {
             .map(|page| stages.room(page, carry.start))
             .collect::<Option<Vec<usize>>>()
             .ok_or_else(short)?;
+        // Carry stages that hold nothing, for the pages that share one.
+        let local = stages
+            .local
+            .iter()
+            .map(|pages| (pages.clone(), carry.start..carry.start))
+            .collect();
         let (mut left, mut total) = (own, rooms.iter().sum::<usize>());
         if left > total {
             return Err(short());
@@ -348,6 +590,11 @@ impl Layout {
             starts,
             firsts,
             carry,
+            // Carry stages that hold nothing, for the pages apart.
+            apart: (0..stages.apart.len())
+                .map(|group| (stages.group(group), limit..limit))
+                .collect(),
+            local,
         })
     }
 
@@ -357,77 +604,56 @@ impl Layout {
     /// before are named after, and holds the constraints that name little
     /// of the stages it does not load. The cuts are looked for on a grid
     /// of [`GRID`] places at most, and what a cut carries is counted with
-    /// repeats, so the layout is a good one rather than the best.
+    /// repeats, so the layout is a good one rather than the best. The
+    /// pages apart hold what `related` gives them, before carry stages of
+    /// their own that end at gate `limit` too, and each group of pages
+    /// that share a carry stage has one of `local_gates` gates right
+    /// before the circuit's. What a page can read off such a stage counts
+    /// for a part of what it reads off the circuit's ([`SHARED`]), which
+    /// every page gives its gates to.
     fn fit<F: Field>(
-        recording: &Recording<F>,
-        placement: &Placement,
+        costs: &Costs,
+        num_gates: usize,
         stages: &Stages,
         limit: usize,
-        carry_gates: usize,
+        (carry_gates, local_gates): (usize, &[usize]),
+        related: &Related<F>,
     ) -> Result<Self> {
         let short = || Error::GateBoundExceeded { limit };
         let pages = stages.num_pages();
         let own_start = stages.own_start();
-        let own = recording.num_gates.saturating_sub(own_start);
+        let own = num_gates.saturating_sub(own_start);
         let firsts: Vec<usize> = (0..pages).map(|page| stages.first(page)).collect();
         let carry = limit.checked_sub(carry_gates).ok_or_else(short)?..limit;
+        let local = stages
+            .local
+            .iter()
+            .zip(local_gates)
+            .map(|(pages, &gates)| {
+                Some((pages.clone(), carry.start.checked_sub(gates)?..carry.start))
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(short)?;
         let rooms = (0..firsts.len())
-            .map(|page| stages.room(page, carry.start))
+            .map(|page| {
+                let end = stages
+                    .local_of(page)
+                    .map_or(carry.start, |group| local[group].1.start);
+                stages.room(page, end)
+            })
             .collect::<Option<Vec<usize>>>()
             .ok_or_else(short)?;
 
         // The places a page may end at, as gates of the circuit's own
         // before them: every `step`-th, and the last.
-        let step = own.div_ceil(GRID).max(1);
-        let places = own.div_ceil(step);
+        let Costs {
+            step,
+            places,
+            reads,
+            crossing,
+        } = costs;
+        let (step, places) = (*step, *places);
         let before = |place: usize| (place * step).min(own);
-
-        // What each stretch between two places reads of each stage, and
-        // for each place the wires of the circuit's own allocated before
-        // it that a constraint past it names.
-        let mut reads = vec![vec![0u64; places + 1]; stages.spans.len()];
-        let mut named: BTreeMap<u32, usize> = BTreeMap::new();
-        let place = |gate: usize| placement.place(gate).map(|place| place - own_start);
-        for (emitted, terms) in &recording.constraints {
-            // The constraint's home is the page of the last gate it names,
-            // or else of the last gate allocated before it.
-            let Some(position) = terms
-                .iter()
-                .filter_map(|&(wire, _)| place((wire / 4) as usize))
-                .max()
-                .or_else(|| emitted.checked_sub(1).and_then(place))
-            else {
-                continue;
-            };
-            for &(wire, _) in terms {
-                match stages.stage_of((wire / 4) as usize) {
-                    Some((stage, _)) => reads[stage][position / step + 1] += 1,
-                    None if wire >= 4 => {
-                        let last = named.entry(wire).or_insert(position);
-                        *last = (*last).max(position);
-                    }
-                    None => {}
-                }
-            }
-        }
-        for stage in &mut reads {
-            for place in 1..=places {
-                stage[place] += stage[place - 1];
-            }
-        }
-        let mut crossing = vec![0i64; places + 2];
-        for (&wire, &last) in &named {
-            let gate = place((wire / 4) as usize).expect("a gate of the circuit's own");
-            // The places past the wire's gate and not past its last reader.
-            let (from, to) = (gate / step + 1, last / step);
-            if from <= to {
-                crossing[from] += 1;
-                crossing[to + 1] -= 1;
-            }
-        }
-        for place in 1..crossing.len() {
-            crossing[place] += crossing[place - 1];
-        }
 
         // The least a cut of the gates before each place into the pages so
         // far carries, and where the last of those pages then starts.
@@ -438,14 +664,32 @@ impl Layout {
         for (page, &room) in rooms.iter().enumerate() {
             // What the page carries of the stages it does not load, if it
             // holds everything before each place.
+            // A stage a page of its group loads is read off the group's
+            // own carry stage.
+            let weight = |stage: usize| match stages.local_of(page) {
+                Some(group)
+                    if stages.local[group]
+                        .clone()
+                        .any(|of| stages.loaded(of, stage)) =>
+                {
+                    1
+                }
+                _ => SHARED,
+            };
             let foreign: Vec<u64> = (0..=places)
                 .map(|place| {
                     (0..stages.spans.len())
                         .filter(|&stage| !stages.loaded(page, stage))
-                        .map(|stage| reads[stage][place])
+                        .map(|stage| weight(stage) * reads[stage][place])
                         .sum()
                 })
                 .collect();
+            // What crosses to the next page is carried on their own
+            // carry stage if they share one.
+            let across = match stages.local_of(page) {
+                Some(group) if stages.local_of(page + 1) == Some(group) => 1,
+                _ => SHARED,
+            };
             let mut next = vec![NONE; places + 1];
             let mut from = vec![0; places + 1];
             for end in 0..=places {
@@ -457,7 +701,7 @@ impl Layout {
                         continue;
                     }
                     let crossed = if start < end && end < places {
-                        crossing[end] as u64
+                        across * UNIT * crossing[end] as u64
                     } else {
                         0
                     };
@@ -484,6 +728,8 @@ impl Layout {
             starts,
             firsts,
             carry,
+            apart: related.layout(stages, limit),
+            local,
         })
     }
 
@@ -492,15 +738,52 @@ impl Layout {
         self.starts.len()
     }
 
+    /// The gates of the carry stage page `page` loads: its group's if it
+    /// is apart, and the circuit's otherwise.
+    pub fn carry_of(&self, page: usize) -> &Range<usize> {
+        self.apart
+            .iter()
+            .find(|(pages, _)| pages.contains(&page))
+            .map_or(&self.carry, |(_, carry)| carry)
+    }
+
     /// The gates of the circuit's own that page `page`'s polynomial has
     /// room for.
     pub fn room(&self, page: usize) -> usize {
-        self.carry.start.saturating_sub(self.firsts[page])
+        self.window(page).len()
     }
 
-    /// The gates of its polynomial that hold page `page`'s own.
+    /// The gates of its polynomial that hold page `page`'s own. The pages
+    /// of a group apart hold none, and have one window between them: past
+    /// what any of them loads.
     pub fn window(&self, page: usize) -> Range<usize> {
-        self.firsts[page]..self.carry.start.max(self.firsts[page])
+        let (first, end) = match self.apart.iter().find(|(pages, _)| pages.contains(&page)) {
+            Some((pages, carry)) => (
+                pages
+                    .clone()
+                    .map(|page| self.firsts[page])
+                    .max()
+                    .unwrap_or(1),
+                carry.start,
+            ),
+            // Up to the carry stage the page shares with its group, if
+            // it shares one, which is before the circuit's.
+            None => (
+                self.firsts[page],
+                self.local_of(page)
+                    .map_or(self.carry.start, |local| local.start),
+            ),
+        };
+        first..end.max(first)
+    }
+
+    /// The gates of the carry stage page `page` shares with its group, if
+    /// it shares one, beside the circuit's.
+    pub fn local_of(&self, page: usize) -> Option<&Range<usize>> {
+        self.local
+            .iter()
+            .find(|(pages, _)| pages.contains(&page))
+            .map(|(_, gates)| gates)
     }
 
     /// The page of the gate at place `place` among the circuit's own, in
@@ -553,6 +836,11 @@ pub struct PagingReport {
     /// For each boundary between two pages, the distinct carried wires of
     /// the circuit's own that are allocated before it and named after it.
     pub cuts: Vec<usize>,
+    /// The slots of each group's carry stage, for the pages apart.
+    pub apart: Vec<usize>,
+    /// The slots of each group's carry stage, for the pages that share
+    /// one.
+    pub local: Vec<usize>,
 }
 
 /// Whose wires a carry slot combines.
@@ -577,6 +865,10 @@ struct Link<F> {
     /// Whether this constraint is the first to name the slot: the one its
     /// exporter holds the slot to.
     defines: bool,
+    /// Whether the slot is of the carry stage the home page shares with
+    /// its group, the exporter among them, rather than of the one it
+    /// loads otherwise.
+    local: bool,
 }
 
 /// Each constraint's home page and carry slots, fixed by one walk of the
@@ -597,6 +889,12 @@ struct Plan<F> {
     /// Each slot's combination, over wires named `4 * gate + kind` with
     /// the gate counted over the whole circuit.
     slots: Vec<Vec<(u32, F)>>,
+    /// The slots of each group's carry stage, for the pages apart. A
+    /// constraint's slots are of the carry stage its home page loads.
+    apart: Vec<Vec<Vec<(u32, F)>>>,
+    /// The slots of each group's carry stage, for the pages that share
+    /// one.
+    local: Vec<Vec<Vec<(u32, F)>>>,
     /// For each gate of the circuit's own, in the order it allocates them,
     /// the page that holds it and the gate's index in that page's
     /// polynomial.
@@ -618,15 +916,24 @@ impl<F> Plan<F> {
         Some((page as usize, local as usize))
     }
 
-    /// Refuses a carry stage too small for the slots.
+    /// Refuses a carry stage too small for its slots.
     fn fits(&self) -> Result<()> {
-        let holds = self.layout.carry.len().saturating_mul(2);
-        if self.slots.len() > holds {
-            return refuse(format!(
-                "the circuit carries {} values between pages, more than the {holds} its carry \
-                 stage holds",
-                self.slots.len(),
-            ));
+        let groups = self
+            .apart
+            .iter()
+            .zip(&self.layout.apart)
+            .chain(self.local.iter().zip(&self.layout.local));
+        let carries = core::iter::once((&self.slots, &self.layout.carry))
+            .chain(groups.map(|(slots, (_, carry))| (slots, carry)));
+        for (slots, carry) in carries {
+            let holds = carry.len().saturating_mul(2);
+            if slots.len() > holds {
+                return refuse(format!(
+                    "the circuit carries {} values between pages, more than the {holds} their \
+                     carry stage holds",
+                    slots.len(),
+                ));
+            }
         }
         Ok(())
     }
@@ -672,7 +979,96 @@ struct Recording<F> {
     outputs: Vec<Vec<(u32, F)>>,
 }
 
+/// The cuts made in this process, by a digest of what each was made of: a
+/// circuit is cut once where it is registered and again each time it is
+/// proven, to the same pages.
+#[cfg(feature = "std")]
+mod memo {
+    extern crate std;
+
+    use alloc::{boxed::Box, collections::BTreeMap};
+    use core::any::Any;
+    use std::sync::{Mutex, OnceLock, PoisonError};
+
+    type Cuts = BTreeMap<[u8; 32], Box<dyn Any + Send + Sync>>;
+
+    static CUTS: OnceLock<Mutex<Cuts>> = OnceLock::new();
+
+    pub(super) fn get<T: Clone + 'static>(key: &[u8; 32]) -> Option<T> {
+        let cuts = CUTS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        cuts.get(key)?.downcast_ref::<T>().cloned()
+    }
+
+    pub(super) fn put<T: Send + Sync + 'static>(key: [u8; 32], cut: T) {
+        CUTS.get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, Box::new(cut));
+    }
+}
+
 impl<F: Field> Recording<F> {
+    /// A digest of the recording, the stages its pages load and the gates
+    /// their polynomials hold: what a cut is a function of.
+    #[cfg(feature = "std")]
+    fn digest(&self, stages: &Stages, limit: usize) -> [u8; 32] {
+        let mut state = blake2b_simd::Params::new()
+            .hash_length(32)
+            .personal(b"ragu_paging_cut_")
+            .to_state();
+        let mut word = |value: usize| {
+            state.update(&(value as u64).to_le_bytes());
+        };
+        word(limit);
+        word(usize::from(stages.sealed));
+        let local: Vec<usize> = stages
+            .local
+            .iter()
+            .flat_map(|pages| [pages.start, pages.end])
+            .collect();
+        for list in [&stages.idle, &stages.apart, &local]
+            .into_iter()
+            .chain(&stages.loads)
+            .map(Vec::as_slice)
+        {
+            word(list.len());
+            list.iter().for_each(|&entry| word(entry));
+        }
+        word(stages.spans.len());
+        for span in &stages.spans {
+            word(span.start);
+            word(span.end);
+        }
+        word(self.num_gates);
+        let lists = self
+            .constraints
+            .iter()
+            .map(|(at, terms)| (*at, terms))
+            .chain(self.outputs.iter().map(|terms| (usize::MAX, terms)));
+        for (at, terms) in lists {
+            word(at);
+            word(terms.len());
+        }
+        state.update(core::any::type_name::<F>().as_bytes());
+        for terms in self
+            .constraints
+            .iter()
+            .map(|(_, terms)| terms)
+            .chain(&self.outputs)
+        {
+            for (wire, coeff) in terms {
+                state.update(&wire.to_le_bytes());
+                state.update(coeff.to_bytes().as_ref());
+            }
+        }
+        let mut digest = [0; 32];
+        digest.copy_from_slice(state.finalize().as_bytes());
+        digest
+    }
+
     /// Walks `circuit`.
     fn of<C: Circuit<F>>(circuit: &C) -> Result<Self> {
         let mut dr = Prober {
@@ -700,6 +1096,182 @@ pub fn size<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(usize, usize)> {
         recording.num_gates,
         recording.constraints.len() + recording.outputs.len(),
     ))
+}
+
+/// What each of `parts` stretches of `circuit`'s own gates, in the order it
+/// allocates them, reads of each of `stages`: the distinct wires of the
+/// stage that the constraints of the stretch name, a constraint being of
+/// the stretch of the last gate it names, or else of the last gate
+/// allocated before it. It tells which stages a page of those gates is
+/// best told to load.
+///
+/// # Errors
+///
+/// Fails if the circuit cannot be walked.
+pub fn reads<F: Field, C: Circuit<F>>(
+    circuit: &C,
+    stages: &Stages,
+    parts: usize,
+) -> Result<Vec<Vec<usize>>> {
+    let recording = Recording::of(circuit)?;
+    let own_start = stages.own_start();
+    let own = recording.num_gates.saturating_sub(own_start).max(1);
+    let parts = parts.max(1);
+    let mut read = vec![vec![BTreeSet::new(); stages.spans.len()]; parts];
+    for (emitted, terms) in &recording.constraints {
+        let gate = terms
+            .iter()
+            .map(|&(wire, _)| (wire / 4) as usize)
+            .filter(|&gate| gate >= own_start)
+            .max()
+            .unwrap_or(emitted.saturating_sub(1));
+        let part = (gate.saturating_sub(own_start) * parts / own).min(parts - 1);
+        for &(wire, _) in terms {
+            if let Some((stage, _)) = stages.stage_of((wire / 4) as usize) {
+                read[part][stage].insert(wire);
+            }
+        }
+    }
+    Ok(read
+        .into_iter()
+        .map(|stages| stages.iter().map(BTreeSet::len).collect())
+        .collect())
+}
+
+/// A combination a constraint names of one page's or one stage's wires, as
+/// the slot that carries it holds it: scaled so that its first term's
+/// coefficient is one. Gives the scale, the slot's combination and the key
+/// two constraints that name the same combination share.
+fn normalized<F: Field>(component: &[(u32, F)]) -> (F, Vec<(u32, F)>, Vec<u8>) {
+    let scale = component[0].1;
+    let inverse = scale.invert().expect("expanded terms are nonzero");
+    let combination: Vec<(u32, F)> = component
+        .iter()
+        .map(|&(wire, coeff)| (wire, coeff * inverse))
+        .collect();
+    let mut key = Vec::new();
+    for &(wire, coeff) in &combination {
+        key.extend_from_slice(&wire.to_le_bytes());
+        key.extend_from_slice(coeff.to_bytes().as_ref());
+    }
+    (scale, combination, key)
+}
+
+/// What the pages apart hold: the constraints that name the wires of
+/// stages alone and that none of the other pages loads the stages of
+/// together, each with its home page and its slots in the carry stage of
+/// that page's group.
+struct Related<F> {
+    homes: BTreeMap<u32, (u32, Vec<Link<F>>)>,
+    /// Each group's slots.
+    slots: Vec<Vec<Vec<(u32, F)>>>,
+}
+
+impl<F: Field> Related<F> {
+    /// Gives each such constraint of `recording` to the first group whose
+    /// pages load every stage it names and whose carry stage, of
+    /// `holds(group)` values, has a slot left for each combination the
+    /// constraint names of a stage its home does not load. Its home is the
+    /// group's first page that loads the last stage it names. A constraint
+    /// no group takes is left to the other pages.
+    fn of(recording: &Recording<F>, stages: &Stages, holds: impl Fn(usize) -> usize) -> Self {
+        let groups = stages.apart.len();
+        let mut related = Related {
+            homes: BTreeMap::new(),
+            slots: vec![Vec::new(); groups],
+        };
+        if groups == 0 || stages.check().is_err() {
+            return related;
+        }
+        let others = stages.num_apart()..stages.num_pages();
+        let mut keys: Vec<BTreeMap<Vec<u8>, u32>> = vec![BTreeMap::new(); groups];
+        'constraints: for (index, (_, terms)) in recording.constraints.iter().enumerate() {
+            let mut staged: BTreeMap<usize, Vec<(u32, F)>> = BTreeMap::new();
+            for &(wire, coeff) in terms {
+                let gate = (wire / 4) as usize;
+                if gate == 0 {
+                    continue;
+                }
+                match stages.stage_of(gate) {
+                    Some((stage, _)) => staged.entry(stage).or_default().push((wire, coeff)),
+                    None => continue 'constraints,
+                }
+            }
+            let loads_all = |page: usize| staged.keys().all(|&stage| stages.loaded(page, stage));
+            if staged.len() < 2 || others.clone().any(loads_all) {
+                continue;
+            }
+            let carries = keys.iter_mut().zip(related.slots.iter_mut());
+            for (group, (keys, slots)) in carries.enumerate() {
+                let loader =
+                    |stage: usize| stages.group(group).find(|&page| stages.loaded(page, stage));
+                let Some(home) = staged.keys().next_back().and_then(|&stage| loader(stage)) else {
+                    continue;
+                };
+                let foreign: Option<Vec<_>> = staged
+                    .iter()
+                    .filter(|&(&stage, _)| !stages.loaded(home, stage))
+                    .map(|(&stage, component)| Some((stage, loader(stage)?, normalized(component))))
+                    .collect();
+                let Some(foreign) = foreign else {
+                    continue;
+                };
+                let fresh = foreign
+                    .iter()
+                    .map(|(_, _, (_, _, key))| key)
+                    .filter(|key| !keys.contains_key(*key))
+                    .collect::<BTreeSet<_>>()
+                    .len();
+                if slots.len() + fresh > holds(group) {
+                    continue;
+                }
+                let links = foreign
+                    .into_iter()
+                    .map(|(stage, exporter, (scale, combination, key))| {
+                        let next = u32::try_from(slots.len()).expect("slots fit a u32");
+                        let (slot, defines) = match keys.entry(key) {
+                            Entry::Vacant(entry) => {
+                                entry.insert(next);
+                                slots.push(combination);
+                                (next, true)
+                            }
+                            Entry::Occupied(entry) => (*entry.get(), false),
+                        };
+                        Link {
+                            source: Source::Stage(stage as u32),
+                            exporter: exporter as u32,
+                            slot,
+                            scale,
+                            defines,
+                            local: false,
+                        }
+                    })
+                    .collect();
+                let index = u32::try_from(index).expect("constraints fit a u32");
+                related.homes.insert(index, (home as u32, links));
+                break;
+            }
+        }
+        related
+    }
+
+    /// Whether a page apart holds constraint `index`.
+    fn holds(&self, index: usize) -> bool {
+        u32::try_from(index).is_ok_and(|index| self.homes.contains_key(&index))
+    }
+
+    /// Each group's pages and the gates of its carry stage, which ends at
+    /// gate `limit` and is as large as its slots take.
+    fn layout(&self, stages: &Stages, limit: usize) -> Vec<(Range<usize>, Range<usize>)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .map(|(group, slots)| {
+                let gates = slots.len().div_ceil(2);
+                (stages.group(group), limit.saturating_sub(gates)..limit)
+            })
+            .collect()
+    }
 }
 
 /// Which of the gates that feed a gate a [`Placement`] places first.
@@ -825,7 +1397,8 @@ impl Placement {
 /// The planning driver: its wires are the gates' wires or linear
 /// combinations of them, kept expanded.
 struct Prober<F> {
-    /// The linear combinations [`Driver::add`] made, over gates' wires.
+    /// The linear combinations [`Driver::add`] made, each over gates'
+    /// wires and the combinations made before it.
     derived: Vec<Vec<(u32, F)>>,
     recording: Recording<F>,
 }
@@ -833,15 +1406,29 @@ struct Prober<F> {
 impl<F: Field> Prober<F> {
     /// Expands raw terms into a combination of gates' wires, in wire order
     /// and without zero terms.
+    ///
+    /// A combination names only combinations made before it, so the ones
+    /// the terms reach are taken latest first, each once with all it
+    /// counts for: a sum built one term at a time expands in one pass
+    /// over its terms, and a combination that several others name is not
+    /// walked again for each.
     fn expand(&self, terms: Vec<(u32, F)>) -> Vec<(u32, F)> {
         let mut sum: BTreeMap<u32, F> = BTreeMap::new();
-        for (wire, coeff) in terms {
-            if wire & DERIVED == 0 {
-                *sum.entry(wire).or_insert(F::ZERO) += coeff;
+        let mut pending: BTreeMap<u32, F> = BTreeMap::new();
+        let mut take = |pending: &mut BTreeMap<u32, F>, wire: u32, coeff: F| {
+            let (into, key) = if wire & DERIVED == 0 {
+                (&mut sum, wire)
             } else {
-                for &(inner, scale) in &self.derived[(wire ^ DERIVED) as usize] {
-                    *sum.entry(inner).or_insert(F::ZERO) += scale * coeff;
-                }
+                (pending, wire ^ DERIVED)
+            };
+            *into.entry(key).or_insert(F::ZERO) += coeff;
+        };
+        for (wire, coeff) in terms {
+            take(&mut pending, wire, coeff);
+        }
+        while let Some((index, coeff)) = pending.pop_last() {
+            for &(inner, scale) in &self.derived[index as usize] {
+                take(&mut pending, inner, scale * coeff);
             }
         }
         sum.into_iter()
@@ -879,15 +1466,17 @@ impl<'dr, F: Field> Driver<'dr> for Prober<F> {
     const ONE: u32 = ONE;
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> u32 {
-        let expanded = self.expand(lc(Terms::new()).terms);
-        if let [(wire, coeff)] = expanded[..]
+        // Kept as made: a combination is expanded where a constraint or
+        // the public output names it.
+        let terms = lc(Terms::new()).terms;
+        if let [(wire, coeff)] = terms[..]
             && coeff == F::ONE
         {
             return wire;
         }
         let index = u32::try_from(self.derived.len()).expect("combinations fit a wire");
         assert!(index < DERIVED, "combinations fit a wire");
-        self.derived.push(expanded);
+        self.derived.push(terms);
         DERIVED | index
     }
 
@@ -941,6 +1530,9 @@ struct Arranger<'a, F> {
     stages: &'a Stages,
     slots: Vec<Vec<(u32, F)>>,
     slot_keys: BTreeMap<Vec<u8>, u32>,
+    /// The slots of each group's carry stage, for the pages that share
+    /// one, and their keys.
+    local: Vec<(Vec<Vec<(u32, F)>>, BTreeMap<Vec<u8>, u32>)>,
     pages: Vec<PageAcc>,
     cross_constraints: usize,
     /// Each carried wire, with the last page that names it.
@@ -955,9 +1547,9 @@ impl<F: Field> Arranger<'_, F> {
         Some(*page as usize)
     }
 
-    /// The page that holds slots to stage `stage`'s wires.
-    fn exporter(&self, stage: usize) -> Result<usize> {
-        match self.stages.exporter(stage) {
+    /// The page that holds slots to stage `stage`'s wires for page `home`.
+    fn exporter(&self, stage: usize, home: usize) -> Result<usize> {
+        match self.stages.exporter(stage, home) {
             Some(page) => Ok(page),
             None => refuse(format!(
                 "no page loads stage {stage}, which the circuit reads"
@@ -1001,10 +1593,10 @@ impl<F: Field> Arranger<'_, F> {
                 let here = at
                     .checked_sub(1)
                     .and_then(|gate| self.page_of(gate))
-                    .unwrap_or(0);
+                    .unwrap_or(self.stages.num_apart());
                 match staged.keys().next_back() {
                     Some(&last) if !staged.keys().all(|&s| self.stages.loaded(here, s)) => {
-                        self.exporter(last)?
+                        self.exporter(last, here)?
                     }
                     _ => here,
                 }
@@ -1025,7 +1617,7 @@ impl<F: Field> Arranger<'_, F> {
             if !self.stages.loaded(home, stage) {
                 foreign.push((
                     Source::Stage(stage as u32),
-                    self.exporter(stage)?,
+                    self.exporter(stage, home)?,
                     component,
                 ));
             }
@@ -1033,37 +1625,45 @@ impl<F: Field> Arranger<'_, F> {
 
         let mut links = Vec::new();
         for (source, exporter, component) in foreign {
-            let scale = component[0].1;
-            let inverse = scale.invert().expect("expanded terms are nonzero");
-            let normalized: Vec<(u32, F)> = component
-                .iter()
-                .map(|&(wire, coeff)| (wire, coeff * inverse))
-                .collect();
-            let mut key = Vec::new();
-            for &(wire, coeff) in &normalized {
-                key.extend_from_slice(&wire.to_le_bytes());
-                key.extend_from_slice(coeff.to_bytes().as_ref());
+            let (scale, normalized, key) = normalized(&component);
+            for &(wire, _) in &normalized {
                 let last = self.carried.entry(wire).or_insert(home);
                 *last = (*last).max(home);
                 self.pages[home].imported_wires.insert(wire);
                 self.pages[exporter].exported_wires.insert(wire);
             }
-            let next = u32::try_from(self.slots.len()).expect("slots fit a u32");
-            let (slot, defines) = match self.slot_keys.entry(key) {
+            // On the carry stage the two pages share, if they share one.
+            let shared = self
+                .stages
+                .local_of(home)
+                .filter(|&group| self.stages.local_of(exporter) == Some(group));
+            let (slots, keys) = match shared {
+                Some(group) => {
+                    let (slots, keys) = &mut self.local[group];
+                    (slots, keys)
+                }
+                None => (&mut self.slots, &mut self.slot_keys),
+            };
+            let next = u32::try_from(slots.len()).expect("slots fit a u32");
+            let (slot, defines) = match keys.entry(key) {
                 Entry::Vacant(entry) => {
                     entry.insert(next);
-                    self.slots.push(normalized);
+                    slots.push(normalized);
                     (next, true)
                 }
                 Entry::Occupied(entry) => (*entry.get(), false),
             };
-            self.pages[home].imported_slots.insert(slot);
+            let local = shared.is_some();
+            self.pages[home]
+                .imported_slots
+                .insert(slot | (u32::from(local) << 31));
             links.push(Link {
                 source,
                 exporter: u32::try_from(exporter).expect("pages fit a u32"),
                 slot,
                 scale,
                 defines,
+                local,
             });
         }
         if !links.is_empty() {
@@ -1073,12 +1673,14 @@ impl<F: Field> Arranger<'_, F> {
     }
 }
 
-/// Homes `recording`'s constraints on the pages of `layout`.
+/// Homes `recording`'s constraints on the pages of `layout`: those
+/// `related` holds on the pages apart, and the rest on the others.
 fn arrange<F: Field>(
     recording: &Recording<F>,
     placement: &Placement,
     stages: &Stages,
     layout: Layout,
+    related: &Related<F>,
 ) -> Result<(Plan<F>, PagingReport)> {
     stages.check()?;
     let pages = stages.num_pages();
@@ -1100,10 +1702,38 @@ fn arrange<F: Field>(
             layout.starts.len()
         ));
     }
+    if layout.apart.len() != stages.apart.len()
+        || layout.apart.iter().enumerate().any(|(group, (of, carry))| {
+            *of != stages.group(group) || of.clone().any(|page| carry.start < layout.firsts[page])
+        })
+    {
+        return refuse(
+            "a layout's carry stages for the pages apart are not one for each group of them, \
+             past what its pages load"
+                .into(),
+        );
+    }
+    if layout.local.len() != stages.local.len()
+        || layout
+            .local
+            .iter()
+            .zip(&stages.local)
+            .any(|((of, gates), pages)| {
+                of != pages
+                    || gates.end > layout.carry.start
+                    || of.clone().any(|page| gates.start < layout.firsts[page])
+            })
+    {
+        return refuse(
+            "a layout's carry stages for the pages that share one are not one for each group \
+             of them, past what its pages load and before the circuit's"
+                .into(),
+        );
+    }
     for page in 0..pages {
         let end = layout.starts.get(page + 1).copied().unwrap_or(num_gates);
         let gates = end - layout.starts[page];
-        let idle = stages.idle.contains(&page) && gates > 0;
+        let idle = (stages.idle.contains(&page) || page < stages.num_apart()) && gates > 0;
         if layout.firsts[page] < stages.first(page) || gates > layout.room(page) || idle {
             return refuse(format!(
                 "page {page} holds {gates} gates of the circuit's own from gate {}, which the \
@@ -1111,7 +1741,7 @@ fn arrange<F: Field>(
                  room for",
                 layout.firsts[page],
                 stages.first(page),
-                layout.carry.start,
+                layout.carry_of(page).start,
             ));
         }
     }
@@ -1135,6 +1765,11 @@ fn arrange<F: Field>(
         stages,
         slots: Vec::new(),
         slot_keys: BTreeMap::new(),
+        local: stages
+            .local
+            .iter()
+            .map(|_| (Vec::new(), BTreeMap::new()))
+            .collect(),
         pages: (0..pages).map(|_| PageAcc::default()).collect(),
         cross_constraints: 0,
         carried: BTreeMap::new(),
@@ -1142,10 +1777,17 @@ fn arrange<F: Field>(
     let mut homes = Vec::with_capacity(recording.constraints.len());
     let mut links = BTreeMap::new();
     for (index, (at, terms)) in recording.constraints.iter().enumerate() {
-        let (home, read) = arranger.home(terms, None, *at)?;
+        let index = u32::try_from(index).expect("constraints fit a u32");
+        let (home, read) = match related.homes.get(&index) {
+            Some((home, read)) => {
+                arranger.pages[*home as usize].constraints += 1;
+                (*home as usize, read.clone())
+            }
+            None => arranger.home(terms, None, *at)?,
+        };
         homes.push(u32::try_from(home).expect("pages fit a u32"));
         if !read.is_empty() {
-            links.insert(u32::try_from(index).expect("constraints fit a u32"), read);
+            links.insert(index, read);
         }
     }
     // The public output binds one instance polynomial, so one page holds
@@ -1196,8 +1838,15 @@ fn arrange<F: Field>(
         carried_wires: arranger.carried.len(),
         slots: arranger.slots.len(),
         cuts,
+        apart: related.slots.iter().map(Vec::len).collect(),
+        local: arranger
+            .local
+            .iter()
+            .map(|(slots, _)| slots.len())
+            .collect(),
     };
     let slots = arranger.slots;
+    let local = arranger.local.into_iter().map(|(slots, _)| slots).collect();
     let plan = Plan {
         layout,
         stages: stages.clone(),
@@ -1206,6 +1855,8 @@ fn arrange<F: Field>(
         links,
         outputs,
         slots,
+        apart: related.slots.clone(),
+        local,
         places,
         held,
     };
@@ -1394,8 +2045,9 @@ fn diverged(what: &str) -> Error {
 /// A constraint that names slots of the carry stage, kept until the page
 /// has allocated the carry stage's gates.
 struct Deferred<W, F: Field> {
-    /// The slots, with what the constraint multiplies each by.
-    slots: Vec<(u32, Coeff<F>)>,
+    /// The slots, each with whether it is of the carry stage the page
+    /// shares with its group, and what the constraint multiplies each by.
+    slots: Vec<((bool, u32), Coeff<F>)>,
     /// The rest of the constraint.
     ops: Vec<Op<W, F>>,
 }
@@ -1420,6 +2072,9 @@ struct Pager<'a, F: Field, D: DriverTypes<ImplField = F>> {
     deferred: Vec<Deferred<D::ImplWire, F>>,
     /// The $a$ and $d$ wires of the carry stage's gates, once allocated.
     carry: Option<Vec<[D::ImplWire; 2]>>,
+    /// Those of the gates of the carry stage the page shares with its
+    /// group, if it shares one.
+    local: Vec<[D::ImplWire; 2]>,
 }
 
 impl<'a, F: Field, D: DriverTypes<ImplField = F>> Pager<'a, F, D> {
@@ -1434,6 +2089,7 @@ impl<'a, F: Field, D: DriverTypes<ImplField = F>> Pager<'a, F, D> {
             own: 0,
             deferred: Vec::new(),
             carry: None,
+            local: Vec::new(),
         }
     }
 
@@ -1462,9 +2118,13 @@ impl<'a, F: Field, D: DriverTypes<ImplField = F>> Pager<'a, F, D> {
     }
 
     /// The wire of the carry stage that holds slot `slot`.
-    fn slot(&self, slot: u32) -> Result<&D::ImplWire> {
-        self.carry
-            .as_ref()
+    fn slot(&self, (local, slot): (bool, u32)) -> Result<&D::ImplWire> {
+        let carry = if local {
+            Some(&self.local)
+        } else {
+            self.carry.as_ref()
+        };
+        carry
             .and_then(|carry| carry.get((slot / 2) as usize))
             .map(|wires| &wires[(slot % 2) as usize])
             .ok_or_else(|| diverged("a slot past the carry stage"))
@@ -1484,22 +2144,30 @@ impl<F: Field, D: DriverTypes<ImplField = F>> Pager<'_, F, D> {
         self.reserve()?;
         let plan = self.plan;
         let layout = &plan.layout;
-        let mut carry = Vec::with_capacity(layout.carry.len());
-        if !layout.carry.is_empty() {
-            let next = layout.firsts[self.page] + self.own;
-            let blanks = layout
-                .carry
+        // The carry stage the page shares with its group, if it shares
+        // one, then the one it loads otherwise, in gate order.
+        let mut next = layout.firsts[self.page] + self.own;
+        let mut carries = [Vec::new(), Vec::new()];
+        let stages = [layout.local_of(self.page), Some(layout.carry_of(self.page))];
+        for (gates, wires) in stages.into_iter().zip(&mut carries) {
+            let Some(gates) = gates.filter(|gates| !gates.is_empty()) else {
+                continue;
+            };
+            let blanks = gates
                 .start
                 .checked_sub(next)
-                .ok_or_else(|| diverged("a page's gates reach the carry stage"))?;
+                .ok_or_else(|| diverged("a page's gates reach a carry stage"))?;
             for _ in 0..blanks {
                 self.blank()?;
             }
-            for _ in layout.carry.clone() {
+            for _ in gates.clone() {
                 let [a, _, _, d] = self.blank()?;
-                carry.push([a, d]);
+                wires.push([a, d]);
             }
+            next = gates.end;
         }
+        let [local, carry] = carries;
+        self.local = local;
         self.carry = Some(carry);
 
         for deferred in core::mem::take(&mut self.deferred) {
@@ -1668,7 +2336,7 @@ impl<'dr, F: Field, D: Driver<'dr, F = F>> Driver<'dr> for Pager<'_, F, D> {
             self.deferred.push(Deferred {
                 slots: links
                     .iter()
-                    .map(|link| (link.slot, Coeff::Arbitrary(link.scale)))
+                    .map(|link| ((link.local, link.slot), Coeff::Arbitrary(link.scale)))
                     .collect(),
                 ops: lc(PageTerms::keeping(Select::All)).into_kept(),
             });
@@ -1685,7 +2353,10 @@ impl<'dr, F: Field, D: Driver<'dr, F = F>> Driver<'dr> for Pager<'_, F, D> {
                     Source::Stage(stage) => Select::Stage(stage),
                 };
                 self.deferred.push(Deferred {
-                    slots: vec![(link.slot, Coeff::NegativeArbitrary(link.scale))],
+                    slots: vec![(
+                        (link.local, link.slot),
+                        Coeff::NegativeArbitrary(link.scale),
+                    )],
                     ops: lc(PageTerms::keeping(select)).into_kept(),
                 });
             }
@@ -1718,7 +2389,7 @@ impl<'a, 'dr, F: Field, D: Driver<'dr, F = F>> WireMap<F> for Exporter<'_, 'a, '
             .iter()
             .filter(|link| link.defines && link.exporter as usize == pager.page)
         {
-            let slot = pager.slot(link.slot)?.clone();
+            let slot = pager.slot((link.local, link.slot))?.clone();
             let part = match link.source {
                 Source::Page(_) => wire.own.as_ref(),
                 Source::Stage(stage) => wire.of_stage(stage),
@@ -1756,7 +2427,7 @@ impl<'a, 'dr, F: Field, D: Driver<'dr, F = F>> WireMap<F> for Resolver<'_, 'a, '
         self.index += 1;
         let slots = links
             .iter()
-            .map(|link| pager.slot(link.slot).cloned())
+            .map(|link| pager.slot((link.local, link.slot)).cloned())
             .collect::<Result<Vec<_>>>()?;
         Ok(pager.inner.add(|inner| {
             let mut inner = links.iter().zip(&slots).fold(inner, |inner, (link, slot)| {
@@ -1893,7 +2564,13 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
     pub fn new(circuit: C, stages: &Stages, layout: Layout) -> Result<Self> {
         let recording = Recording::of(&circuit)?;
         let placement = Placement::of(&recording, stages.own_start(), Feeders::Deepest);
-        let planned = arrange(&recording, &placement, stages, layout)?;
+        let related = Related::of(&recording, stages, |group| {
+            layout
+                .apart
+                .get(group)
+                .map_or(0, |(_, carry)| 2 * carry.len())
+        });
+        let planned = arrange(&recording, &placement, stages, layout, &related)?;
         planned.0.fits()?;
         Ok(Self::planned(circuit, planned))
     }
@@ -1919,6 +2596,24 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
                 stages.own_start()
             ));
         };
+        #[cfg(feature = "std")]
+        let key = recording.digest(stages, limit);
+        #[cfg(feature = "std")]
+        if let Some(planned) = memo::get::<(Plan<F>, PagingReport)>(&key) {
+            return Ok(Self::planned(circuit, planned));
+        }
+
+        // What the pages apart hold is the same wherever the cuts go: each
+        // group's carry stage may take every gate past what its pages load.
+        let related = Related::of(&recording, stages, |group| {
+            let first = stages
+                .group(group)
+                .map(|page| stages.first(page))
+                .max()
+                .unwrap_or(1);
+            2 * limit.saturating_sub(first)
+        });
+
         // With the gates that wait placed beside their use, either way,
         // and with every gate where the circuit allocates it: whichever
         // carries least.
@@ -1928,12 +2623,36 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
             Placement::allocated(&recording, stages.own_start()),
         ];
         let cuts = placements.iter().map(|placement| {
+            let costs = Costs::of(&recording, placement, stages, &related);
             // A larger carry stage shrinks the pages, which moves the cuts
-            // and may change what they carry: grow it until it holds.
+            // and may change what they carry: grow each until it holds.
+            // A carry stage is first sized halfway to what the cuts last
+            // made it hold: the pages of a group that shares one fill the
+            // room a smaller stage leaves them and then read more off it,
+            // so the size that holds is between the two. If the sizes do
+            // not settle so, they only grow, by an eighth at least.
+            let sized = |rounds: usize, needed: usize, gates: usize| {
+                if rounds <= SETTLING {
+                    match (needed + gates).div_ceil(2) {
+                        0 => 0,
+                        halfway => halfway + 1,
+                    }
+                } else if needed > gates {
+                    needed.max(gates + gates / 8 + 1)
+                } else {
+                    gates
+                }
+            };
+            let mut rounds = 0;
             let mut carry_gates = 0;
+            let mut local_gates = vec![0; stages.local.len()];
             loop {
-                let layout = match Layout::fit(&recording, placement, stages, limit, carry_gates) {
-                    Err(Error::GateBoundExceeded { .. }) if carry_gates > 0 => {
+                let sizes = (carry_gates, &local_gates[..]);
+                let fit = Layout::fit(&costs, recording.num_gates, stages, limit, sizes, &related);
+                let layout = match fit {
+                    Err(Error::GateBoundExceeded { .. })
+                        if carry_gates > 0 || local_gates.iter().any(|&gates| gates > 0) =>
+                    {
                         return refuse(format!(
                             "the pages carry values a carry stage of {carry_gates} gates holds, \
                              which leaves them less room than the circuit's {own} gates take in \
@@ -1942,21 +2661,52 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
                     }
                     layout => layout?,
                 };
-                let planned = arrange(&recording, placement, stages, layout)?;
+                let mut planned = arrange(&recording, placement, stages, layout, &related)?;
                 let needed = planned.0.slots.len().div_ceil(2);
-                if needed <= carry_gates {
+                let needed_local: Vec<usize> = planned
+                    .0
+                    .local
+                    .iter()
+                    .map(|slots| slots.len().div_ceil(2))
+                    .collect();
+                if needed <= carry_gates
+                    && needed_local
+                        .iter()
+                        .zip(&local_gates)
+                        .all(|(needed, gates)| needed <= gates)
+                {
+                    // The cuts may have settled on less than the carry
+                    // stages they were looked for under: each takes what
+                    // its slots do, and the pages keep their gates.
+                    let start = limit - needed;
+                    planned.0.layout.carry.start = start;
+                    for ((_, gates), needed) in planned.0.layout.local.iter_mut().zip(&needed_local)
+                    {
+                        *gates = start - needed..start;
+                    }
                     return Ok(planned);
                 }
-                // By an eighth at least, so that the cuts settle in few
-                // rounds.
-                carry_gates = needed.max(carry_gates + carry_gates / 8 + 1);
+                rounds += 1;
+                carry_gates = sized(rounds, needed, carry_gates);
+                for (gates, &needed) in local_gates.iter_mut().zip(&needed_local) {
+                    *gates = sized(rounds, needed, *gates);
+                }
             }
         });
         let mut least: Option<Result<(Plan<F>, PagingReport)>> = None;
         for cut in cuts {
             least = Some(match (least, cut) {
                 (Some(Ok(least)), Ok(cut)) => {
-                    Ok(if cut.0.layout.carry.len() < least.0.layout.carry.len() {
+                    // By the gates the carry stages take over the pages
+                    // that load them.
+                    let taken = |layout: &Layout| {
+                        let shared = layout.local.iter();
+                        layout.carry.len() * layout.num_pages()
+                            + shared
+                                .map(|(pages, gates)| pages.len() * gates.len())
+                                .sum::<usize>()
+                    };
+                    Ok(if taken(&cut.0.layout) < taken(&least.0.layout) {
                         cut
                     } else {
                         least
@@ -1967,7 +2717,10 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
                 (_, cut) => cut,
             });
         }
-        Ok(Self::planned(circuit, least.expect("an order")?))
+        let planned = least.expect("an order")?;
+        #[cfg(feature = "std")]
+        memo::put(key, planned.clone());
+        Ok(Self::planned(circuit, planned))
     }
 
     /// Cuts `circuit` into as many pages of `page_gates` gates as it
@@ -1987,7 +2740,11 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         let recording = Recording::of(&circuit)?;
         let own = recording.num_gates.saturating_sub(stages.own_start());
         let pages = own.div_ceil(page_gates).max(1);
-        let stages = stages.clone().pages(pages);
+        let stages = stages
+            .clone()
+            .pages(pages)
+            .apart(Vec::new())
+            .sharing(Vec::new());
         let first = stages.first(0);
         let layout = Layout {
             own_start: stages.own_start(),
@@ -1996,9 +2753,12 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
                 .collect(),
             firsts: vec![first; pages],
             carry: first + page_gates.min(own)..usize::MAX,
+            apart: Vec::new(),
+            local: Vec::new(),
         };
         let placement = Placement::of(&recording, stages.own_start(), Feeders::Deepest);
-        let (mut plan, report) = arrange(&recording, &placement, &stages, layout)?;
+        let related = Related::of(&recording, &stages, |_| 0);
+        let (mut plan, report) = arrange(&recording, &placement, &stages, layout, &related)?;
         plan.layout.carry.end = plan.layout.carry.start + plan.slots.len().div_ceil(2);
         Ok(Self::planned(circuit, (plan, report)))
     }
@@ -2021,31 +2781,55 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         let plan = &*self.plan;
         let (layout, stages) = (&plan.layout, &plan.stages);
         let pages = plan.pages();
-        let carry: Vec<F> = plan
-            .slots
-            .iter()
-            .map(|combination| {
-                combination
-                    .iter()
-                    .map(|&(wire, coeff)| coeff * arbitrary::<F>((wire / 4) as usize, wire % 4))
-                    .sum()
-            })
-            .collect();
+        let values = |slots: &Vec<Vec<(u32, F)>>| -> Vec<F> {
+            slots
+                .iter()
+                .map(|combination| {
+                    combination
+                        .iter()
+                        .map(|&(wire, coeff)| coeff * arbitrary::<F>((wire / 4) as usize, wire % 4))
+                        .sum()
+                })
+                .collect()
+        };
+        let carry = values(&plan.slots);
+        let apart: Vec<Vec<F>> = plan.apart.iter().map(values).collect();
+        let local: Vec<Vec<F>> = plan.local.iter().map(values).collect();
+        let slots = plan.slots.len()
+            + plan
+                .apart
+                .iter()
+                .chain(&plan.local)
+                .map(Vec::len)
+                .sum::<usize>();
 
         let mut expected = Valuer::walk(&*self.circuit, |gate, kind| arbitrary(gate, kind))?;
         expected.extend(core::iter::repeat_n(F::ONE, pages - 1));
-        expected.extend(core::iter::repeat_n(F::ZERO, plan.slots.len()));
+        expected.extend(core::iter::repeat_n(F::ZERO, slots));
 
         let on_page = |page: usize| {
-            let carry = &carry;
+            // The carry stage the page loads: its group's if it is apart.
+            let (gates, carry) = match stages.group_of(page) {
+                Some(group) => (&layout.apart[group].1, &apart[group]),
+                None => (&layout.carry, &carry),
+            };
+            // And the one it shares with its group, if it shares one.
+            let shared = stages
+                .local_of(page)
+                .map(|group| (&layout.local[group].1, &local[group]));
             move |local: usize, kind: u32| {
                 if local == 0 {
                     return arbitrary(0, kind);
                 }
-                if layout.carry.contains(&local) {
-                    // A gate of the carry stage: its two values are its
+                let loaded = [Some((gates, carry)), shared];
+                if let Some((gates, carry)) = loaded
+                    .into_iter()
+                    .flatten()
+                    .find(|(gates, _)| gates.contains(&local))
+                {
+                    // A gate of a carry stage: its two values are its
                     // slots', and nothing names its other wires.
-                    let gate = local - layout.carry.start;
+                    let gate = local - gates.start;
                     let slot = match kind {
                         0 => 2 * gate,
                         3 => 2 * gate + 1,
@@ -2158,14 +2942,25 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         traces: &[Option<Trace<F>>],
         stages: &[&sparse::Polynomial<F, R>],
     ) -> Result<Vec<F>> {
-        let plan = &*self.plan;
         assert!(
-            traces.is_empty() || traces.len() == plan.pages(),
+            traces.is_empty() || traces.len() == self.plan.pages(),
             "a trace for each page"
         );
+        self.values(&self.plan.slots, traces, stages)
+    }
+
+    /// The values of `slots`, off the pages' traces and the stages'
+    /// polynomials.
+    fn values<R: Rank>(
+        &self,
+        slots: &[Vec<(u32, F)>],
+        traces: &[Option<Trace<F>>],
+        stages: &[&sparse::Polynomial<F, R>],
+    ) -> Result<Vec<F>> {
+        let plan = &*self.plan;
         let mut coeffs: Vec<Option<Vec<F>>> = stages.iter().map(|_| None).collect();
-        let mut values = Vec::with_capacity(plan.slots.len());
-        for combination in &plan.slots {
+        let mut values = Vec::with_capacity(slots.len());
+        for combination in slots {
             let mut sum = F::ZERO;
             for &(wire, coeff) in combination {
                 let (gate, kind) = ((wire / 4) as usize, wire % 4);
@@ -2237,6 +3032,106 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
     /// Fails if the carry stage does not fit rank `R`.
     pub fn carry_mask<R: Rank>(&self) -> Result<MaskObject<R>> {
         let carry = &self.plan.layout.carry;
+        staging::stage_mask(carry.start, carry.len())
+    }
+
+    /// The groups of pages that share a carry stage of their own.
+    pub fn num_local(&self) -> usize {
+        self.plan.local.len()
+    }
+
+    /// The polynomial of the carry stage the pages of group `group` share,
+    /// off the pages' traces and the stages' polynomials (see
+    /// [`carry_values`](Self::carry_values)).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the carry stage does not fit rank `R`, or as
+    /// [`carry_values`](Self::carry_values) does.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no such group, or if `traces` are not this
+    /// circuit's pages' traces.
+    pub fn local_rx<R: Rank>(
+        &self,
+        group: usize,
+        blind: impl Into<Blind<F>>,
+        traces: &[Option<Trace<F>>],
+        stages: &[&sparse::Polynomial<F, R>],
+    ) -> Result<sparse::Polynomial<F, R>> {
+        assert!(
+            traces.is_empty() || traces.len() == self.plan.pages(),
+            "a trace for each page"
+        );
+        let carry = &self.plan.layout.local[group].1;
+        staging::stage_rx(
+            blind,
+            carry.start,
+            2 * carry.len(),
+            &self.values(&self.plan.local[group], traces, stages)?,
+        )
+    }
+
+    /// The well-formedness mask of the polynomial of the carry stage the
+    /// pages of group `group` share.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the carry stage does not fit rank `R`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no such group.
+    pub fn local_mask<R: Rank>(&self, group: usize) -> Result<MaskObject<R>> {
+        let carry = &self.plan.layout.local[group].1;
+        staging::stage_mask(carry.start, carry.len())
+    }
+
+    /// The groups of pages apart, each with a carry stage of its own.
+    pub fn num_apart(&self) -> usize {
+        self.plan.apart.len()
+    }
+
+    /// The polynomial of the carry stage of group `group` of the pages
+    /// apart, whose values are read off the stages' polynomials alone (see
+    /// [`carry_values`](Self::carry_values)).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the carry stage does not fit rank `R`, or if a slot
+    /// combines the wires of a stage without a polynomial.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no such group.
+    pub fn apart_rx<R: Rank>(
+        &self,
+        group: usize,
+        blind: impl Into<Blind<F>>,
+        stages: &[&sparse::Polynomial<F, R>],
+    ) -> Result<sparse::Polynomial<F, R>> {
+        let carry = &self.plan.layout.apart[group].1;
+        staging::stage_rx(
+            blind,
+            carry.start,
+            2 * carry.len(),
+            &self.values(&self.plan.apart[group], &[], stages)?,
+        )
+    }
+
+    /// The well-formedness mask of the polynomial of the carry stage of
+    /// group `group` of the pages apart.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the carry stage does not fit rank `R`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no such group.
+    pub fn apart_mask<R: Rank>(&self, group: usize) -> Result<MaskObject<R>> {
+        let carry = &self.plan.layout.apart[group].1;
         staging::stage_mask(carry.start, carry.len())
     }
 
@@ -3019,22 +3914,23 @@ mod tests {
 
     #[test]
     fn the_cuts_follow_what_the_pages_load() -> Result<()> {
-        // The first half of the circuit reads the first stage and the
-        // second half the second: pages that load them in that order are
-        // cut between the halves, give or take the gate that squares the
-        // last sum of the first, and carry little.
-        let (aligned, ..) = branched(alloc::vec![vec![0], vec![0], vec![1], vec![1]])?;
-        let gates: Vec<usize> = aligned
-            .report()
-            .pages
-            .iter()
-            .map(|page| page.gates)
-            .collect();
-        assert!((30..=31).contains(&(gates[0] + gates[1])), "{gates:?}");
-        // In the other order, the pages that load the first stage have no
-        // room for all that reads it: the cut is whatever carries least.
-        let (crossed, ..) = branched(alloc::vec![vec![1], vec![1], vec![0], vec![0]])?;
-        crossed.check()?;
+        // The circuit's first half reads the first stage for the most part
+        // and its second half the second, and each reads every value of
+        // the other stage at some point: whichever pages load which, the
+        // eight values of the two are carried, once each, beside what
+        // crosses a cut.
+        for loads in [
+            alloc::vec![vec![0], vec![0], vec![1], vec![1]],
+            alloc::vec![vec![1], vec![1], vec![0], vec![0]],
+        ] {
+            let (paged, ..) = branched(loads)?;
+            paged.check()?;
+            let report = paged.report();
+            assert!(
+                (8..=8 + 2 * report.cuts.len()).contains(&report.slots),
+                "{report:?}"
+            );
+        }
 
         // Where every page loads everything, a cut is placed where few
         // wires are named across it: no worse than cutting evenly.
@@ -3268,6 +4164,238 @@ mod tests {
         let instance = Branched::<40>::run(witness.0, witness.1);
         assert!(page_claim_holds(paged.page(2), witness, (), &carry)?);
         assert!(page_claim_holds(paged.last(), witness, instance, &carry)?);
+        Ok(())
+    }
+
+    /// [`Branched`], with each value of [`Left`] held equal to the value of
+    /// [`Right`] at the same place: a circuit that holds one stage to
+    /// another that shares its gates.
+    struct Tied<const LEN: usize>;
+
+    impl<const LEN: usize> MultiStageCircuit<Fp, R> for Tied<LEN> {
+        type Last = Right;
+        type Instance<'source> = Fp;
+        type Witness<'source> = ([Fp; 4], [Fp; 4]);
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            instance: DriverValue<D, Fp>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, &mut Standard::new(), instance)
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+            witness: DriverValue<D, ([Fp; 4], [Fp; 4])>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>>
+        where
+            Self: 'dr,
+        {
+            let (left, builder) = builder.add_stage::<Left>()?;
+            let (right, builder) = builder.add_stage::<Right>()?;
+            let dr = builder.finish();
+            let left = left.unenforced(dr, witness.as_ref().map(|w| w.0))?;
+            let right = right.unenforced(dr, witness.as_ref().map(|w| w.1))?;
+            for place in 0..4 {
+                dr.enforce_zero(|lc| lc.add(left[place].wire()).sub(right[place].wire()))?;
+            }
+            let mut acc = left[0].clone();
+            for step in 0..LEN {
+                let (near, far) = if step < LEN / 2 {
+                    (&left, &right)
+                } else {
+                    (&right, &left)
+                };
+                acc = acc.square(dr)?;
+                acc = acc.add(dr, &near[step % 4]);
+                if step % 7 == 3 {
+                    acc = acc.add(dr, &far[step % 4]);
+                }
+            }
+            Ok(WithAux::new(acc, D::unit()))
+        }
+    }
+
+    /// Whether each page's claim holds, for `Tied<40>` in two groups of two
+    /// pages apart and two more pages, with `right` in the second stage.
+    fn tied_claims(
+        paged: &Paged<Fp, MultiStage<Fp, R, Tied<40>>>,
+        right: [u64; 4],
+    ) -> Result<Vec<bool>> {
+        let mut rng = rand::rng();
+        let witness = (LEFT.map(Fp::from), right.map(Fp::from));
+        let instance = Branched::<40>::run(witness.0, witness.1);
+        let rxs = [
+            <Left as StageExt<Fp, R>>::rx(Blind::<Fp>::random(&mut rng), witness.0)?,
+            <Right as StageExt<Fp, R>>::rx(Blind::<Fp>::random(&mut rng), witness.1)?,
+        ];
+        let stages = [&rxs[0], &rxs[1]];
+        let traces = [
+            None,
+            None,
+            None,
+            None,
+            Some(paged.page(4).trace(witness)?.into_output()),
+            Some(paged.last().trace(witness)?.into_output()),
+        ];
+        let carry = paged.carry_rx::<R>(Blind::<Fp>::random(&mut rng), &traces, &stages)?;
+        let apart = [
+            paged.apart_rx::<R>(0, Blind::<Fp>::random(&mut rng), &stages)?,
+            paged.apart_rx::<R>(1, Blind::<Fp>::random(&mut rng), &stages)?,
+        ];
+        // A page's claim is on the stage it loads and its carry stage.
+        let mut holds = Vec::new();
+        for page in 0..6 {
+            let mut loaded = if page < 4 {
+                apart[page / 2].clone()
+            } else {
+                carry.clone()
+            };
+            loaded.add_assign(&rxs[page % 2]);
+            holds.push(if page < 5 {
+                page_claim_holds(paged.page(page), witness, (), &loaded)?
+            } else {
+                page_claim_holds(paged.last(), witness, instance, &loaded)?
+            });
+        }
+        Ok(holds)
+    }
+
+    #[test]
+    fn pages_apart_hold_what_ties_two_stages() -> Result<()> {
+        // Two groups of two pages apart, a page for each stage, then two
+        // pages for the circuit's gates.
+        let stages = Stages::of::<Fp, R, Tied<40>>()
+            .loading(alloc::vec![
+                vec![0],
+                vec![1],
+                vec![0],
+                vec![1],
+                vec![0],
+                vec![1]
+            ])
+            .apart(alloc::vec![2, 2]);
+        let tied = || MultiStage::<Fp, R, _>::new(Tied::<40>);
+
+        // The first group's carry stage has the room for every tie: the
+        // second holds none, and neither do the other pages.
+        let paged = Paged::cut(tied(), &stages, limit())?;
+        assert_eq!(paged.report().apart, [4, 0]);
+        let gates: Vec<usize> = paged.report().pages.iter().map(|page| page.gates).collect();
+        assert_eq!(gates[..4], [0; 4]);
+        assert_eq!(gates.iter().sum::<usize>(), 40);
+        let layout = paged.layout();
+        assert_eq!(layout.apart[0], (0..2, limit() - 2..limit()));
+        assert_eq!(layout.apart[1], (2..4, limit()..limit()));
+        assert_eq!(layout.window(0), 3..limit() - 2);
+        assert_eq!(layout.window(1), layout.window(0));
+        for group in 0..2 {
+            let _: &dyn WiringObject<Fp, R> = &paged.apart_mask::<R>(group)?.into_inner();
+        }
+        paged.check()?;
+        assert_eq!(tied_claims(&paged, LEFT)?, [true; 6]);
+        // A second stage that is not the first fails the claim of the
+        // page that holds the ties, and of the pages that read it.
+        let holds = tied_claims(&paged, [3, 5, 7, 12])?;
+        assert_eq!(holds[..4], [true, false, true, true]);
+
+        // With a carry stage of one gate each, the groups hold two ties
+        // each; with less, the other pages carry what is left.
+        let own = paged.report().num_gates - stages.own_start();
+        let spread = |first: usize, second: usize| -> Result<_> {
+            let mut layout = Layout::fill(&stages, own, limit(), 8)?;
+            layout.apart[0].1 = limit() - first..limit();
+            layout.apart[1].1 = limit() - second..limit();
+            let paged = Paged::new(tied(), &stages, layout)?;
+            paged.check()?;
+            assert_eq!(tied_claims(&paged, LEFT)?, [true; 6]);
+            Ok(paged.report().apart.clone())
+        };
+        assert_eq!(spread(1, 1)?, [2, 2]);
+        assert_eq!(spread(1, 0)?, [2, 0]);
+        assert_eq!(spread(0, 0)?, [0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn pages_that_share_a_carry_stage_keep_theirs_off_the_others() -> Result<()> {
+        // Each stage is loaded by one page, then read by a page that loads
+        // none; a last page loads the second, and the circuit takes them
+        // all. With each pair of pages
+        // sharing a carry stage, what the second of a pair reads of the
+        // first, and of the stage the first loads, is carried there.
+        let witness = (LEFT.map(Fp::from), RIGHT.map(Fp::from));
+        let instance = Branched::<96>::run(witness.0, witness.1);
+        let stages = Stages::of::<Fp, R, Branched<96>>().loading(alloc::vec![
+            vec![0],
+            vec![],
+            vec![1],
+            vec![],
+            vec![1]
+        ]);
+        let branched = || MultiStage::<Fp, R, _>::new(Branched::<96>);
+        let plain = Paged::cut(branched(), &stages, limit())?;
+        let stages = stages.sharing(alloc::vec![0..2, 2..4]);
+        let paged = Paged::cut(branched(), &stages, limit())?;
+        paged.check()?;
+        assert_eq!(paged.num_local(), 2);
+        let report = paged.report();
+        assert!(report.local.iter().all(|&slots| slots > 0), "{report:?}");
+        assert!(report.slots < plain.report().slots, "{report:?}");
+        // A shared carry stage is right before the circuit's, and its
+        // pages' own gates end where it starts.
+        let layout = paged.layout();
+        for (group, (pages, gates)) in layout.local.iter().enumerate() {
+            assert_eq!(gates.end, layout.carry.start);
+            for page in pages.clone() {
+                assert_eq!(layout.window(page).end, gates.start);
+            }
+            let _: &dyn WiringObject<Fp, R> = &paged.local_mask::<R>(group)?.into_inner();
+        }
+        assert_eq!(layout.window(4).end, layout.carry.start);
+
+        let mut rng = rand::rng();
+        let mut traces = Vec::new();
+        for index in 0..4 {
+            traces.push(Some(paged.page(index).trace(witness)?.into_output()));
+        }
+        traces.push(Some(paged.last().trace(witness)?.into_output()));
+        let rxs = [
+            <Left as StageExt<Fp, R>>::rx(Blind::<Fp>::random(&mut rng), witness.0)?,
+            <Right as StageExt<Fp, R>>::rx(Blind::<Fp>::random(&mut rng), witness.1)?,
+        ];
+        let stage_rxs = [&rxs[0], &rxs[1]];
+        let carry = paged.carry_rx::<R>(Blind::<Fp>::random(&mut rng), &traces, &stage_rxs)?;
+        let local = [
+            paged.local_rx::<R>(0, Blind::<Fp>::random(&mut rng), &traces, &stage_rxs)?,
+            paged.local_rx::<R>(1, Blind::<Fp>::random(&mut rng), &traces, &stage_rxs)?,
+        ];
+        // A page's claim is on the circuit's carry stage, the one it
+        // shares, and the stages it loads: with the other pair's, it
+        // fails.
+        let holds = |page: usize, shared: Option<usize>| -> Result<bool> {
+            let mut loaded = carry.clone();
+            if let Some(group) = shared {
+                loaded.add_assign(&local[group]);
+            }
+            for &stage in &stages.loads[page] {
+                loaded.add_assign(&rxs[stage]);
+            }
+            if page < 4 {
+                page_claim_holds(paged.page(page), witness, (), &loaded)
+            } else {
+                page_claim_holds(paged.last(), witness, instance, &loaded)
+            }
+        };
+        for page in 0..4 {
+            assert!(holds(page, Some(page / 2))?, "page {page}");
+            assert!(!holds(page, Some(1 - page / 2))?, "page {page}");
+        }
+        assert!(holds(4, None)?);
         Ok(())
     }
 
