@@ -479,14 +479,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
 
         // Then, register internal circuits and masks.
-        self.native_registry = crate::internal::native::register_all::<C, R, HEADER_SIZE>(
-            self.native_registry,
-            params,
-            log2_circuits,
-            self.stage_size,
-            native_tag,
-            native_domain,
-        )?;
+        let native_plans;
+        (self.native_registry, native_plans) =
+            crate::internal::native::register_all::<C, R, HEADER_SIZE>(
+                self.native_registry,
+                params,
+                log2_circuits,
+                self.stage_size,
+                native_tag,
+                native_domain,
+            )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
         // because it is the one step allowed to declare `Dummy` inputs;
@@ -524,7 +526,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = crate::internal::nested::register_all::<C, R>(
+        let nested_plans;
+        (self.nested_registry, nested_plans) = crate::internal::nested::register_all::<C, R>(
             self.nested_registry,
             params,
             nested_tag,
@@ -557,6 +560,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_source: self.nested_source,
             native_registry,
             nested_registry,
+            native_plans,
+            nested_plans,
             params,
             num_application_steps: self.num_application_steps,
             output_headers: self.output_headers,
@@ -704,6 +709,11 @@ pub struct Application<
 > {
     pub(crate) native_registry: Registry<'params, C::CircuitField, R>,
     pub(crate) nested_registry: Registry<'params, C::ScalarField, R>,
+    /// The pages the native internal circuits were cut into where they
+    /// were registered, for a profile that pages them.
+    pub(crate) native_plans: crate::profile::paging::Plans<C::CircuitField>,
+    /// The nested internal circuits', likewise.
+    pub(crate) nested_plans: crate::profile::paging::Plans<C::ScalarField>,
     pub(crate) native_source:
         Option<crate::profile::online::SourceRegistry<'params, C::CircuitField>>,
     pub(crate) nested_source:

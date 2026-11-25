@@ -751,14 +751,25 @@ fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
             });
             // The backend may compute products concurrently, returning them in
             // input order for deterministic residual accumulation.
+            //
+            // The residual is $\sum_{i,j} p_{ij} L_i L_j - \sum_i p_{ii} L_i$.
+            // Each row's products are first combined over the second basis
+            // polynomial, so a group takes one polynomial product per row
+            // rather than one per pair.
+            let mut rows = vec![vec![F::ZERO; m]; a.len()];
             for (i, j, product) in B::map(pairs, |(i, j, a, b)| (i, j, B::sparse_revdot(a, b))) {
-                for (k, c) in multiply(&basis[i], &basis[j]).into_iter().enumerate() {
-                    residual[k] += product * c;
+                for (k, &c) in basis[j].iter().enumerate() {
+                    rows[i][k] += product * c;
                 }
                 if i == j {
                     for (k, &c) in basis[i].iter().enumerate() {
                         residual[k] -= product * c;
                     }
+                }
+            }
+            for (i, row) in rows.iter().enumerate() {
+                for (k, c) in multiply(&basis[i], row).into_iter().enumerate() {
+                    residual[k] += c;
                 }
             }
             let mut quotient = vec![F::ZERO; m - 1];

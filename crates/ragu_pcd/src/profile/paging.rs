@@ -41,7 +41,7 @@ use core::ops::Range;
 
 use ragu_circuits::{
     Blind, CircuitExt, MaskObject,
-    paging::{Paged, Stages},
+    paging::{Paged, Planned, Stages},
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryBuilder},
     staging::{MultiStage, MultiStageCircuit},
@@ -475,7 +475,7 @@ fn slots_over<P: Profile>(base: &Extension, nested: bool) -> Vec<Slot> {
 /// Where each of one side's paged circuits' entries sit, in the circuits'
 /// order; nothing for a profile that pages none.
 pub(crate) fn slots<P: Profile>(nested: bool) -> Vec<Slot> {
-    slots_over::<P>(&base::<P>(nested), nested)
+    super::extended::<P>(nested).slots.clone()
 }
 
 /// Appends paging's entries to one side's extension. A mask is declared as
@@ -484,7 +484,7 @@ pub(crate) fn slots<P: Profile>(nested: bool) -> Vec<Slot> {
 /// polynomial of the extension's. A profile's own declaration may not name
 /// a final mask over no circuit ([`Extension::is_consistent`]); these
 /// entries are added past that check.
-pub(crate) fn extend<P: Profile>(extension: &mut Extension, nested: bool) {
+pub(crate) fn extend<P: Profile>(extension: &mut Extension, nested: bool) -> Vec<Slot> {
     let slots = slots_over::<P>(extension, nested);
     for slot in &slots {
         extension
@@ -503,6 +503,7 @@ pub(crate) fn extend<P: Profile>(extension: &mut Extension, nested: bool) {
             );
         }
     }
+    slots
 }
 
 fn refuse<T>(circuit: impl core::fmt::Debug, what: String) -> Result<T> {
@@ -621,6 +622,21 @@ pub struct Registrar<'params, F: Field, R: Rank> {
     /// The stages and final masks of the extension before paging's entries.
     base: (usize, usize),
     pending: Vec<Option<Pending<'params, F, R>>>,
+    /// The pages each paged circuit was cut into, once it is registered.
+    plans: Plans<F>,
+}
+
+/// The pages one side's paged circuits were cut into where they were
+/// registered, by paged circuit: what a prover of the same application
+/// pages them by, so that a proof cuts nothing again. A circuit it does
+/// not hold is cut where it is proven.
+#[derive(Clone, Debug)]
+pub struct Plans<F: Field>(Vec<Option<Planned<F>>>);
+
+impl<F: Field> Default for Plans<F> {
+    fn default() -> Self {
+        Plans(Vec::new())
+    }
 }
 
 impl<'params, F: Field, R: Rank> Pending<'params, F, R> {
@@ -638,9 +654,43 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         let slots = slots_over::<P>(&base, nested);
         Registrar {
             pending: slots.iter().map(|_| None).collect(),
+            plans: Plans(slots.iter().map(|_| None).collect()),
             slots,
             base: (base.stages, base.final_masks.len()),
         }
+    }
+
+    /// The pages the circuits registered so far were cut into.
+    pub(crate) fn plans(&self) -> Plans<F> {
+        self.plans.clone()
+    }
+
+    /// Cuts `circuits` ahead of their registration, at once: a cut is
+    /// kept for the process (with `std`), so each is found cut where
+    /// [`circuit`](Self::circuit) registers it. It is for circuits that
+    /// are many of a kind, as a walk's steps are, and does nothing for a
+    /// circuit its profile does not page. A circuit that does not cut is
+    /// refused where it is registered.
+    pub(crate) fn warm<S>(&self, circuits: Vec<(Circuit, MultiStage<F, R, S>)>)
+    where
+        S: MultiStageCircuit<F, R>,
+        MultiStage<F, R, S>: Send,
+    {
+        use maybe_rayon::prelude::*;
+
+        if !cfg!(feature = "std") {
+            return;
+        }
+        let cuts: Vec<_> = circuits
+            .into_iter()
+            .filter_map(|(which, circuit)| {
+                let cut = self.slots[self.position(which)?].cut;
+                Some((which, circuit, cut))
+            })
+            .collect();
+        cuts.into_par_iter().for_each(|(which, circuit, cut)| {
+            let _ = split(which, circuit, cut);
+        });
     }
 
     fn position(&self, which: Circuit) -> Option<usize> {
@@ -668,6 +718,7 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         };
         let slot = &self.slots[position];
         let paged = split(which, circuit, slot.cut)?;
+        self.plans.0[position] = Some(paged.plan());
         let layout = paged.layout();
         let mut masks = Vec::with_capacity(slot.masks.len());
         for (_, pages) in &slot.masks {
@@ -811,6 +862,8 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
 /// polynomials the pages add to the extension.
 pub struct Prover<F: Field, R: Rank> {
     slots: Vec<Slot>,
+    /// The pages the circuits were cut into where they were registered.
+    plans: Plans<F>,
     /// The pages' polynomials before each circuit's last, by paged circuit.
     pages: Vec<Option<Vec<sparse::Polynomial<F, R>>>>,
     /// The carry stages' polynomials, by paged circuit: the circuit's, then
@@ -820,12 +873,14 @@ pub struct Prover<F: Field, R: Rank> {
 }
 
 impl<F: Field, R: Rank> Prover<F, R> {
-    /// A prover for one side of profile `P`.
-    pub(crate) fn new<P: Profile>(nested: bool) -> Self {
+    /// A prover for one side of profile `P`, which pages the circuits as
+    /// `plans` holds them.
+    pub(crate) fn new<P: Profile>(nested: bool, plans: &Plans<F>) -> Self {
         let slots = slots::<P>(nested);
         Prover {
             pages: slots.iter().map(|_| None).collect(),
             carries: slots.iter().map(|_| None).collect(),
+            plans: plans.clone(),
             slots,
         }
     }
@@ -861,12 +916,19 @@ impl<F: Field, R: Rank> Prover<F, R> {
             return Ok((registry.assemble(&trace, own, &mut *rng)?, aux));
         };
         let slot = &self.slots[position];
-        let paged = split(which, circuit, slot.cut)?;
+        let paged = match self.plans.0.get(position) {
+            Some(Some(planned)) => Paged::planned(circuit, planned),
+            _ => split(which, circuit, slot.cut)?,
+        };
 
+        // One walk of the circuit gives every page before the last the
+        // values of its gates; the last page walks it once more, for the
+        // public output.
+        let values = paged.capture(witness())?;
         let mut traces = Vec::with_capacity(paged.num_pages());
         let mut pages = Vec::with_capacity(slot.circuits.len());
         for (page, circuit) in slot.circuits.clone().enumerate() {
-            let trace = paged.page(page).trace(witness())?.into_output();
+            let trace = paged.page(page).trace(&values[page])?.into_output();
             pages.push(registry.assemble(&trace, extension(circuit), &mut *rng)?);
             traces.push(Some(trace));
         }

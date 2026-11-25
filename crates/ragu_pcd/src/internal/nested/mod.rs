@@ -766,7 +766,10 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     params: &'params C::Params,
     source_tag: Option<C::ScalarField>,
     source_domain: Option<u32>,
-) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
+) -> Result<(
+    RegistryBuilder<'params, C::ScalarField, R>,
+    crate::profile::paging::Plans<C::ScalarField>,
+)> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
 
@@ -778,6 +781,22 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     // other pages and their masks in the extension's slots.
     use crate::profile::paging;
     let mut pages = paging::Registrar::new::<C::Profile>(true);
+    // The walk's steps are each a circuit of its own to page: they are
+    // cut together here, and found cut where they are registered.
+    pages.warm(
+        InternalCircuitIndex::all::<C::Profile>()
+            .into_iter()
+            .filter_map(|id| match id {
+                InternalCircuitIndex::EndoscalingStep(step) => Some((
+                    paging::Circuit::NestedEndoscalingStep(step),
+                    MultiStage::new(self::EndoscalingStep::<C::HostCurve, R, C::Profile>::new(
+                        step as usize,
+                    )),
+                )),
+                _ => None,
+            })
+            .collect(),
+    );
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
     for id in InternalCircuitIndex::all::<C::Profile>() {
@@ -915,7 +934,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
         "internal circuit count mismatch"
     );
 
-    Ok(registry)
+    Ok((registry, pages.plans()))
 }
 
 #[cfg(test)]

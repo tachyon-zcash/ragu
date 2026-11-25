@@ -80,7 +80,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         // Every circuit is traced through the pager, which traces it whole
         // or, for a profile that pages it, once for each of its pages.
-        let mut pages = builder.take_native_pages();
+        let mut pages = builder.take_native_pages(&self.native_plans);
         let extension_index = |circuit: u32| {
             native::InternalCircuitIndex::ExtensionCircuit(circuit).circuit_index::<C::Profile>()
         };
@@ -367,7 +367,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // As on the native side: each circuit whole, or once for each of
         // its pages, which may load only some of the nested stages and read
         // the others' values off their polynomials.
-        let mut pages = builder.take_nested_pages();
+        let mut pages = builder.take_nested_pages(&self.nested_plans);
         let witness = |instance| nested::circuits::common::Witness {
             instance,
             online_fold: online_fold.clone(),

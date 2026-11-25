@@ -409,7 +409,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // comes off the stages' polynomials; the bridge-hash stage a step
         // reserves between the two is nothing it reads.
         if C::Profile::PAGES.nested_endoscaling_step.pages > 1 {
-            let mut pages = builder.take_nested_pages();
+            let mut pages = builder.take_nested_pages(&self.nested_plans);
             let gap = sparse::Polynomial::<C::ScalarField, R>::default();
             let stages = [&endoscalar_rx, &gap, &points_rx];
             for step in 0..num_steps {
@@ -510,7 +510,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // As for the nested steps: a paged step's pages read what they do
         // not load of the points stages off the stages' polynomials.
         if C::Profile::PAGES.endoscaling_step.pages > 1 {
-            let mut pages = builder.take_native_pages();
+            let mut pages = builder.take_native_pages(&self.native_plans);
             let [binding, preamble, registry_wx, ab, f] = builder.native_points_input_rxs();
             let stages = [binding, preamble, registry_wx, ab, f, &walk_rx];
             for step in 0..num_steps {

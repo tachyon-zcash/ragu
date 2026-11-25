@@ -959,7 +959,10 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     stage_size: usize,
     source_tag: Option<C::CircuitField>,
     source_domain: Option<u32>,
-) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
+) -> Result<(
+    RegistryBuilder<'params, C::CircuitField, R>,
+    crate::profile::paging::Plans<C::CircuitField>,
+)> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
     // The application stage follows the SYSTEM gate in every step circuit.
@@ -973,6 +976,20 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     // pages and their masks in the extension's slots.
     use crate::profile::paging;
     let mut pages = paging::Registrar::new::<C::Profile>(false);
+    // The walk's steps are each a circuit of its own to page: they are
+    // cut together here, and found cut where they are registered.
+    pages.warm(
+        InternalCircuitIndex::all::<C::Profile>()
+            .into_iter()
+            .filter_map(|id| match id {
+                InternalCircuitIndex::EndoscalingStep(step) => Some((
+                    paging::Circuit::EndoscalingStep(step),
+                    circuits::endoscaling_step::Circuit::<C, R>::new(step as usize),
+                )),
+                _ => None,
+            })
+            .collect(),
+    );
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
@@ -1168,7 +1185,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         "internal circuit count mismatch"
     );
 
-    Ok(registry)
+    Ok((registry, pages.plans()))
 }
 
 #[cfg(test)]

@@ -107,10 +107,16 @@ impl Run {
     /// points, then the elements, it holds. A proof whose claims fold in
     /// one batch on each curve, as the Standard profile's do, has the
     /// shapes of a single fold.
+    #[cfg(test)]
     pub(crate) fn shape<P: Profile, K: Rank>(self) -> StageShape {
-        // The batches the claims fold in: the host reduction's, then the
-        // nested reduction's.
-        let (host, nested) = fold::num_batches::<P>(K::num_coeffs());
+        self.shape_in::<P>(fold::num_batches::<P>(K::num_coeffs()))
+    }
+
+    /// [`shape`](Self::shape), given the batches the claims fold in: the
+    /// host reduction's, then the nested reduction's. Counting them walks
+    /// every claim of the profile, so a caller that shapes every run
+    /// counts once.
+    fn shape_in<P: Profile>(self, (host, nested): (usize, usize)) -> StageShape {
         let points = |points| StageShape {
             points,
             elements: 0,
@@ -217,7 +223,11 @@ pub(crate) const ONLINE_PREFIX_GATES: usize = 19 + 17 + nested::InternalCircuitI
 /// circuit-field side holds the absorbed point to through the run stage's
 /// commitment.
 pub(crate) fn run_degrees<P: Profile, K: Rank, R: Rank>() -> Vec<Vec<usize>> {
-    let shapes: Vec<StageShape> = runs::<K>().into_iter().map(Run::shape::<P, K>).collect();
+    let batches = fold::num_batches::<P>(K::num_coeffs());
+    let shapes: Vec<StageShape> = runs::<K>()
+        .into_iter()
+        .map(|run| run.shape_in::<P>(batches))
+        .collect();
     chain_skips(ONLINE_PREFIX_GATES, &shapes)
         .into_iter()
         .zip(shapes)

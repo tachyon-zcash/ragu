@@ -1168,13 +1168,14 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_pages = Some(pages);
     }
 
-    /// The native pager a paged walk started, or a new one.
+    /// The native pager a paged walk started, or a new one over `plans`.
     pub(crate) fn take_native_pages(
         &mut self,
+        plans: &crate::profile::paging::Plans<C::CircuitField>,
     ) -> crate::profile::paging::Prover<C::CircuitField, R> {
         self.native_pages
             .take()
-            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(false))
+            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(false, plans))
     }
 
     /// Keeps the nested pager a paged walk started.
@@ -1185,13 +1186,14 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.nested_pages = Some(pages);
     }
 
-    /// The nested pager a paged walk started, or a new one.
+    /// The nested pager a paged walk started, or a new one over `plans`.
     pub(crate) fn take_nested_pages(
         &mut self,
+        plans: &crate::profile::paging::Plans<C::ScalarField>,
     ) -> crate::profile::paging::Prover<C::ScalarField, R> {
         self.nested_pages
             .take()
-            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(true))
+            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(true, plans))
     }
 
     /// The polynomials of the native points stages, in the order a native

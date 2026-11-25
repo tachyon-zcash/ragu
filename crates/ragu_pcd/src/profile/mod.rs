@@ -54,7 +54,7 @@
 pub mod online;
 pub mod paging;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{
     any::{TypeId, type_name},
     fmt,
@@ -1091,18 +1091,65 @@ impl BuiltIn {
     }
 }
 
+/// One side's registered extension of a profile, and where its paged
+/// circuits' entries sit in it.
+#[derive(Debug)]
+pub(crate) struct Extended {
+    extension: Extension,
+    pub(crate) slots: Vec<paging::Slot>,
+}
+
+impl core::ops::Deref for Extended {
+    type Target = Extension;
+
+    fn deref(&self) -> &Extension {
+        &self.extension
+    }
+}
+
 /// The registered native extension, including the online batch helper.
-pub(crate) fn native_extension<P: Profile>() -> Extension {
-    let mut extension = online::stages::layout::<P, online::stages::Native>();
-    paging::extend::<P>(&mut extension, false);
-    extension
+pub(crate) fn native_extension<P: Profile>() -> Arc<Extended> {
+    extended::<P>(false)
 }
 
 /// The registered nested extension, including the online batch helper.
-pub(crate) fn nested_extension<P: Profile>() -> Extension {
-    let mut extension = online::stages::layout::<P, online::stages::Nested>();
-    paging::extend::<P>(&mut extension, true);
-    extension
+pub(crate) fn nested_extension<P: Profile>() -> Arc<Extended> {
+    extended::<P>(true)
+}
+
+/// One side's registered extension of profile `P`, the nested when `nested`
+/// is set.
+///
+/// It is a function of the profile alone, and the circuits ask for it at
+/// every index they take into a proof's polynomials. With `std` each thread
+/// builds it once per profile; without, every call builds it.
+pub(crate) fn extended<P: Profile>(nested: bool) -> Arc<Extended> {
+    let build = || {
+        let mut extension = if nested {
+            online::stages::layout::<P, online::stages::Nested>()
+        } else {
+            online::stages::layout::<P, online::stages::Native>()
+        };
+        let slots = paging::extend::<P>(&mut extension, nested);
+        Arc::new(Extended { extension, slots })
+    };
+    #[cfg(feature = "std")]
+    {
+        type Built = BTreeMap<(TypeId, bool), Arc<Extended>>;
+        std::thread_local! {
+            static BUILT: core::cell::RefCell<Built> =
+                const { core::cell::RefCell::new(BTreeMap::new()) };
+        }
+        let key = (TypeId::of::<P>(), nested);
+        if let Some(found) = BUILT.with(|built| built.borrow().get(&key).cloned()) {
+            return found;
+        }
+        let made = build();
+        BUILT.with(|built| built.borrow_mut().insert(key, made.clone()));
+        made
+    }
+    #[cfg(not(feature = "std"))]
+    build()
 }
 
 /// Whether `P`'s decompression step carries the source proof's online
