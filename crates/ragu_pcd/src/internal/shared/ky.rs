@@ -218,7 +218,7 @@ pub fn nested_bound<P: Profile, T>(
         points.extend(binding.online.iter().map(|&slot| online(slot as usize)));
         points.extend(
             binding
-                .native_online
+                .batch
                 .iter()
                 .map(|&slot| native_online(slot as usize)),
         );

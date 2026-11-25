@@ -834,7 +834,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
             |slots: &[u32], count: usize| slots.iter().all(|&slot| (slot as usize) < count);
         if let Some(binding) = &native.binding
             && !(within(&binding.online, Self::ONLINE_FQ_POLYS)
-                && binding.native_online.is_empty()
+                && binding.batch.is_empty()
                 && binding.openings.is_empty())
         {
             return Err(Error::Initialization(
@@ -843,10 +843,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         if let Some(binding) = &nested.binding
             && !(within(&binding.online, crate::header::NUM_ONLINE_FP_POLYS)
-                && within(
-                    &binding.native_online,
-                    Self::NATIVE_ONLINE.polynomials.len(),
-                )
+                && within(&binding.batch, Self::NATIVE_ONLINE.polynomials.len())
                 && within(&binding.openings, Self::ONLINE_FQ_POLYS))
         {
             return Err(Error::Initialization(
@@ -1247,7 +1244,7 @@ pub struct Binding {
     pub online: Vec<u32>,
     /// Native profile batch commitments, after the application slot points.
     /// Only the nested binding circuit can expose these host-curve points.
-    pub native_online: Vec<u32>,
+    pub batch: Vec<u32>,
     /// The step's online polynomials over the scalar field whose openings
     /// the circuit's output ends with, after its points: for each slot the
     /// point and the value the step's nested `compute_v` opened it at,
@@ -1338,7 +1335,7 @@ impl Extension {
                     && !binding.stages.is_empty()
                     && distinct(&binding.stages)
                     && distinct(&binding.online)
-                    && distinct(&binding.native_online)
+                    && distinct(&binding.batch)
                     && distinct(&binding.openings)
             });
         // In gate order, which leaves `last()` the stage whose final mask

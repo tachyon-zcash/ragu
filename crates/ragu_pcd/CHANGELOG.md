@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the extension holds it to the squeeze it computes, through the step
   binding. The decompression step commits the host IPA's challenge
   polynomial in the native batch. Its opening is checked by the native
-  extension and its commitment is bound through `Binding::native_online`. The nested
+  extension and its commitment is bound through `Binding::batch`. The nested
   curve's: every step commits that IPA's challenge polynomial as its online
   Fq polynomial (`Profile::online_fq_polynomials`), and exports its
   commitment and opening for the slots the profile's bindings name

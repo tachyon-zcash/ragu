@@ -717,7 +717,7 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
             // The step's online Fq polynomial, which holds the nested
             // IPA's s(X): its commitment is that IPA's G'.
             online: vec![0],
-            native_online: Vec::new(),
+            batch: Vec::new(),
             openings: Vec::new(),
         }),
     }
@@ -773,7 +773,7 @@ pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
             circuit: binding,
             stages: vec![Indices::native().digits()],
             online: vec![0, 1],
-            native_online: vec![online::HOST_IPA as u32],
+            batch: vec![online::HOST_IPA as u32],
             // The step's online Fq polynomial, which holds the nested
             // IPA's s(X): the chunks hold its opening to s at that point.
             openings: vec![0],

@@ -824,7 +824,7 @@ impl Profile for Crossing {
                 circuit: 0,
                 stages: vec![0],
                 online: vec![],
-                native_online: Vec::new(),
+                batch: Vec::new(),
                 openings: Vec::new(),
             }),
         }
@@ -976,7 +976,7 @@ impl Profile for CrossingBack {
                 circuit: 0,
                 stages: vec![0],
                 online: vec![],
-                native_online: Vec::new(),
+                batch: Vec::new(),
                 openings: Vec::new(),
             }),
         }

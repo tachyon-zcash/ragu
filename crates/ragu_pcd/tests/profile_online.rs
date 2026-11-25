@@ -183,7 +183,7 @@ impl<const KIND: u8> Profile for Consumers<KIND> {
                 circuit: 2,
                 stages: vec![0],
                 online: alloc::vec::Vec::new(),
-                native_online: alloc::vec::Vec::new(),
+                batch: alloc::vec::Vec::new(),
                 openings: alloc::vec::Vec::new(),
             }),
         }
