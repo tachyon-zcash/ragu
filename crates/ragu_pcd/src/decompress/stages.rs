@@ -1040,7 +1040,7 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     ///
     /// Fails past the last stage.
     #[cfg(test)]
-    fn mask(index: usize) -> Result<MaskObject<'static, Self::F, R>>;
+    fn mask(index: usize) -> Result<MaskObject<R>>;
 
     /// Stage `index`'s polynomial over `prepared` with `alpha`, which a
     /// stage committed with a zero alpha ignores.
@@ -1125,7 +1125,7 @@ where
     }
 
     #[cfg(test)]
-    fn mask(index: usize) -> Result<MaskObject<'static, Self::F, R>> {
+    fn mask(index: usize) -> Result<MaskObject<R>> {
         match index {
             0 => InstanceStage::<C, Native, K, R, HEADER_SIZE>::mask(),
             1 => MessagesStage::<C, Native, K, R, HEADER_SIZE>::mask(),
@@ -1211,7 +1211,7 @@ where
     }
 
     #[cfg(test)]
-    fn mask(index: usize) -> Result<MaskObject<'static, Self::F, R>> {
+    fn mask(index: usize) -> Result<MaskObject<R>> {
         if index < num_runs::<K>() {
             K::Last::mask::<C, K, R>(index)
         } else if index == num_runs::<K>() {
@@ -1455,7 +1455,7 @@ pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
 
     /// Run `index`'s stage's mask, for `index` at most this run's.
     #[cfg(test)]
-    fn mask<C, K, R>(index: usize) -> Result<MaskObject<'static, C::ScalarField, R>>
+    fn mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,
@@ -1585,7 +1585,7 @@ impl RunIndex for Z {
     }
 
     #[cfg(test)]
-    fn mask<C, K, R>(index: usize) -> Result<MaskObject<'static, C::ScalarField, R>>
+    fn mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,
@@ -1701,7 +1701,7 @@ impl<N: RunIndex> RunIndex for Succ<N> {
     }
 
     #[cfg(test)]
-    fn mask<C, K, R>(index: usize) -> Result<MaskObject<'static, C::ScalarField, R>>
+    fn mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,

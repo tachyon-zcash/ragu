@@ -765,7 +765,10 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 let circuit = circuits::compute_v::Circuit::<C::HostCurve, R, C::Profile>::new();
                 registry.register_internal_circuit(MultiStage::new(circuit))?
             }
-            EndoscalarStage => registry.register_mask(endoscalar::EndoscalarStage::mask()?),
+            EndoscalarStage => registry.register_mask(<endoscalar::EndoscalarStage as StageExt<
+                C::ScalarField,
+                R,
+            >>::mask()?),
             PointsStage => {
                 registry.register_mask(self::PointsStage::<C::HostCurve, C::Profile>::mask()?)
             }

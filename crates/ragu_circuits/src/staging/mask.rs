@@ -282,10 +282,6 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
     fn segment_records(&self) -> &[crate::SegmentRecord] {
         &[]
     }
-
-    fn is_mask(&self) -> bool {
-        true
-    }
 }
 
 #[cfg(test)]
@@ -578,7 +574,7 @@ mod tests {
         };
 
         {
-            let rhs = full_sy(&*circ1, y);
+            let rhs = full_sy(&circ1, y);
             assert_eq!(rx1_a.revdot(&rhs), Fp::ZERO);
             assert_eq!(rx1_b.revdot(&rhs), Fp::ZERO);
 
@@ -592,10 +588,10 @@ mod tests {
             assert_eq!(combined.revdot(&rhs), Fp::ZERO);
         }
 
-        assert_eq!(rx1_a.revdot(&full_sy(&*circ1, y)), Fp::ZERO);
-        assert_eq!(rx2.revdot(&full_sy(&*circ2, y)), Fp::ZERO);
-        assert!(rx1_a.revdot(&full_sy(&*circ2, y)) != Fp::ZERO);
-        assert!(rx2.revdot(&full_sy(&*circ1, y)) != Fp::ZERO);
+        assert_eq!(rx1_a.revdot(&full_sy(&circ1, y)), Fp::ZERO);
+        assert_eq!(rx2.revdot(&full_sy(&circ2, y)), Fp::ZERO);
+        assert!(rx1_a.revdot(&full_sy(&circ2, y)) != Fp::ZERO);
+        assert!(rx2.revdot(&full_sy(&circ1, y)) != Fp::ZERO);
 
         Ok(())
     }
@@ -889,7 +885,9 @@ mod tests {
 
         let rx = ConstrainedStage::rx(Fp::ZERO, valid_witness).unwrap();
 
-        let stage_mask = ConstrainedStage::mask::<'_>().unwrap().into_inner();
+        let stage_mask = <ConstrainedStage as StageExt<Fp, R>>::mask()
+            .unwrap()
+            .into_inner();
 
         // sy() returns -notch; add global_project to recover the full mask.
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -922,12 +920,20 @@ mod tests {
             sy += &mask.sy(y, &[]);
             sy
         };
-        let stage = full_mask(&*ConstrainedStage::mask::<'_>().unwrap().into_inner());
+        let stage = full_mask(
+            &<ConstrainedStage as StageExt<Fp, R>>::mask()
+                .unwrap()
+                .into_inner(),
+        );
         assert_eq!(rx.revdot(&stage), Fp::ZERO);
 
         // The final mask of a circuit that reserves this stage frees every
         // wire from the stage's end on, the blind gate's four among them.
-        let last = full_mask(&*ConstrainedStage::final_mask::<'_>().unwrap().into_inner());
+        let last = full_mask(
+            &<ConstrainedStage as StageExt<Fp, R>>::final_mask()
+                .unwrap()
+                .into_inner(),
+        );
 
         // The trace positions of the blind gate's wires: a, b, c, d.
         let gate = R::blind_gate();

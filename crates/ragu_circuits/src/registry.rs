@@ -53,6 +53,7 @@
 //! [registry chapter]: https://tachyon.z.cash/ragu/protocol/construction/registry.html
 
 use alloc::{boxed::Box, vec::Vec};
+use core::ops::Range;
 
 use blake2b_simd::Params;
 use ragu_core::{Error, Result};
@@ -123,7 +124,7 @@ impl From<CircuitIndex> for usize {
 /// proper PCD indexing.
 pub struct RegistryBuilder<'params, F: Field, R: Rank> {
     internal_circuits: Vec<Box<dyn WiringObject<F, R> + 'params>>,
-    masks: Vec<Box<dyn WiringObject<F, R> + 'params>>,
+    masks: Vec<MaskObject<R>>,
     internal_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     /// A tag to install instead of the derived one; a test seam only.
@@ -225,8 +226,8 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Registers a mask polynomial.
-    pub fn register_mask(mut self, mask: MaskObject<'params, F, R>) -> Self {
-        self.masks.push(mask.into_inner());
+    pub fn register_mask(mut self, mask: MaskObject<R>) -> Self {
+        self.masks.push(mask);
         self
     }
 
@@ -257,13 +258,16 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
         let log2_circuits = self.log2_circuits();
         let domain = F::domain(log2_circuits).expect("supported registry domain");
 
-        let circuits: Vec<_> = self
-            .internal_circuits
-            .into_iter()
-            .chain(self.masks)
-            .chain(self.internal_steps)
-            .chain(self.application_steps)
-            .collect();
+        let masks = self.internal_circuits.len()..self.num_internal_circuits();
+        let circuits: Vec<_> =
+            self.internal_circuits
+                .into_iter()
+                .chain(self.masks.into_iter().map(|mask| {
+                    Box::new(mask.into_inner()) as Box<dyn WiringObject<F, R> + 'params>
+                }))
+                .chain(self.internal_steps)
+                .chain(self.application_steps)
+                .collect();
 
         // Compute floor plans for each circuit.
         let floor_plans: Vec<Vec<ConstraintSegment>> = circuits
@@ -278,6 +282,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
         Ok(Registry {
             domain,
             circuits,
+            masks,
             floor_plans,
             tag,
         })
@@ -423,6 +428,11 @@ impl<F: Field> Tag<F> {
 pub struct Registry<'params, F: Field, R: Rank> {
     domain: Domain<F>,
     circuits: Vec<Box<dyn WiringObject<F, R> + 'params>>,
+
+    /// The indices of `circuits` that hold masks. A mask's `sxy`, `sx` and
+    /// `sy` return only its $-\text{notch}$ term, and the registry adds the
+    /// shared $S\_{\text{global}}$ term once for all of them.
+    masks: Range<usize>,
 
     /// Per-circuit floor plans computed during finalization.
     floor_plans: Vec<Vec<ConstraintSegment>>,
@@ -580,7 +590,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     fn circuit_sxy(&self, i: usize, x: F, y: F, global: F) -> F {
         let circuit = &self.circuits[i];
         let value = circuit.sxy(x, y, &self.floor_plans[i]);
-        if circuit.is_mask() {
+        if self.masks.contains(&i) {
             value + global
         } else {
             value
@@ -849,24 +859,17 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     }
 
     /// Sums Lagrange coefficients for masking polynomials at the given $W$ point.
-    ///
-    /// Only circuits where [`WiringObject::is_mask`] returns `true` contribute.
     fn mask_coeff_sum(&self, cache: &LagrangeCache<F>) -> F {
         match cache {
-            LagrangeCache::Arbitrary(coeffs) => {
-                let mut sum = F::ZERO;
-                for (i, circuit) in self.circuits.iter().enumerate() {
-                    if circuit.is_mask() {
-                        let j = self.bitreversed_index(i);
-                        sum += coeffs[j];
-                    }
-                }
-                sum
-            }
+            LagrangeCache::Arbitrary(coeffs) => self
+                .masks
+                .clone()
+                .map(|i| coeffs[self.bitreversed_index(i)])
+                .sum(),
             LagrangeCache::Assigned(i) => {
                 // W is exactly omega^bit_reverse(i), so the Lagrange
                 // coefficient for circuit i is ONE and all others are ZERO.
-                if self.circuits[*i].is_mask() {
+                if self.masks.contains(i) {
                     F::ONE
                 } else {
                     F::ZERO
@@ -1066,7 +1069,6 @@ fn add_restriction<F: Field, R: Rank>(
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
 
     use ragu_core::{Result, pasta::Fp};
     use rand::Rng;
@@ -1091,7 +1093,7 @@ mod tests {
             }
             for &(skip, num) in masks {
                 let mask = StageMask::<TestRank>::new(skip, num)?;
-                builder = builder.register_mask(crate::MaskObject::new(Box::new(mask)));
+                builder = builder.register_mask(crate::MaskObject::new(mask));
             }
             Ok(builder.finalize()?.tag())
         };
@@ -1238,9 +1240,9 @@ mod tests {
                 builder = builder.register_circuit(SquareCircuit { times: i })?;
             }
             if count != 0 {
-                builder = builder.register_mask(crate::MaskObject::new(alloc::boxed::Box::new(
+                builder = builder.register_mask(crate::MaskObject::new(
                     crate::staging::mask::StageMask::<TestRank>::new(2, 3)?,
-                )));
+                ));
             }
             let registry = builder.finalize()?;
             let ws = [

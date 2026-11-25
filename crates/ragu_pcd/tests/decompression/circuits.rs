@@ -130,8 +130,8 @@ fn check<S: Side<Pasta>, R: Rank, X>(
     circuit: MultiStage<S::F, R, X>,
     prepared: &Prepared<Pasta, S>,
     stages: Vec<sparse::Polynomial<S::F, R>>,
-    masks: Vec<MaskObject<'static, S::F, R>>,
-    final_mask: MaskObject<'static, S::F, R>,
+    masks: Vec<MaskObject<R>>,
+    final_mask: MaskObject<R>,
     rng: &mut StdRng,
 ) -> ragu_core::Result<Report>
 where
@@ -168,10 +168,7 @@ where
 #[allow(clippy::type_complexity)]
 fn online_stages<S: Side<Pasta>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
-) -> ragu_core::Result<(
-    Vec<sparse::Polynomial<S::F, R>>,
-    Vec<MaskObject<'static, S::F, R>>,
-)> {
+) -> ragu_core::Result<(Vec<sparse::Polynomial<S::F, R>>, Vec<MaskObject<R>>)> {
     type Input<S, R> = OnlineInputStage<Pasta, S, R>;
     type Query<S, R> = OnlineQueryStage<Pasta, S, R>;
     let zero = S::F::ZERO;
@@ -193,10 +190,7 @@ fn online_stages<S: Side<Pasta>, R: Rank>(
 #[allow(clippy::type_complexity)]
 fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
-) -> ragu_core::Result<(
-    Vec<sparse::Polynomial<S::F, R>>,
-    Vec<MaskObject<'static, S::F, R>>,
-)> {
+) -> ragu_core::Result<(Vec<sparse::Polynomial<S::F, R>>, Vec<MaskObject<R>>)> {
     type Lifts<S, R> = LiftsStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Work<S, R> = WorkStage<Pasta, S, TestR, R, HEADER_SIZE>;
     let zero = S::F::ZERO;

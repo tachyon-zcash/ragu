@@ -71,7 +71,7 @@ impl<'p, F: Field, R: Rank> TestRegistryBuilder<'p, F, R> {
     }
 
     /// Registers a mask and returns an opaque handle.
-    pub fn register_mask(&mut self, mask: MaskObject<'p, F, R>) -> Handle {
+    pub fn register_mask(&mut self, mask: MaskObject<R>) -> Handle {
         let handle = Handle {
             index: self.num_circuits + self.num_masks,
         };

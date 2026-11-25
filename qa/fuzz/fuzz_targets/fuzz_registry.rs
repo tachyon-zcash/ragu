@@ -374,7 +374,7 @@ fn build_borrowed<'a, R: Rank>(
 }
 
 /// A mask object to occupy `RegistryBuilder`'s mask bucket.
-fn sample_mask<'a, R: Rank>() -> Option<ragu_circuits::MaskObject<'a, Fp, R>> {
+fn sample_mask<'a, R: Rank>() -> Option<ragu_circuits::MaskObject<R>> {
     use ragu_circuits::staging::StageExt;
     <stage::Mask2 as StageExt<Fp, R>>::mask().ok()
 }

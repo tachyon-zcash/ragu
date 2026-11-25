@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed `BondingObject` to `MaskObject` and
   `RegistryBuilder::register_bonding` to `register_mask`. Every such
   polynomial is a stage mask or a final mask.
+- `MaskObject` is a concrete type over the rank alone, `MaskObject<R>`,
+  where it boxed a wiring polynomial over a field and a lifetime. The
+  functions that return one lose those two parameters.
 
 ## [0.0.0] - 2025-07-29
 

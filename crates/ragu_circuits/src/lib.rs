@@ -239,15 +239,6 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     /// These records serve as input to [`floor_planner::floor_plan`] for
     /// computing absolute constraint offsets.
     fn segment_records(&self) -> &[SegmentRecord];
-
-    /// Returns `true` if this circuit is a masking polynomial whose
-    /// `sxy`/`sx`/`sy` return only the $-\text{notch}$ term, expecting
-    /// the [`Registry`] to add the shared $S\_{\text{global}}$ once.
-    ///
-    /// [`Registry`]: registry::Registry
-    fn is_mask(&self) -> bool {
-        false
-    }
 }
 
 /// Wraps a circuit into a boxed [`WiringObject`] that can evaluate the
@@ -365,16 +356,16 @@ where
 /// [`StageExt::final_mask`]: crate::staging::StageExt::final_mask
 /// [`stage_mask`]: crate::staging::stage_mask
 /// [`final_stage_mask`]: crate::staging::final_stage_mask
-pub struct MaskObject<'a, F: Field, R: Rank> {
-    inner: Box<dyn WiringObject<F, R> + 'a>,
+pub struct MaskObject<R: Rank> {
+    inner: staging::mask::StageMask<R>,
 }
 
-impl<'a, F: Field, R: Rank> MaskObject<'a, F, R> {
-    pub(crate) fn new(inner: Box<dyn WiringObject<F, R> + 'a>) -> Self {
+impl<R: Rank> MaskObject<R> {
+    pub(crate) fn new(inner: staging::mask::StageMask<R>) -> Self {
         Self { inner }
     }
 
-    pub(crate) fn into_inner(self) -> Box<dyn WiringObject<F, R> + 'a> {
+    pub(crate) fn into_inner(self) -> staging::mask::StageMask<R> {
         self.inner
     }
 }
