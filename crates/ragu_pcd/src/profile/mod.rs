@@ -180,10 +180,6 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
 
-    /// Whether the decompression step carries application online polynomials.
-    /// Its nested extension must bind both output slots to the wallet proof.
-    const DECOMPRESS_ONLINE_POLYNOMIALS: bool = false;
-
     /// The payload schema version for this profile's proof formats.
     const WIRE_SCHEMA_VERSION: u16 = 1;
 
@@ -828,17 +824,6 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                 ));
             }
         }
-        if Self::DECOMPRESS_ONLINE_POLYNOMIALS
-            && !(native.statement.is_some()
-                && nested.binding.as_ref().is_some_and(|binding| {
-                    binding.online.len() == crate::header::NUM_ONLINE_FP_POLYS
-                }))
-        {
-            return Err(Error::Initialization(
-                "online polynomial decompression requires a statement and both output bindings"
-                    .into(),
-            ));
-        }
         if nested.statement.is_some() {
             return Err(Error::Initialization(
                 "only the native extension carries a statement circuit".into(),
@@ -898,6 +883,16 @@ pub(crate) fn native_extension<P: Profile>() -> Extension {
 /// The registered nested extension, including the online batch helper.
 pub(crate) fn nested_extension<P: Profile>() -> Extension {
     online::stages::layout::<P, online::stages::Nested>()
+}
+
+/// Whether `P`'s decompression step carries the source proof's online
+/// polynomials: `P` declares a statement circuit and its nested binding
+/// names both output slots (see [`Extension::statement`]).
+pub(crate) fn decompresses_online_polynomials<P: Profile>() -> bool {
+    P::native_extension().statement.is_some()
+        && P::nested_extension()
+            .binding
+            .is_some_and(|binding| binding.online.len() == crate::header::NUM_ONLINE_FP_POLYS)
 }
 
 /// A registry slot a profile's circuit hook fills with one internal circuit.
@@ -1186,9 +1181,14 @@ pub struct Extension {
     /// [`STEP_BINDING`] elements: the decompression flag and the point at
     /// which the step opened the bootstrap's first slot, the digest the
     /// decompressor staged. Both are zero for an ordinary step.
-    /// The native claim binds the header. An extension that carries
-    /// application polynomials must also bind the output commitments to
-    /// the wallet commitments, as the aggregator's nested binding does.
+    ///
+    /// The native claim binds the header alone. If the nested binding
+    /// names both output slots ([`Binding::online`]), the decompression
+    /// step carries the source proof's online polynomials, and the nested
+    /// extension must hold its output commitments to the source proof's,
+    /// as the aggregator's does. Otherwise the step leaves both output
+    /// slots as padding, so every header a decompressed statement can carry
+    /// must leave its slots to padding.
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is

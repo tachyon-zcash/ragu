@@ -482,7 +482,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         if decompresses {
             self = self.register_internal_step(
                 crate::step::internal::decompress::Decompress::<()>::new(
-                    C::Profile::DECOMPRESS_ONLINE_POLYNOMIALS,
+                    crate::profile::decompresses_online_polynomials::<C::Profile>(),
                 ),
             )?;
         }
