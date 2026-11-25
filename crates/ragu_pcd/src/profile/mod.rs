@@ -252,14 +252,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [`finalize_with`](crate::ApplicationBuilder::finalize_with) against
     /// the application: `params` are the parameters it finalizes over and
     /// `headers` maps each suffix it registers to the header type
-    /// registered at it. The profile may store setup choices in its
-    /// context. The default accepts any context.
+    /// registered at it. The default accepts any context.
     ///
     /// # Errors
     ///
     /// Fails if the context does not fit the application.
     fn check_context<'params, Base, R, B>(
-        context: &mut Self::Context<'params, Base, R, B>,
+        context: &Self::Context<'params, Base, R, B>,
         params: &Base::Params,
         headers: &BTreeMap<Suffix, TypeId>,
     ) -> Result<()>
@@ -1477,20 +1476,11 @@ pub trait ProverContext {
     /// decompresses. Uninhabited for a context no step supplies anything
     /// to.
     type Source;
-
-    /// The output header suffixes the decompression step must reject.
-    /// Finalization fixes these exclusions in the step's circuit. Return
-    /// an empty slice when the context has no exclusions.
-    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix];
 }
 
 /// No context, and nothing a step supplies.
 impl ProverContext for () {
     type Source = core::convert::Infallible;
-
-    fn excluded_decompression_suffixes(&self) -> &[crate::header::Suffix] {
-        &[]
-    }
 }
 
 /// What a step can supply the extension's prover of an application over

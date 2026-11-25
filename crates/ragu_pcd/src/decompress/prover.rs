@@ -71,7 +71,7 @@ use crate::{
         },
         transcript as compression_transcript,
     },
-    header::{Header, NUM_ONLINE_FP_POLYS, Padding, Suffix},
+    header::{Header, NUM_ONLINE_FP_POLYS, Padding},
     internal::{ky, native, nested},
     ipa::{IpaCycle, IpaTranscript, MSM, Params},
     profile::{
@@ -129,7 +129,6 @@ where
 {
     wallet: Application<'params, C, WalletRank, HEADER_SIZE, B>,
     canonical: Sides<C>,
-    pub(super) excluded_suffixes: Vec<Suffix>,
     _marker: PhantomData<fn() -> R>,
 }
 
@@ -140,10 +139,6 @@ where
     B: SelectableBackend,
 {
     type Source = Decompressed<C>;
-
-    fn excluded_decompression_suffixes(&self) -> &[Suffix] {
-        &self.excluded_suffixes
-    }
 }
 
 impl<'params, C, R, const HEADER_SIZE: usize, B> Decompression<'params, C, R, HEADER_SIZE, B>
@@ -201,7 +196,6 @@ where
         Ok(Decompression {
             wallet,
             canonical,
-            excluded_suffixes: Vec::new(),
             _marker: PhantomData,
         })
     }
@@ -573,21 +567,15 @@ where
     /// to the wallet proof's online commitments are refused before proving.
     ///
     /// # Errors
-    /// Fails if the header is not registered for decompression, the wallet's
-    /// compressed verifier rejects the proof, the coefficients do not commit
-    /// to the wallet proof's online commitments, or proving fails.
+    /// Fails if the wallet's compressed verifier rejects the proof, the
+    /// coefficients do not commit to the wallet proof's online commitments,
+    /// or proving fails.
     pub fn decompress_with_polynomials<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         rng: &mut RNG,
         pcd: &CompressedPcd<C, H>,
         polynomials: [Vec<C::CircuitField>; NUM_ONLINE_FP_POLYS],
     ) -> Result<Pcd<Profiled<C, Aggregator<HEADER_SIZE>>, R, H>> {
-        let excluded = self.context.excluded_decompression_suffixes();
-        if excluded.contains(&H::SUFFIX) {
-            return Err(Error::InvalidWitness(
-                "the aggregator did not register this wallet output header".into(),
-            ));
-        }
         let decompressed = self.context.prepare(pcd)?;
         // The circuits hold the output commitments to the wallet proof's,
         // which its verifier just accepted, so other coefficients would
@@ -602,7 +590,7 @@ where
         }
         let (pcd, ()) = self.fuse_with_source(
             rng,
-            Decompress::<H>::with_excluded_suffixes(excluded, true),
+            Decompress::<H>::new(true),
             (
                 pcd.data().clone(),
                 polynomials,

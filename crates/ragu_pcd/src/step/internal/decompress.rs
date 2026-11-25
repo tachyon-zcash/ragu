@@ -47,10 +47,7 @@ use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
-use crate::{
-    Header,
-    header::{NUM_ONLINE_FP_POLYS, Suffix},
-};
+use crate::{Header, header::NUM_ONLINE_FP_POLYS};
 
 /// The left input slot the step opens at the transcript digest it staged:
 /// the first. The opening's point is public, which is how the staged
@@ -59,23 +56,13 @@ use crate::{
 pub(crate) const DIGEST_SLOT: usize = 0;
 
 pub(crate) struct Decompress<H> {
-    excluded_suffixes: Vec<Suffix>,
     carry_polynomials: bool,
     _marker: PhantomData<H>,
 }
 
 impl<H> Decompress<H> {
-    #[cfg(test)]
-    pub fn new(carry_polynomials: bool) -> Self {
-        Self::with_excluded_suffixes(&[], carry_polynomials)
-    }
-
-    pub(crate) fn with_excluded_suffixes(
-        excluded_suffixes: &[Suffix],
-        carry_polynomials: bool,
-    ) -> Self {
+    pub(crate) fn new(carry_polynomials: bool) -> Self {
         Decompress {
-            excluded_suffixes: excluded_suffixes.to_vec(),
             carry_polynomials,
             _marker: PhantomData,
         }
@@ -130,12 +117,11 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
-        // Every header type uses the same registered circuit.
-        // `Encoded::new_uniform_excluding` constrains the suffix wire away
-        // from `Dummy`, zero, and each suffix excluded at finalization.
+        // Uniform, so that every header type decompresses through the one
+        // registered circuit; the suffix is a witness wire constrained away
+        // from `Dummy` and from zero (see `Encoded::new_uniform`).
         let (data, _, _) = witness.cast();
-        let output =
-            Encoded::new_uniform_excluding(dr, allocator, data.clone(), &self.excluded_suffixes)?;
+        let output = Encoded::new_uniform(dr, allocator, data.clone())?;
         // The staged digest, made public as the point of an opening: the
         // left input's first slot, the bootstrap proof's padding, opened
         // there and its value left unread. The native extension's chunks

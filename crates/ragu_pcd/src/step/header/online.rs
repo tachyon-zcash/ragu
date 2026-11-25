@@ -180,11 +180,6 @@ pub trait OnlinePolyCommit: sealed::Sealed + Send + Sync + 'static {
     /// Whether every non-padding kind occurs at most once.
     #[doc(hidden)]
     fn has_unique_kinds() -> bool;
-
-    /// Whether every slot is [`Padding`]: the header's proofs carry no
-    /// online polynomial.
-    #[doc(hidden)]
-    fn is_padding() -> bool;
 }
 
 // The tuple impls below and the `Has` impls give one entry per slot. They
@@ -197,10 +192,6 @@ const _: () = assert!(
 impl<A: OnlinePolySlot, B: OnlinePolySlot> OnlinePolyCommit for (A, B) {
     fn has_unique_kinds() -> bool {
         TypeId::of::<A>() != TypeId::of::<B>() || TypeId::of::<A>() == TypeId::of::<Padding>()
-    }
-
-    fn is_padding() -> bool {
-        TypeId::of::<A>() == TypeId::of::<Padding>() && TypeId::of::<B>() == TypeId::of::<Padding>()
     }
 }
 
@@ -278,13 +269,5 @@ mod tests {
         assert!(<(First, Second) as OnlinePolyCommit>::has_unique_kinds());
         assert!(<(Padding, Padding) as OnlinePolyCommit>::has_unique_kinds());
         assert!(!<(First, First) as OnlinePolyCommit>::has_unique_kinds());
-    }
-
-    #[test]
-    fn only_a_list_of_padding_is_padding() {
-        assert!(<(Padding, Padding) as OnlinePolyCommit>::is_padding());
-        assert!(!<(First, Padding) as OnlinePolyCommit>::is_padding());
-        assert!(!<(Padding, Second) as OnlinePolyCommit>::is_padding());
-        assert!(!<(First, Second) as OnlinePolyCommit>::is_padding());
     }
 }

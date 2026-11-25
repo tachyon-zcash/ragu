@@ -63,12 +63,10 @@ pub struct ApplicationBuilder<
     /// which finalization installs instead of building one. Boxed to keep
     /// the builder small across by-value `register` calls.
     pub(crate) bootstrap: Option<Box<Proof<C, R>>>,
-    /// The header type each registered step outputs, by suffix, and
-    /// whether its proofs carry an online polynomial, in a slot its
-    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) does not leave to
-    /// padding: what a profile's context is checked against (see
+    /// The header type each registered step outputs, by suffix: what a
+    /// profile's context is checked against (see
     /// [`Profile::check_context`]).
-    pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
+    pub(crate) output_headers: BTreeMap<crate::header::Suffix, TypeId>,
     /// Whether [`Self::finalize`] prepares tables of the commitment
     /// generators (see [`Self::with_commitment_tables`]).
     commitment_tables: bool,
@@ -274,10 +272,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.prevent_duplicate_suffixes::<S::Right>()?;
         self.output_headers.insert(
             <S::Output as Header<C::CircuitField>>::SUFFIX,
-            (
-                TypeId::of::<S::Output>(),
-                !<<S::Output as Header<C::CircuitField>>::OnlinePolyCommit as crate::header::OnlinePolyCommit>::is_padding(),
-            ),
+            TypeId::of::<S::Output>(),
         );
 
         let stage_size = self.stage_size.max(S::NUM_STAGED);
@@ -358,10 +353,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     pub fn finalize_with(
         mut self,
         params: &'params C::Params,
-        mut context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
+        context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
-        C::Profile::check_context(&mut context, params, &self.header_map)?;
+        C::Profile::check_context(&context, params, &self.header_map)?;
 
         // The decompression step, which a profile with a statement circuit
         // registers below, stages a value: the application stage, which
@@ -486,8 +481,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // proof's statement (see `step::internal::decompress`).
         if decompresses {
             self = self.register_internal_step(
-                crate::step::internal::decompress::Decompress::<()>::with_excluded_suffixes(
-                    crate::profile::ProverContext::excluded_decompression_suffixes(&context),
+                crate::step::internal::decompress::Decompress::<()>::new(
                     C::Profile::DECOMPRESS_ONLINE_POLYNOMIALS,
                 ),
             )?;
@@ -679,9 +673,8 @@ pub struct Application<
         Option<crate::profile::online::SourceRegistry<'params, C::ScalarField>>,
     pub(crate) params: &'params C::Params,
     pub(crate) num_application_steps: usize,
-    /// The header type each registered step outputs, by suffix, and
-    /// whether its proofs carry an online polynomial.
-    pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
+    /// The header type each registered step outputs, by suffix.
+    pub(crate) output_headers: BTreeMap<crate::header::Suffix, TypeId>,
     /// The application stage's size, in values.
     pub(crate) stage_size: usize,
     /// The profile's prover context: what its prover holds across proofs
@@ -715,10 +708,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         &self.context
     }
 
-    /// The header type each registered step outputs, by suffix, and
-    /// whether its proofs carry an online polynomial: the headers the
-    /// application's statements carry.
-    pub(crate) fn output_headers(&self) -> &BTreeMap<crate::header::Suffix, (TypeId, bool)> {
+    /// The header type each registered step outputs, by suffix: the
+    /// headers the application's statements carry.
+    pub(crate) fn output_headers(&self) -> &BTreeMap<crate::header::Suffix, TypeId> {
         &self.output_headers
     }
 

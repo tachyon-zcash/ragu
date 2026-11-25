@@ -264,7 +264,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     /// header type at every suffix the wallet's steps output, whether or
     /// not the header carries online polynomials.
     fn check_context<'params, Base, R, B>(
-        context: &mut Self::Context<'params, Base, R, B>,
+        context: &Self::Context<'params, Base, R, B>,
         params: &Base::Params,
         headers: &BTreeMap<Suffix, TypeId>,
     ) -> Result<()>
@@ -279,7 +279,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
                     .into(),
             ));
         }
-        for (suffix, &(wallet, _)) in context.wallet().output_headers() {
+        for (suffix, &wallet) in context.wallet().output_headers() {
             if suffix.get() < u64::from(NUM_INTERNAL_SUFFIXES) {
                 continue;
             }
