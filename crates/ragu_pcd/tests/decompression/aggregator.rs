@@ -65,18 +65,25 @@ fn pinned_layout_is_the_schedules() {
             "native circuit counts at header size {H}"
         );
     }
-    check_native_counts::<1>();
-    check_native_counts::<2>();
-    check_native_counts::<3>();
     check_native_counts::<HEADER_SIZE>();
-    check_native_counts::<9>();
-    check_native_counts::<57>();
-    check_native_counts::<58>();
-    check_native_counts::<100>();
-    check_native_counts::<153>();
-    check_native_counts::<154>();
     check_native_counts::<CENSUS>();
     check_native_counts::<195>();
+    // Every header size compiles its own copy of the schedule, which the
+    // CI runners cannot afford in this test target, so the nightly tests
+    // check the rest of the range and the boundaries between transcript
+    // counts.
+    #[cfg(ragu_pcd_nightly_tests)]
+    {
+        check_native_counts::<1>();
+        check_native_counts::<2>();
+        check_native_counts::<3>();
+        check_native_counts::<9>();
+        check_native_counts::<57>();
+        check_native_counts::<58>();
+        check_native_counts::<100>();
+        check_native_counts::<153>();
+        check_native_counts::<154>();
+    }
     assert_eq!(
         P::NESTED_CIRCUITS,
         nested_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
