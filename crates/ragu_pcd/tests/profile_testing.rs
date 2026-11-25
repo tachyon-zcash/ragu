@@ -81,6 +81,26 @@ impl Profile for Twin {
         B: SelectableBackend;
 }
 
+/// The standard profile's circuits with the nested walk cut into groups of
+/// eight steps: a links stage, a points stage polynomial per group and a
+/// check circuit per group beside the fuse's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Grouped;
+
+impl Profile for Grouped {
+    const NAME: &'static str = "grouped";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NESTED_WALK_GROUP: usize = 8;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
 /// Two native circuits over two stages, each under its last stage's
 /// final mask, and one nested circuit over one stage under one final
 /// mask, declared but without hooks.

@@ -420,7 +420,6 @@ impl Grouping {
     /// # Panics
     ///
     /// Panics if `group` is not a group of the walk.
-    #[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
     pub fn pages_of(&self, group: usize) -> usize {
         assert!(
             group < self.groups(),
@@ -507,7 +506,6 @@ pub struct Arranged<S, I> {
 /// # Panics
 ///
 /// Panics if `links` has no link `group + 1`.
-#[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
 pub fn link<'dr, D: Driver<'dr>, T: Gadget<'dr, D, Kind: GadgetEquals<D::F>>>(
     dr: &mut D,
     links: &[T],

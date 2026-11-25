@@ -1429,6 +1429,8 @@ mod proof_equivalence {
                 nested_endoscaling_step_rxs: _,
                 nested_extension_circuit_rxs: _,
                 nested_extension_stage_rxs: _,
+                nested_walk_stage_rxs: _,
+                nested_group_check_rxs: _,
                 nested_endoscalar_rx: _,
                 nested_points_rx: _,
                 nested_a_poly: _,
@@ -1442,6 +1444,8 @@ mod proof_equivalence {
                 nested_endoscaling_step_commitments: _,
                 nested_extension_circuit_commitments: _,
                 nested_extension_stage_commitments: _,
+                nested_walk_stage_commitments: _,
+                nested_group_check_commitments: _,
                 nested_endoscalar_commitment: _,
                 nested_points_commitment: _,
                 nested_a_commitment: _,
@@ -1537,6 +1541,11 @@ mod proof_equivalence {
                 &other.nested_extension_stage_rxs,
             ) {
                 return Some("nested extension polynomials");
+            }
+            if !extension_eq(&self.nested_walk_stage_rxs, &other.nested_walk_stage_rxs)
+                || !extension_eq(&self.nested_group_check_rxs, &other.nested_group_check_rxs)
+            {
+                return Some("nested walk polynomials");
             }
             if !polynomial_eq(&self.native_a_poly, &other.native_a_poly)
                 || !polynomial_eq(&self.native_b_poly, &other.native_b_poly)
@@ -1640,6 +1649,11 @@ mod proof_equivalence {
                     != other.nested_extension_stage_commitments
             {
                 return Some("extension commitments");
+            }
+            if self.nested_walk_stage_commitments != other.nested_walk_stage_commitments
+                || self.nested_group_check_commitments != other.nested_group_check_commitments
+            {
+                return Some("nested walk commitments");
             }
             if self.nested_a_commitment != other.nested_a_commitment
                 || self.nested_b_commitment != other.nested_b_commitment

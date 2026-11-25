@@ -286,7 +286,6 @@ impl<C: Affine, N: Len, E: Len, Q: Len> WalkWitness<C, N, E, Q> {
     }
 
     /// Returns the walk's result: the state after its last step.
-    #[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
     pub fn result(&self) -> C {
         let grouping = grouping::<N, E, Q>();
         let last = grouping.groups() - 1;
@@ -360,7 +359,6 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>, Q: Len> Stage<C::
 
 /// Output gadget of [`LinksStage`]: the walk's initial point, then the
 /// state after each group.
-#[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
 #[derive(Gadget, Consistent)]
 pub struct Links<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len, Q: Len> {
     #[ragu(gadget)]
@@ -373,7 +371,6 @@ pub struct Links<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len, Q:
 /// group's entry and exit to it with [`paging::link`].
 ///
 /// For [`Whole`] the stage holds nothing and takes no gates.
-#[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
 pub struct LinksStage<C: Affine, N: Len, E: Len, G = NoGap, Q: Len = Whole>(
     PhantomData<(C, N, E, G, Q)>,
 );

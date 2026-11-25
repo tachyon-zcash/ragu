@@ -283,7 +283,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         &self,
         rng: &mut RNG,
         nested_endoscalar: Uendo,
-        nested_points: &nested::PointsWitness<C::HostCurve, C::Profile>,
+        nested_walk: &nested::WalkWitness<C::HostCurve, C::Profile>,
         nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve, C::Profile>,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
@@ -345,7 +345,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             online_fold: online_fold.clone(),
             endoscalar: nested_endoscalar,
             bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
-            points: nested_points,
+            walk: nested_walk,
             preamble: nested_preamble_witness,
             s_prime: nested_s_prime_witness,
             inner_error: nested_inner_error_witness,
@@ -357,6 +357,31 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             challenges: nested_challenges_witness,
         };
 
+        // A grouped walk's check circuits, one per group, over the same
+        // stage witnesses. They expose nothing, so each takes a copy of the
+        // instance and covers none of it. A walk in one stage has none and
+        // draws nothing here.
+        let mut group_check_rxs = Vec::new();
+        let grouping = nested::walk_grouping::<C::Profile>();
+        if grouping.is_grouped() {
+            for group in 0..grouping.groups() {
+                let trace = MultiStage::new(nested::circuits::group_check::Circuit::<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >::new(group))
+                .trace(witness(instance.clone()))?
+                .into_output();
+                group_check_rxs.push(
+                    self.nested_registry.assemble(
+                        &trace,
+                        nested::InternalCircuitIndex::GroupCheck(group as u32)
+                            .circuit_index::<C::Profile>(),
+                        &mut *rng,
+                    )?,
+                );
+            }
+        }
         let (collapse_trace, instance) = MultiStage::new(nested::circuits::collapse::Circuit::<
             C::HostCurve,
             R,
@@ -386,6 +411,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // As for the native instance: every slot covered exactly once.
         instance.assert_complete();
 
+        builder.set_nested_group_check_rxs(group_check_rxs);
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
 

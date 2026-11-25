@@ -8,7 +8,7 @@
 //! $\text{commit}(\sum\_j \beta^j \cdot p\_j) = \sum\_j \beta^j \cdot C\_j$.
 //!
 //! The commitment is computed via
-//! [`PointsWitness`]
+//! [`WalkWitness`](nested::WalkWitness)
 //! Horner evaluation.
 //!
 //! The nested batch is accumulated the same way into $p_n(X)$, with
@@ -52,8 +52,8 @@ use crate::{
             stages::points::{self as native_points, Inputs, WalkWitness},
         },
         nested::{
-            self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
-            PointsWitness, pcs,
+            self, EndoscalingStep, EndoscalingStepWitness, LinksStage, NumPoints, NumSteps,
+            PointsStage, pcs,
         },
     },
     profile::ProfiledCycle,
@@ -167,7 +167,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         randomizers: &Randomizers<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        PointsWitness<C::HostCurve, C::Profile>,
+        nested::WalkWitness<C::HostCurve, C::Profile>,
         NativeInputs<C>,
         NativeWalk<C>,
     )> {
@@ -226,8 +226,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         f: &NativeF<C, R>,
         randomizer: &NativeRandomizer<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<PointsWitness<C::HostCurve, C::Profile>> {
-        // Collect commitments for PointsWitness construction.
+    ) -> Result<nested::WalkWitness<C::HostCurve, C::Profile>> {
+        // Collect commitments for the walk's witness.
         let mut commitments: Vec<C::HostCurve> = Vec::new();
 
         // The orderings in this code must match the `Write` serialization
@@ -389,16 +389,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         endoscalar_alpha: Blind<C::ScalarField>,
         points_alpha: Blind<C::ScalarField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve, C::Profile>)> {
+    ) -> Result<(C::HostCurve, nested::WalkWitness<C::HostCurve, C::Profile>)> {
         assert_eq!(points.len(), NumPoints::<C::Profile>::len());
 
-        let witness = PointsWitness::<C::HostCurve, C::Profile>::new(beta_endo, points);
+        let witness = nested::WalkWitness::<C::HostCurve, C::Profile>::new(beta_endo, points);
+        let grouping = nested::walk_grouping::<C::Profile>();
 
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
         let points_rx = <PointsStage<C::HostCurve, C::Profile> as StageExt<C::ScalarField, R>>::rx(
             points_alpha,
-            &witness,
+            &witness.groups[0],
         )?;
 
         let num_steps = NumSteps::<C::Profile>::len();
@@ -408,13 +409,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // job touches the RNG.
         let blinds: Vec<Blind<C::ScalarField>> =
             (0..num_steps).map(|_| Blind::random(rng)).collect();
-        let (registry, points) = (&self.nested_registry, &witness);
+        let (registry, walk) = (&self.nested_registry, &witness);
         for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
             let staged = MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step));
+            // A step is a page of its own group's points stage.
+            let (group, _) = grouping.locate(step);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
                     endoscalar: beta_endo,
-                    points,
+                    points: &walk.groups[group],
                 })?
                 .into_output();
             registry.assemble_with_alpha(
@@ -427,14 +430,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             step_rxs.push(step_rx?);
         }
 
+        // A grouped walk's later points stages, then its links stage. A
+        // walk in one stage has neither and draws nothing here.
+        let mut walk_stage_rxs = Vec::new();
+        if grouping.is_grouped() {
+            for group in &witness.groups[1..] {
+                walk_stage_rxs.push(<PointsStage<C::HostCurve, C::Profile> as StageExt<
+                    C::ScalarField,
+                    R,
+                >>::rx(Blind::random(rng), group)?);
+            }
+            walk_stage_rxs.push(<LinksStage<C::HostCurve, C::Profile> as StageExt<
+                C::ScalarField,
+                R,
+            >>::rx(Blind::random(rng), &witness.links)?);
+        }
+
         builder.set_nested_endoscaling_step_rxs(step_rxs);
         builder.set_nested_endoscalar_rx(endoscalar_rx);
         builder.set_nested_points_rx(points_rx);
+        builder.set_nested_walk_stage_rxs(walk_stage_rxs);
 
-        let p_commitment = *witness
-            .interstitials
-            .last()
-            .expect("every walk has at least one interstitial");
+        let p_commitment = witness.result();
         Ok((p_commitment, witness))
     }
 

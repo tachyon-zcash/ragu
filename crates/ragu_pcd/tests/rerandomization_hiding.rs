@@ -120,6 +120,8 @@ impl<'a> Parts<'a> {
             nested_endoscaling_step_rxs,
             nested_extension_circuit_rxs,
             nested_extension_stage_rxs,
+            nested_walk_stage_rxs,
+            nested_group_check_rxs,
             nested_endoscalar_rx,
             nested_points_rx,
             nested_a_poly,
@@ -133,6 +135,8 @@ impl<'a> Parts<'a> {
             nested_endoscaling_step_commitments,
             nested_extension_circuit_commitments,
             nested_extension_stage_commitments,
+            nested_walk_stage_commitments,
+            nested_group_check_commitments,
             nested_endoscalar_commitment,
             nested_points_commitment,
             nested_a_commitment,
@@ -203,10 +207,14 @@ impl<'a> Parts<'a> {
                 && native_extension_stage_rxs.is_empty()
                 && nested_extension_circuit_rxs.is_empty()
                 && nested_extension_stage_rxs.is_empty()
+                && nested_walk_stage_rxs.is_empty()
+                && nested_group_check_rxs.is_empty()
                 && native_extension_circuit_commitments.is_empty()
                 && native_extension_stage_commitments.is_empty()
                 && nested_extension_circuit_commitments.is_empty()
                 && nested_extension_stage_commitments.is_empty()
+                && nested_walk_stage_commitments.is_empty()
+                && nested_group_check_commitments.is_empty()
                 && step_binding.is_empty(),
             "the standard profile stores none of a profile's own values"
         );

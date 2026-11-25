@@ -1175,7 +1175,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
             stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,
-            stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(&points_witness)?,
+            stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(&points_witness.groups[0])?,
         ]
         .concat();
 
@@ -1196,7 +1196,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             visitor.visit_nested(&spec, &circuit, &endoscaling_values, || {
                 Ok(EndoscalingStepWitness {
                     endoscalar: beta_endo,
-                    points: &points_witness,
+                    points: &points_witness.groups[0],
                 })
             })?;
         }
@@ -1304,7 +1304,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 },
                 endoscalar: beta_endo,
                 bridge_hash: own_o1,
-                points: &points_witness,
+                walk: &points_witness,
                 preamble: &nested_preamble,
                 s_prime: &nested_s_prime_witness,
                 inner_error: &nested_inner_error_witness,

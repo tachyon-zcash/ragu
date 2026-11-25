@@ -16,6 +16,15 @@
 //!   [`HoistedEndoscalar`](ragu_primitives::HoistedEndoscalar) holds boolean
 //!   bits and the products of those bits.
 //!
+//! A profile can cut its walk into groups
+//! ([`Profile::NESTED_WALK_GROUP`]),
+//! each in its own points stage polynomial, and then no one circuit can
+//! load every point. Each group's [`group_check`](super::group_check)
+//! circuit enforces the walked points and the points' curve membership for
+//! its group and holds the group to the links stage. This circuit then
+//! holds the first link to the commitment of $f$, reads the walk's result
+//! off the last link, and keeps the endoscalar stage's contract.
+//!
 //! `compute_v` ties that endoscalar's lift to the challenge stage's beta
 //! lift and computes v_n.
 //!
@@ -109,7 +118,7 @@ use crate::{
         ky,
         native::RxIndex,
         nested::{
-            RevdotParameters,
+            Points, RevdotParameters,
             claims::{TwoProofKySource, ky_values},
             stages::{self, challenges},
             unified,
@@ -119,24 +128,21 @@ use crate::{
     profile::Profile,
 };
 
-/// Enforces every input of the points stage, and its initial point, equal to
-/// the copy a bridge stage holds, in the order `compute_p` (`_10_p`)
-/// accumulates them.
+/// The copy a bridge stage holds of every input of the walk, in the order
+/// `compute_p` (`_10_p`) accumulates the points.
 ///
 /// The transcript absorbs the bridge stages before the challenge the walk
-/// folds under, and commits the points stage after it. These equalities are
-/// what fixes the walked points before that challenge.
-fn enforce_walked_points<'dr, D, C, P>(
-    dr: &mut D,
-    stages: &common::Loaded<'dr, D, C, P>,
-) -> Result<()>
+/// folds under, and commits the points stages after it. An input held
+/// equal to its copy here is fixed before that challenge.
+pub(super) fn held_inputs<'a, 'dr, D, C, P>(
+    stages: &'a common::Loaded<'dr, D, C, P>,
+) -> Vec<&'a Point<'dr, D, C>>
 where
     D: Driver<'dr, F = C::Base>,
     C: Affine,
     P: Profile,
 {
     let common::Loaded {
-        points,
         preamble,
         s_prime,
         inner_error,
@@ -145,8 +151,7 @@ where
         f,
         ..
     } = stages;
-    // The held copies, in the order `compute_p` accumulates the points.
-    let mut held: Vec<&Point<'dr, D, C>> = Vec::with_capacity(points.inputs.len());
+    let mut held: Vec<&Point<'dr, D, C>> = Vec::new();
     for child in [&preamble.left, &preamble.right] {
         held.extend(RxIndex::all::<P>().into_iter().map(|id| &child[id]));
         held.extend([
@@ -183,7 +188,26 @@ where
             .chain(ab.online_points.iter())
             .chain(query.online_points.iter()),
     );
+    held
+}
 
+/// Enforces every input of the points stage of a walk in one stage, and its
+/// initial point, equal to the copy a bridge stage holds.
+///
+/// The transcript absorbs the bridge stages before the challenge the walk
+/// folds under, and commits the points stage after it. These equalities are
+/// what fixes the walked points before that challenge.
+fn enforce_walked_points<'dr, D, C, P>(
+    dr: &mut D,
+    stages: &common::Loaded<'dr, D, C, P>,
+    points: &Points<'dr, D, C, P>,
+) -> Result<()>
+where
+    D: Driver<'dr, F = C::Base>,
+    C: Affine,
+    P: Profile,
+{
+    let held = held_inputs(stages);
     assert_eq!(
         held.len(),
         points.inputs.len(),
@@ -194,7 +218,7 @@ where
     }
 
     // The walk starts from the commitment of f.
-    points.initial.enforce_equal(dr, &f.native_f)
+    points.initial.enforce_equal(dr, &stages.f.native_f)
 }
 
 /// Circuit binding the nested instance to its stages and verifying the nested fold.
@@ -230,16 +254,37 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
-        let (dr, stages) = common::load_all(dr, &witness)?;
+        let (dr, stages) = common::load_all(dr, &witness, common::whole_walk::<P>())?;
 
         // The walk's contracts: points on the curve, and the endoscalar
         // stage's bit wires bits with its product wires the products of those
-        // bits, each gadget re-emitted on the stage's wires.
-        stages.points.enforce_consistent(dr)?;
+        // bits, each gadget re-emitted on the stage's wires. A grouped
+        // walk's check circuits hold each group's points to the curve.
+        if let Some(points) = &stages.points {
+            points.enforce_consistent(dr)?;
+        }
         stages.endoscalar.enforce_consistent(dr)?;
 
-        // The walked points: each one is the copy a bridge stage holds.
-        enforce_walked_points(dr, &stages)?;
+        // The walked points: each one is the copy a bridge stage holds. A
+        // grouped walk's check circuits hold each group's inputs, and the
+        // walk's initial point is the first link.
+        let result = match &stages.points {
+            Some(points) => {
+                enforce_walked_points(dr, &stages, points)?;
+                points
+                    .interstitials
+                    .last()
+                    .expect("every walk has at least one interstitial")
+            }
+            None => {
+                let links = &stages.links.states;
+                links
+                    .first()
+                    .expect("a grouped walk has links")
+                    .enforce_equal(dr, &stages.f.native_f)?;
+                links.last().expect("a grouped walk has links")
+            }
+        };
 
         let allocator = &mut Standard::new();
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
@@ -260,11 +305,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .enforce_equal(dr, &pairs[stages::challenges::U].lift)?;
 
         // The commitments a parent endoscales, in `unified` order.
-        let last_interstitial = stages
-            .points
-            .interstitials
-            .last()
-            .expect("every walk has at least one interstitial");
+        let last_interstitial = result;
         let held = [
             &stages.s_prime.native_preamble,
             &stages.inner_error.native_inner_error,

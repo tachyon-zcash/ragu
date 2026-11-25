@@ -24,7 +24,7 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::{
     internal::{
         endoscalar::EndoscalarStage,
-        nested::{Points, PointsStage, PointsWitness, stages, unified},
+        nested::{Links, LinksStage, Points, PointsStage, WalkWitness, stages, unified},
     },
     profile::{
         Profile,
@@ -40,7 +40,7 @@ pub struct Witness<'a, C: Affine, P: Profile> {
     pub online_fold: FixedVec<C::Base, Present<P, Nested, 2>>,
     pub endoscalar: Uendo,
     pub bridge_hash: C,
-    pub points: &'a PointsWitness<C, P>,
+    pub walk: &'a WalkWitness<C, P>,
     pub preamble: &'a stages::preamble::Witness<C, P>,
     pub s_prime: &'a stages::s_prime::Witness<C, P>,
     pub inner_error: &'a stages::inner_error::Witness<C, P>,
@@ -56,7 +56,10 @@ pub struct Witness<'a, C: Affine, P: Profile> {
 pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub endoscalar: HoistedEndoscalar<'dr, D>,
     pub bridge_hash: stages::bridge_hash::Output<'dr, D, C>,
-    pub points: Points<'dr, D, C, P>,
+    /// The points stage of the walk's group the circuit loaded, if it
+    /// loaded one.
+    pub points: Option<Points<'dr, D, C, P>>,
+    pub links: Links<'dr, D, C, P>,
     pub preamble: stages::preamble::Output<'dr, D, C, P>,
     pub s_prime: stages::s_prime::Output<'dr, D, C, P>,
     pub inner_error: stages::inner_error::Output<'dr, D, C, P>,
@@ -68,10 +71,20 @@ pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub challenges: stages::challenges::Output<'dr, D>,
 }
 
-/// Reserves the whole stage chain and loads every stage, unenforced.
+/// The group of the walk an instance circuit loads: the one group of a
+/// walk in one stage, and none of a grouped walk, whose groups the check
+/// circuits load.
+pub fn whole_walk<P: Profile>() -> Option<usize> {
+    (!crate::internal::nested::walk_grouping::<P>().is_grouped()).then_some(0)
+}
+
+/// Reserves the whole stage chain and loads every stage, unenforced. The
+/// points stage is loaded with the polynomial of the walk's group `group`,
+/// or reserved and not loaded for `None`.
 pub fn load_all<'a, 'dr, 'source: 'dr, D, C, R, P>(
     dr: StageBuilder<'a, 'dr, D, R, (), stages::challenges::Stage<C, R, P>>,
     witness: &DriverValue<D, Witness<'source, C, P>>,
+    group: Option<usize>,
 ) -> Result<(&'a mut D, Loaded<'dr, D, C, P>)>
 where
     D: Driver<'dr, F = C::Base>,
@@ -81,7 +94,14 @@ where
 {
     let (endoscalar, dr) = dr.add_stage::<EndoscalarStage>()?;
     let (bridge_hash, dr) = dr.add_stage::<stages::bridge_hash::Stage<C>>()?;
-    let (points, dr) = dr.add_stage::<PointsStage<C, P>>()?;
+    let (points, dr) = match group {
+        Some(group) => {
+            let (points, dr) = dr.add_stage::<PointsStage<C, P>>()?;
+            (Some((group, points)), dr)
+        }
+        None => (None, dr.skip_stage::<PointsStage<C, P>>()?),
+    };
+    let (links, dr) = dr.add_stage::<LinksStage<C, P>>()?;
     let (preamble, dr) = dr.add_stage::<stages::preamble::Stage<C, R, P>>()?;
     let (s_prime, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, P>>()?;
     let (inner_error, dr) = dr.add_stage::<stages::inner_error::Stage<C, R, P>>()?;
@@ -96,7 +116,13 @@ where
     let loaded = Loaded {
         endoscalar: endoscalar.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?,
         bridge_hash: bridge_hash.unenforced(dr, witness.as_ref().map(|w| w.bridge_hash))?,
-        points: points.unenforced(dr, witness.as_ref().map(|w| w.points))?,
+        points: match points {
+            Some((group, points)) => {
+                Some(points.unenforced(dr, witness.as_ref().map(|w| &w.walk.groups[group]))?)
+            }
+            None => None,
+        },
+        links: links.unenforced(dr, witness.as_ref().map(|w| &w.walk.links))?,
         preamble: preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble))?,
         s_prime: s_prime.unenforced(dr, witness.as_ref().map(|w| w.s_prime))?,
         inner_error: inner_error.unenforced(dr, witness.as_ref().map(|w| w.inner_error))?,

@@ -705,6 +705,7 @@ fn aggregator_declares_the_decompression() {
             21,
             per_step,
             per_step,
+            0,
         );
         shape.source_polynomials = 2;
         shape
@@ -775,6 +776,7 @@ fn solve_finds_a_fixed_point_for_wider_profiles() {
             0,
             4,
             4,
+            0,
         );
         assert_eq!(
             again, shape,
@@ -824,6 +826,134 @@ fn an_extension_proves_verifies_and_compresses() -> Result<()> {
     let compressed = app.compress(&fused, &mut rng)?;
     assert!(app.verify_compressed(&compressed)?);
     Ok(())
+}
+
+/// A grouped nested walk lays the proof out consistently: the groups
+/// cover the walk, the rx list and the registry list carry the walk's
+/// extra entries at the positions the lookups give, and the standard
+/// profile's lists have none.
+#[test]
+fn a_grouped_walk_lays_out_its_polynomials() {
+    use ragu_primitives::vec::Len as _;
+
+    use super::testing::Grouped;
+    use crate::internal::nested::{self, InternalCircuitIndex, RxIndex};
+
+    let grouping = nested::walk_grouping::<Grouped>();
+    let steps = nested::NumSteps::<Grouped>::len();
+    assert!(grouping.is_grouped());
+    assert_eq!(grouping.pages(), steps);
+    let groups = grouping.groups();
+    assert_eq!(groups, steps.div_ceil(8));
+    assert!(groups > 1, "the test profile's walk has several groups");
+
+    // The rx list: the standard entries, then the later groups' points
+    // stages, the links stage and each group's check circuit.
+    let rx = RxIndex::all::<Grouped>();
+    assert_eq!(rx.len(), Shape::of::<Grouped>().nested_rx);
+    for (position, id) in rx.iter().enumerate() {
+        assert_eq!(id.position::<Grouped>(), position, "{id:?}");
+    }
+    let extras = RxIndex::walk_extras::<Grouped>();
+    assert_eq!(extras.len(), 2 * groups);
+    assert_eq!(rx[rx.len() - extras.len()..], extras[..]);
+    assert_eq!(
+        nested::NumWalkStages::<Grouped>::len() + nested::NumGroupChecks::<Grouped>::len(),
+        extras.len()
+    );
+    assert_eq!(RxIndex::points_group(0), RxIndex::PointsStage);
+    assert_eq!(RxIndex::points_group(2), RxIndex::PointsGroup(2));
+
+    // The registry list: every entry at its index, circuits before masks,
+    // one check circuit per group and the links stage's mask.
+    let all = InternalCircuitIndex::all::<Grouped>();
+    assert_eq!(all.len(), InternalCircuitIndex::num::<Grouped>());
+    for (position, id) in all.iter().enumerate() {
+        assert_eq!(
+            usize::from(id.circuit_index::<Grouped>()),
+            position,
+            "{id:?}"
+        );
+    }
+    let first_mask = all.iter().position(|id| id.is_mask()).unwrap();
+    assert!(all[first_mask..].iter().all(|id| id.is_mask()));
+    let checks = all
+        .iter()
+        .filter(|id| matches!(id, InternalCircuitIndex::GroupCheck(_)))
+        .count();
+    assert_eq!(checks, groups);
+    assert_eq!(*all.last().unwrap(), InternalCircuitIndex::LinksStage);
+    assert_eq!(
+        nested::num_claims::<Grouped>(),
+        nested::num_claims::<Standard>()
+            + 2 * (steps - nested::NumSteps::<Standard>::len())
+            + 2 * groups
+            + 1
+    );
+
+    // The standard profile's walk is in one stage, and its lists are as
+    // they were.
+    assert!(!nested::walk_grouping::<Standard>().is_grouped());
+    assert!(RxIndex::walk_extras::<Standard>().is_empty());
+    assert_eq!(RxIndex::all::<Standard>(), RxIndex::ALL);
+    assert_eq!(
+        InternalCircuitIndex::all::<Standard>(),
+        InternalCircuitIndex::ALL
+    );
+    assert_eq!(RxIndex::instance_stages::<Standard>(), RxIndex::STAGES);
+}
+
+/// A grouped nested walk proves: an application in the [`Grouped`]
+/// profile, the fuse alone with its nested walk in groups, seeds, fuses,
+/// verifies and compresses at rank `RANK`. A proof with a wrong link or a
+/// wrong group polynomial does not verify.
+///
+/// [`Grouped`]: super::testing::Grouped
+fn a_grouped_walk_proves_at<const RANK: u32>() -> Result<()>
+where
+    R<RANK>: ragu_circuits::polynomials::Rank,
+{
+    use rand::{SeedableRng, rngs::StdRng};
+
+    use super::testing::{Grouped, UnitStep};
+    use crate::{ApplicationBuilder, internal::nested::RxIndex};
+
+    const HEADER_SIZE: usize = 4;
+    assert_ne!(Shape::of::<Grouped>(), Shape::of::<Standard>());
+
+    let app = ApplicationBuilder::<Profiled<Pasta, Grouped>, R<RANK>, HEADER_SIZE>::new()
+        .register(UnitStep)?
+        .finalize(crate::pasta::baked_aggregator())?;
+    let mut rng = StdRng::seed_from_u64(u64::from(RANK));
+    let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
+    let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
+    let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;
+    assert!(app.verify_uncompressed(&fused, &mut rng)?);
+    let compressed = app.compress(&fused, &mut rng)?;
+    assert!(app.verify_compressed(&compressed)?);
+
+    // The walk's extra polynomials are bound: doubling any one of them
+    // breaks a claim the decider checks.
+    for index in RxIndex::walk_extras::<Grouped>() {
+        let mut proof = fused.proof().clone();
+        proof.double_nested_extension_rx(crate::pasta::baked_aggregator(), index);
+        let changed = proof.carry::<()>(());
+        assert!(
+            !app.verify_uncompressed(&changed, &mut rng)?,
+            "{index:?} is not bound"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_grouped_walk_proves_at_the_wallet_rank() -> Result<()> {
+    a_grouped_walk_proves_at::<13>()
+}
+
+#[test]
+fn a_grouped_walk_proves_at_the_rank_above() -> Result<()> {
+    a_grouped_walk_proves_at::<14>()
 }
 
 /// A binding circuit's claim holds only if its side's values are the

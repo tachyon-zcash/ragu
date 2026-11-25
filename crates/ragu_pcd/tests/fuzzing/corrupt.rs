@@ -980,6 +980,11 @@ impl NestedRx {
             I::BridgeF => Self::BridgeF,
             I::BridgeEval => Self::BridgeEval,
             I::ChallengeStage => Self::ChallengeStage,
+            // The vocabulary is the standard profile's, whose walk is in
+            // one stage.
+            I::PointsGroup(_) | I::LinksStage | I::GroupCheck(_) => {
+                panic!("the standard profile's walk is not grouped")
+            }
         }
     }
 }

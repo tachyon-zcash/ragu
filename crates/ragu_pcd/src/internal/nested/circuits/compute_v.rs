@@ -139,7 +139,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
-        let (dr, stages) = common::load_all(dr, &witness)?;
+        let (dr, stages) = common::load_all(dr, &witness, common::whole_walk::<P>())?;
 
         if let Some(mesh) = P::NATIVE_MESH {
             for (restriction, child) in mesh

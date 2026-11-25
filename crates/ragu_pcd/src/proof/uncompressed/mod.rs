@@ -230,6 +230,11 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) nested_extension_circuit_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
     /// The rx polynomials of the stages of the profile's nested extension.
     pub(crate) nested_extension_stage_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    /// A grouped nested walk's points stages after the first, then its
+    /// links stage. Empty for a walk in one stage.
+    pub(crate) nested_walk_stage_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    /// A grouped nested walk's check circuits, one per group.
+    pub(crate) nested_group_check_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) nested_endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_points_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
 
@@ -263,6 +268,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) nested_endoscaling_step_commitments: Vec<Cached<C::NestedCurve>>,
     pub(crate) nested_extension_circuit_commitments: Vec<Cached<C::NestedCurve>>,
     pub(crate) nested_extension_stage_commitments: Vec<Cached<C::NestedCurve>>,
+    pub(crate) nested_walk_stage_commitments: Vec<Cached<C::NestedCurve>>,
+    pub(crate) nested_group_check_commitments: Vec<Cached<C::NestedCurve>>,
     pub(crate) nested_endoscalar_commitment: Cached<C::NestedCurve>,
     pub(crate) nested_points_commitment: Cached<C::NestedCurve>,
 
@@ -419,6 +426,12 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.nested_extension_circuit_commitments.len() == nested_extension.circuits.len()
             && self.nested_extension_stage_rxs.len() == nested_extension.stages
             && self.nested_extension_stage_commitments.len() == nested_extension.stages
+            && self.nested_walk_stage_rxs.len() == nested::NumWalkStages::<C::Profile>::len()
+            && self.nested_walk_stage_commitments.len()
+                == nested::NumWalkStages::<C::Profile>::len()
+            && self.nested_group_check_rxs.len() == nested::NumGroupChecks::<C::Profile>::len()
+            && self.nested_group_check_commitments.len()
+                == nested::NumGroupChecks::<C::Profile>::len()
             && self.step_binding.len() == native::online::StepBindingLen::<C::Profile>::len()
     }
 }
@@ -472,6 +485,13 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             EndoscalingStep(step) => &self.nested_endoscaling_step_rxs[step as usize],
             ExtensionCircuit(k) => &self.nested_extension_circuit_rxs[k as usize],
             ExtensionStage(k) => &self.nested_extension_stage_rxs[k as usize],
+            // A grouped walk's later points stages, then its links stage.
+            PointsGroup(group) => &self.nested_walk_stage_rxs[group as usize - 1],
+            LinksStage => self
+                .nested_walk_stage_rxs
+                .last()
+                .expect("a grouped walk has a links stage"),
+            GroupCheck(group) => &self.nested_group_check_rxs[group as usize],
             Collapse => &self.nested_collapse_rx,
             ComputeV => &self.nested_compute_v_rx,
             EndoscalarStage => &self.nested_endoscalar_rx,
@@ -839,6 +859,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             EndoscalingStep(step) => self.nested_endoscaling_step_commitment(step),
             ExtensionCircuit(k) => self.nested_extension_circuit_commitments[k as usize].0,
             ExtensionStage(k) => self.nested_extension_stage_commitments[k as usize].0,
+            PointsGroup(group) => self.nested_walk_stage_commitments[group as usize - 1].0,
+            LinksStage => {
+                self.nested_walk_stage_commitments
+                    .last()
+                    .expect("a grouped walk has a links stage")
+                    .0
+            }
+            GroupCheck(group) => self.nested_group_check_commitments[group as usize].0,
             EndoscalarStage => self.nested_endoscalar_commitment(),
             PointsStage => self.nested_points_commitment(),
             BridgePreamble => self.bridge_preamble_commitment,
@@ -889,7 +917,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     ///
     /// # Panics
     ///
-    /// Panics if `index` is not an extension circuit's or stage's.
+    /// Panics if `index` is not an extension circuit's or stage's, or one
+    /// of a grouped walk's extra polynomials.
     pub(crate) fn double_nested_extension_rx(
         &mut self,
         params: &C::Params,
@@ -905,6 +934,24 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested::RxIndex::ExtensionStage(k) => (
                 &mut self.nested_extension_stage_rxs[k as usize],
                 &mut self.nested_extension_stage_commitments[k as usize],
+            ),
+            // A grouped walk's later points stages, its links stage and
+            // its check circuits.
+            nested::RxIndex::PointsGroup(group) => (
+                &mut self.nested_walk_stage_rxs[group as usize - 1],
+                &mut self.nested_walk_stage_commitments[group as usize - 1],
+            ),
+            nested::RxIndex::LinksStage => (
+                self.nested_walk_stage_rxs
+                    .last_mut()
+                    .expect("a grouped walk has a links stage"),
+                self.nested_walk_stage_commitments
+                    .last_mut()
+                    .expect("a grouped walk has a links stage"),
+            ),
+            nested::RxIndex::GroupCheck(group) => (
+                &mut self.nested_group_check_rxs[group as usize],
+                &mut self.nested_group_check_commitments[group as usize],
             ),
             _ => panic!("{index:?} is not an extension polynomial"),
         };

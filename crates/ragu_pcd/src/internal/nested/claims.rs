@@ -109,10 +109,12 @@ where
         use InternalCircuitIndex::*;
         match id {
             EndoscalingStep(step) => {
+                // A step takes the points stage of its own group.
+                let (group, _) = super::walk_grouping::<P>().locate(step as usize);
                 for ((step_rx, endo_rx), pts_rx) in source
                     .rx(Rx(RxIndex::EndoscalingStep(step)))
                     .zip(source.rx(Rx(RxIndex::EndoscalarStage)))
-                    .zip(source.rx(Rx(RxIndex::PointsStage)))
+                    .zip(source.rx(Rx(RxIndex::points_group(group))))
                 {
                     processor.internal_circuit_claim(id, [step_rx, endo_rx, pts_rx].into_iter());
                 }
@@ -124,7 +126,7 @@ where
                     .iter()
                     .position(|&circuit| circuit == id)
                     .expect("an instance circuit")];
-                let loaded = once(own).chain(RxIndex::STAGES);
+                let loaded = once(own).chain(RxIndex::instance_stages::<P>());
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in loaded {
                     for (i, rx) in source.rx(Rx(index)).enumerate() {
@@ -137,6 +139,30 @@ where
                 for rxs in per_proof {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
+            }
+            // A group's check circuit: its rx, every nested stage with the
+            // group's own points stage, and the links stage (k(y) = 1).
+            GroupCheck(group) => {
+                let loaded = once(RxIndex::GroupCheck(group))
+                    .chain(RxIndex::group_check_stages(group as usize));
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in loaded {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+            // The points stage's mask, over every group's polynomial.
+            PointsStage => {
+                let groups = super::walk_grouping::<P>().groups();
+                let rxs = (0..groups).flat_map(|group| source.rx(Rx(RxIndex::points_group(group))));
+                processor.mask_claim(id, rxs)?;
             }
             // An extension circuit: its rx and the extension stages it loads
             // (k(y) = 1).
@@ -181,8 +207,20 @@ where
                     .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step as u32))));
                 processor.mask_claim(id, final_rxs)?;
             }
+            // The final mask of the circuits whose last stage is the
+            // challenge stage: the instance circuits and a grouped walk's
+            // check circuits.
             ChallengeFinalStaged => {
-                let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
+                let grouping = super::walk_grouping::<P>();
+                let checks = if grouping.is_grouped() {
+                    grouping.groups()
+                } else {
+                    0
+                };
+                let owners = RxIndex::INSTANCE
+                    .into_iter()
+                    .chain((0..checks as u32).map(RxIndex::GroupCheck));
+                let final_rxs = owners.flat_map(|own| source.rx(Rx(own)));
                 processor.mask_claim(id, final_rxs)?;
             }
             // Every other entry is a stage's mask, over the stage's rx.
@@ -282,6 +320,16 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                     ones.clone()
                 }
             })
+        })
+        // A grouped walk's check circuits, which expose nothing.
+        .chain({
+            let grouping = super::walk_grouping::<P>();
+            let checks = if grouping.is_grouped() {
+                grouping.groups()
+            } else {
+                0
+            };
+            core::iter::repeat_n(source.ones(), checks).flatten()
         })
 }
 
