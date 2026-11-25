@@ -637,6 +637,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default handles empty phases and rejects a phase needing polynomials.
     fn nested_online_polynomials<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
         phase: online::Phase,
         inputs: &[Base::ScalarField],
         challenges: online::PreparationChallenges<Base::ScalarField>,
@@ -646,7 +647,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         R: Rank,
         B: SelectableBackend,
     {
-        let _ = (context, inputs, challenges);
+        let _ = (context, source, inputs, challenges);
         online::defaults::polynomials::<Self, online::stages::Nested, _>(phase)
     }
 

@@ -162,6 +162,7 @@ impl Profile for OnlineBatch {
     }
     fn nested_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         _: &[Base::ScalarField],
         _: PreparationChallenges<Base::ScalarField>,
@@ -471,6 +472,7 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
     }
     fn nested_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         _: &[Base::ScalarField],
         _: PreparationChallenges<Base::ScalarField>,
@@ -980,6 +982,7 @@ impl Profile for NestedPhases {
     }
     fn nested_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         inputs: &[Base::ScalarField],
         challenges: PreparationChallenges<Base::ScalarField>,
@@ -1134,6 +1137,7 @@ impl Profile for LegacyMixed {
         B: SelectableBackend;
     fn nested_online_polynomials<'params, Base, Rk, B>(
         slope: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         _: &[Base::ScalarField],
         _: PreparationChallenges<Base::ScalarField>,

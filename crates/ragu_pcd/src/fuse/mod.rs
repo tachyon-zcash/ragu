@@ -356,7 +356,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             x: None,
         };
         self.prepare_native_online(Phase::BeforeY, preparation, source, &mut builder)?;
-        self.prepare_nested_online(Phase::BeforeY, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeY, preparation, source, &mut builder)?;
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
             &native_registry,
@@ -449,7 +449,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         preparation.y = Some(*y.value().take());
         self.prepare_native_online(Phase::BeforeX, preparation, source, &mut builder)?;
-        self.prepare_nested_online(Phase::BeforeX, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeX, preparation, source, &mut builder)?;
         self.compute_ab(
             rng,
             native_a,
@@ -467,7 +467,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         preparation.x = Some(*x.value().take());
         self.prepare_native_online(Phase::BeforeAlpha, preparation, source, &mut builder)?;
-        self.prepare_nested_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeAlpha, preparation, source, &mut builder)?;
         self.commit_native_online_query(preparation, rng, &mut builder)?;
         self.commit_nested_online_query(preparation, rng, &mut builder)?;
         let (query_witness, nested_query) = self.compute_query(

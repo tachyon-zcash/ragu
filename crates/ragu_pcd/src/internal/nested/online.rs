@@ -203,6 +203,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             Phase::BeforeW,
             PreparationChallenges::default(),
             Some(children),
+            source,
             builder,
         )
     }
@@ -213,9 +214,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         &self,
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        self.supply_nested_online(phase, challenges, None, builder)
+        self.supply_nested_online(phase, challenges, None, source, builder)
     }
 
     /// Supplies the polynomials the profile and the mesh fix at `phase`,
@@ -225,11 +227,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
         children: Option<[&Proof<C, R>; 2]>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let challenges = lifts::<C>(challenges)?;
         let supplied = C::Profile::nested_online_polynomials::<C::Base, R, B>(
             &self.context,
+            source,
             phase,
             builder.nested_online().early_values(),
             challenges,
