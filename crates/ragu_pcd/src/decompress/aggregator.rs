@@ -138,6 +138,11 @@ use crate::{
 ///
 /// # Privacy
 ///
+/// A decompressed proof carries the wallet proof's online commitments
+/// unchanged, and [`Pcd::polynomials`](crate::Pcd::polynomials) returns
+/// the coefficients given to the decompression, so the proof links to the
+/// compressed wallet proof.
+///
 /// Compressing the result of [`decompress`](crate::Application::decompress)
 /// publishes its run stage commitments. The first two commit to the wallet
 /// proof's instance commitments and scalars with a zero alpha. They stay the

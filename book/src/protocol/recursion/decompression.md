@@ -263,9 +263,9 @@ restrictions at $w_F$.
 
 For each wallet IPA, the folded generator is $G'=[s]$, where
 $s(X)=\prod_{i=0}^{k-1}(1+u_{k-1-i}X^{2^i})$ over that IPA's round challenges
-$u_i$. The decompression step uses
-two online polynomials for polynomial oracle access to bind the supplied
-$G'$ points, one on each curve.
+$u_i$. The decompression step binds the two supplied $G'$ points with one
+profile polynomial on each curve: the host $s$ in the native online batch,
+the nested $s$ in the step's online $\F_q$ polynomial.
 
 1. **Fix the round challenges.** Before $w_{\rm step}$ the decompression
    step stages the raw squeeze for the nested IPA's last round challenge.
@@ -352,6 +352,10 @@ the chunk, statement and binding circuits, `stages` has their stages,
 fills their polynomials.
 
 ## Privacy {#privacy}
+
+A decompressed proof carries the wallet proof's online commitments
+unchanged, and its full form exposes the supplied coefficients, so it links
+to the compressed wallet proof.
 
 Compressing a decompressed proof publishes its run commitments. The first
 binds the wallet instance's host commitment coordinates and the second

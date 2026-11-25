@@ -328,14 +328,14 @@ for an example.
 
 ### Publishing Proofs
 
-The encoded header and the proof's online polynomials are separate. The
-application decides which online state it can publish. A full rerandomized
-proof exposes the original coefficients through `Pcd::polynomials()`.
-Compression publishes their deterministic commitments through
-`CompressedPcd::online_commitments()`. For example, a recipient can compare
-commitments for candidate sets even when the encoded header gives only the
-set size. Joint hiding of the other proof fields and compression transcript
-remains unproved.
+The online polynomials are public, like the header fields, and Ragu does
+not hide them. A full proof, rerandomized or not, exposes their
+coefficients through `Pcd::polynomials()`, and compression publishes their
+deterministic commitments through `CompressedPcd::online_commitments()`.
+A recipient can compare commitments for candidate sets even when the
+encoded header gives only the set size. Keep private values in the
+application stage. Joint hiding of the other proof fields and compression
+transcript remains unproved.
 
 ## Working with Headers
 

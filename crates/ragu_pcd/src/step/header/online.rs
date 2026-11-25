@@ -33,11 +33,12 @@ use core::any::TypeId;
 /// circuit; a header whose convention makes a slot padding needs nothing
 /// from the steps that output it.
 ///
-/// The polynomial commitments are deterministic for their coefficients;
-/// opening points and values are public. Values intended to stay out of
-/// the public instance belong in the application stage, staged by
-/// [`Step::prepare`](crate::step::Step::prepare); public openings can
-/// still reveal those values.
+/// The slots hold public values. Ragu does not hide them: their
+/// commitments are deterministic, rerandomization leaves them unchanged,
+/// and compression and decompression carry them as they are. Do not put
+/// a private polynomial in a slot. Private values belong in the
+/// application stage, staged by [`Step::prepare`](crate::step::Step::prepare);
+/// public openings can still reveal those values.
 ///
 /// Aggregator decompression binds the output commitments to the wallet
 /// proof's commitments. Supply the matching coefficients to

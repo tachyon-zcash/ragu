@@ -836,12 +836,12 @@ fn scalings_hold_their_digits_to_the_other_sides_stage() {
 /// $G'$ the scalar-field side holds. With the flag set, the circuit-field
 /// side accepts the opening of that polynomial and no other value, and
 /// the transcript's last squeeze as the staged digest and no other value,
-/// and the scalar-field side accepts that commitment in the slot and no
-/// other point. With it unset, none is held. The flag is the same on both
-/// sides only when the scalar-field side's recomputation of the
-/// circuit-field side's digits stage is that stage's commitment.
+/// and the scalar-field side accepts that commitment as the host batch
+/// commitment and no other point. With it unset, none is held. The flag is
+/// the same on both sides only when the scalar-field side's recomputation
+/// of the circuit-field side's digits stage is that stage's commitment.
 #[test]
-fn the_step_binding_holds_g_prime_to_the_slot() {
+fn the_step_binding_holds_g_prime_to_the_host_batch_commitment() {
     type NativeDigits = DigitsStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>;
     let setup = Setup::new();
     let params = crate::pasta::baked_aggregator();
