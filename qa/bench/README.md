@@ -19,8 +19,11 @@ From the repository root:
 
 ~~~sh
 git fetch origin main
-python3 qa/bench/run.py run --threads 12
+just bench --threads 12
 ~~~
+
+`just bench` runs `python3 qa/bench/run.py run` with the arguments it is given,
+so every option below works with either command.
 
 This measures the checkout's HEAD against main: HEAD's merge base with
 origin/main, or with a local main when there is no origin/main. Run on main

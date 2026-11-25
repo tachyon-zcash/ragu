@@ -94,11 +94,15 @@ proptests_fast *ARGS:
 proptests_heavy *ARGS:
   PROPTEST_CASES="${PROPTEST_CASES:-256}" cargo test --release -p ragu_circuits --all-features proptest {{ARGS}}
 
-# run benchmarks (auto-detects platform)
+# run the wallet/aggregator workflow suite natively, HEAD against main (qa/bench/README.md)
 bench *ARGS:
-    @just _bench_{{os()}} {{ARGS}}
+    python3 qa/bench/run.py run {{ARGS}}
 
-_bench_macos *ARGS:
+# run the gungraun instruction-count benchmarks (Docker on macOS)
+bench_gungraun *ARGS:
+    @just _bench_gungraun_{{os()}} {{ARGS}}
+
+_bench_gungraun_macos *ARGS:
     #!/bin/sh
     [ -t 1 ] && tty_opt="--tty" # use tty if stdout is a tty
     container=$(docker run $tty_opt --detach --interactive --init --rm \
@@ -111,11 +115,11 @@ _bench_macos *ARGS:
         -w /workspace \
         --security-opt seccomp=unconfined \
         nixery.dev/{{_nixery_meta}}/cargo-binstall/gcc/just/rustup/valgrind \
-        just _bench_linux {{ARGS}})
+        just _bench_gungraun_linux {{ARGS}})
     trap "docker kill $container > /dev/null 2>&1" EXIT HUP
     docker attach --no-stdin $container
 
-_bench_linux *ARGS: _gungraun_setup
+_bench_gungraun_linux *ARGS: _gungraun_setup
     cargo bench --workspace --all-features --bench gungraun {{ARGS}}
 
 # generate flamegraph in target/*.svg
