@@ -23,7 +23,9 @@ use udon::{
     field::Field,
 };
 
-use super::{ElementHorner, PointHorner, Unit, Walk, interstitials, num_pages, page, range};
+use super::{
+    ElementHorner, Grouping, PointHorner, Unit, Walk, interstitials, link, num_pages, page, range,
+};
 use crate::{
     internal::{
         endoscalar,
@@ -556,6 +558,223 @@ fn a_point_page_takes_one_bank_and_equal_applications() {
     assert_eq!(empty, 1, "the bank's check");
     assert_eq!(two, empty + 2 * application);
     assert_eq!(five, empty + 5 * application);
+}
+
+/// The groups partition the walk: every input and every page belongs to
+/// one group, at the index the grouping gives, and the stage and links
+/// sizes follow the group size.
+#[test]
+fn groups_partition_the_walk() {
+    for capacity in 1..=5 {
+        for len in 0..=40 {
+            for per_group in 0..=6 {
+                let grouping = Grouping::new(capacity, len, per_group);
+                let pages = num_pages(capacity, len);
+                assert_eq!(grouping.pages(), pages);
+                let groups = grouping.groups();
+                if per_group == 0 {
+                    assert!(!grouping.is_grouped());
+                    assert_eq!((groups, grouping.links()), (1, 0));
+                    assert_eq!(grouping.group_inputs(), len);
+                    assert_eq!(grouping.group_pages(), pages);
+                } else {
+                    assert_eq!(groups, pages.div_ceil(per_group));
+                    assert_eq!(grouping.links(), groups + 1);
+                    assert_eq!(grouping.group_inputs(), per_group * capacity);
+                    assert_eq!(grouping.group_pages(), per_group);
+                }
+
+                let (mut next_input, mut next_page) = (0, 0);
+                for group in 0..groups {
+                    let inputs = grouping.inputs_of(group);
+                    assert_eq!(inputs.start, next_input, "groups are adjacent");
+                    assert!(inputs.len() <= grouping.group_inputs());
+                    let own = grouping.pages_of(group);
+                    assert!(own >= 1 && own <= grouping.group_pages());
+                    for local in 0..own {
+                        assert_eq!(grouping.locate(next_page + local), (group, local));
+                        // The page's inputs within the group are its inputs
+                        // within the walk.
+                        let within = range(capacity, local, inputs.len());
+                        let whole = range(capacity, next_page + local, len);
+                        assert_eq!(inputs.start + within.start, whole.start);
+                        assert_eq!(within.len(), whole.len());
+                    }
+                    next_input = inputs.end;
+                    next_page += own;
+                }
+                assert_eq!((next_input, next_page), (len, pages));
+            }
+        }
+    }
+}
+
+/// The arranged values are the whole walk's: each group starts from the
+/// state the groups before it leave, the links are those states, and a
+/// short group is padded.
+#[test]
+fn arranged_groups_chain_the_walks_states() {
+    let apply = |state: &mut u64, input: &u64| *state = state.wrapping_mul(31).wrapping_add(*input);
+    for capacity in 1..=4 {
+        for len in 0..=30 {
+            let inputs: Vec<u64> = (0..len as u64).map(|i| 1000 + 17 * i).collect();
+            let whole = interstitials(capacity, 5u64, &inputs, apply);
+            for per_group in 0..=5 {
+                let grouping = Grouping::new(capacity, len, per_group);
+                let arranged = grouping.arrange(5u64, &inputs, 0, apply);
+                assert_eq!(arranged.groups.len(), grouping.groups());
+                assert_eq!(arranged.links.len(), grouping.links());
+                let mut entry = 5u64;
+                let mut page = 0;
+                for (index, group) in arranged.groups.iter().enumerate() {
+                    assert_eq!(group.entry, entry);
+                    assert_eq!(group.inputs.len(), grouping.group_inputs());
+                    assert_eq!(group.interstitials.len(), grouping.group_pages());
+                    let own = grouping.inputs_of(index);
+                    assert_eq!(group.inputs[..own.len()], inputs[own.clone()]);
+                    assert!(group.inputs[own.len()..].iter().all(|&input| input == 0));
+                    let pages = grouping.pages_of(index);
+                    assert_eq!(group.interstitials[..pages], whole[page..page + pages]);
+                    entry = group.interstitials[pages - 1];
+                    page += pages;
+                    if grouping.is_grouped() {
+                        assert_eq!(arranged.links[index], group.entry);
+                        assert_eq!(arranged.links[index + 1], entry);
+                    }
+                }
+                assert_eq!(entry, *whole.last().unwrap(), "the last exit is the result");
+            }
+        }
+    }
+}
+
+/// A grouped element walk's values on the simulator: the links and each
+/// group as the walk a page of it runs.
+struct GroupedValues {
+    capacity: usize,
+    grouping: Grouping,
+    point: Fp,
+    links: Vec<Fp>,
+    groups: Vec<super::Group<Fp, Fp>>,
+}
+
+impl GroupedValues {
+    fn honest(rng: &mut StdRng, capacity: usize, len: usize, per_group: usize) -> Self {
+        let point = random_fp(rng);
+        let inputs: Vec<Fp> = (0..len).map(|_| random_fp(rng)).collect();
+        let grouping = Grouping::new(capacity, len, per_group);
+        let arranged = grouping.arrange(random_fp(rng), &inputs, Fp::ZERO, |state, input| {
+            *state = *state * point + input
+        });
+        GroupedValues {
+            capacity,
+            grouping,
+            point,
+            links: arranged.links,
+            groups: arranged.groups,
+        }
+    }
+
+    /// Whether page `index` of the walk holds, run as a page of its group.
+    fn page_holds(&self, index: usize) -> bool {
+        let (group, local) = self.grouping.locate(index);
+        let values = &self.groups[group];
+        Simulator::simulate((), |dr, _| {
+            let point = element(dr, self.point);
+            let own = self.grouping.inputs_of(group).len();
+            let walk = VecWalk {
+                unit: ElementHorner::new(&point),
+                capacity: self.capacity,
+                initial: element(dr, values.entry),
+                inputs: values.inputs[..own]
+                    .iter()
+                    .map(|&v| element(dr, v))
+                    .collect(),
+                interstitials: values
+                    .interstitials
+                    .iter()
+                    .map(|&v| element(dr, v))
+                    .collect(),
+            };
+            page(dr, &walk, local)
+        })
+        .is_ok()
+    }
+
+    /// Whether group `group` is held to the links.
+    fn link_holds(&self, group: usize) -> bool {
+        let values = &self.groups[group];
+        let exit = values.interstitials[self.grouping.pages_of(group) - 1];
+        Simulator::simulate((), |dr, _| {
+            let links: Vec<_> = self.links.iter().map(|&v| element(dr, v)).collect();
+            let entry = element(dr, values.entry);
+            let exit = element(dr, exit);
+            link(dr, &links, group, &entry, &exit)
+        })
+        .is_ok()
+    }
+
+    /// The pages that fail, then the groups whose links fail.
+    fn failing(&self) -> (Vec<usize>, Vec<usize>) {
+        (
+            (0..self.grouping.pages())
+                .filter(|&index| !self.page_holds(index))
+                .collect(),
+            (0..self.grouping.groups())
+                .filter(|&group| !self.link_holds(group))
+                .collect(),
+        )
+    }
+}
+
+/// An honest grouped walk holds: every page as a page of its group, and
+/// every group against the links. A wrong value fails what reads it and
+/// nothing else: a link fails the two groups around it, a group's entry
+/// fails its first page and its link, a group's exit fails its last page
+/// and its link, and an inner interstitial fails two pages.
+#[test]
+fn groups_chain_through_the_links() {
+    // Eight pages of three in groups of three, three and two.
+    let honest = || GroupedValues::honest(&mut StdRng::seed_from_u64(12), 3, 23, 3);
+    assert_eq!(
+        (honest().grouping.pages(), honest().grouping.groups()),
+        (8, 3)
+    );
+    assert_eq!(honest().failing(), (vec![], vec![]));
+
+    let mut values = honest();
+    values.links[0] += Fp::ONE;
+    assert_eq!(values.failing(), (vec![], vec![0]));
+
+    let mut values = honest();
+    values.links[1] += Fp::ONE;
+    assert_eq!(values.failing(), (vec![], vec![0, 1]));
+
+    let mut values = honest();
+    values.links[3] += Fp::ONE;
+    assert_eq!(values.failing(), (vec![], vec![2]));
+
+    let mut values = honest();
+    values.groups[1].entry += Fp::ONE;
+    assert_eq!(values.failing(), (vec![3], vec![1]));
+
+    // The exit of group 1, its third interstitial.
+    let mut values = honest();
+    values.groups[1].interstitials[2] += Fp::ONE;
+    assert_eq!(values.failing(), (vec![5], vec![1]));
+
+    let mut values = honest();
+    values.groups[1].interstitials[0] += Fp::ONE;
+    assert_eq!(values.failing(), (vec![3, 4], vec![]));
+
+    // The short last group: its exit is its second interstitial, and its
+    // third is padding no page reads.
+    let mut values = honest();
+    values.groups[2].interstitials[1] += Fp::ONE;
+    assert_eq!(values.failing(), (vec![7], vec![2]));
+    let mut values = honest();
+    values.groups[2].interstitials[2] += Fp::ONE;
+    assert_eq!(values.failing(), (vec![], vec![]));
 }
 
 /// Holds a walk's capacity to the largest count that fits: a full page of

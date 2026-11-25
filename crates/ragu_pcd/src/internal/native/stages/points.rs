@@ -351,7 +351,8 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
     ) -> Self {
         Self {
             endoscalar,
-            interstitials: walk.interstitials,
+            interstitials: FixedVec::new(walk.interstitials.into_inner())
+                .expect("a walk in one stage holds one interstitial per step"),
         }
     }
 

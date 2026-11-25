@@ -27,7 +27,8 @@
 //!
 //! [`native::circuits::endoscaling_step`]: crate::internal::native::circuits::endoscaling_step
 
-use alloc::vec;
+use alloc::{vec, vec::Vec};
+use core::marker::PhantomData;
 
 use ragu_circuits::{
     WithAux,
@@ -43,11 +44,11 @@ use ragu_core::{
 use ragu_primitives::{
     ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, HoistedEndoscalar, Point, Uendo,
     consistent::Consistent,
-    vec::{FixedVec, Len},
+    vec::{ConstLen, FixedVec, Len},
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
-use super::paging::{self, PointHorner};
+use super::paging::{self, Grouping, PointHorner};
 
 /// Number of inputs (excluding initial) for a walk over `N` points.
 pub struct InputsLen<N: Len>(core::marker::PhantomData<N>);
@@ -136,22 +137,111 @@ impl<F: Field, R: Rank> Stage<F, R> for NoGap {
     }
 }
 
-/// Witness for the points stage: initial, inputs, and interstitials.
-#[derive(Clone)]
-pub struct PointsWitness<C: Affine, N: Len, E: Len> {
-    /// Initial accumulator (base case for step 0).
+/// The grouping of a walk in one stage: no groups, no links. The default
+/// of every type here.
+pub type Whole = ConstLen<0>;
+
+/// The grouping of a walk over `N` points at `E` endoscalings per step
+/// into groups of `Q` steps (see [`paging::Grouping`]). A `Q` of zero,
+/// [`Whole`], keeps the walk in one points stage.
+pub fn grouping<N: Len, E: Len, Q: Len>() -> Grouping {
+    Grouping::new(E::len(), InputsLen::<N>::len(), Q::len())
+}
+
+/// Length type for the inputs one points stage holds: every input of the
+/// walk for [`Whole`], a full group's otherwise.
+pub struct GroupInputsLen<N: Len, E: Len, Q: Len>(PhantomData<(N, E, Q)>);
+
+impl<N: Len, E: Len, Q: Len> Len for GroupInputsLen<N, E, Q> {
+    fn len() -> usize {
+        grouping::<N, E, Q>().group_inputs()
+    }
+}
+
+/// Length type for the interstitials one points stage holds: one per step
+/// of the walk for [`Whole`], one per step of a full group otherwise.
+pub struct GroupStepsLen<N: Len, E: Len, Q: Len>(PhantomData<(N, E, Q)>);
+
+impl<N: Len, E: Len, Q: Len> Len for GroupStepsLen<N, E, Q> {
+    fn len() -> usize {
+        grouping::<N, E, Q>().group_pages()
+    }
+}
+
+/// Length type for the states the links stage holds: none for [`Whole`],
+/// one per group boundary otherwise.
+pub struct LinksLen<N: Len, E: Len, Q: Len>(PhantomData<(N, E, Q)>);
+
+impl<N: Len, E: Len, Q: Len> Len for LinksLen<N, E, Q> {
+    fn len() -> usize {
+        grouping::<N, E, Q>().links()
+    }
+}
+
+/// Witness for one points stage: a group's entry point, its inputs and its
+/// interstitials. For [`Whole`] the one group is the walk.
+pub struct PointsWitness<C: Affine, N: Len, E: Len, Q: Len = Whole> {
+    /// The state the group starts from: the walk's initial point for the
+    /// first group.
     pub initial: C,
-    /// Inputs (length = `N::len() - 1`).
-    pub inputs: FixedVec<C, InputsLen<N>>,
-    /// Interstitial outputs, one per step.
-    pub interstitials: FixedVec<C, NumStepsLen<N, E>>,
+    /// The group's inputs. For [`Whole`], length = `N::len() - 1`.
+    pub inputs: FixedVec<C, GroupInputsLen<N, E, Q>>,
+    /// Interstitial outputs, one per step of the group.
+    pub interstitials: FixedVec<C, GroupStepsLen<N, E, Q>>,
+}
+
+// The length types are markers, so a derive's `Clone` bounds on them do not
+// hold.
+impl<C: Affine, N: Len, E: Len, Q: Len> Clone for PointsWitness<C, N, E, Q> {
+    fn clone(&self) -> Self {
+        PointsWitness {
+            initial: self.initial,
+            inputs: self.inputs.clone(),
+            interstitials: self.interstitials.clone(),
+        }
+    }
 }
 
 impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
-    /// Creates a new `PointsWitness` from points and an endoscalar.
+    /// Creates a new `PointsWitness` from points and an endoscalar, for a
+    /// walk in one stage.
     ///
     /// The first point becomes `initial`, remaining points become `inputs`,
     /// and `interstitials` are computed by simulating the Horner evaluation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `points.len() != N::len()`.
+    pub fn new(endoscalar: Uendo, points: &[C]) -> Self {
+        let mut walk = WalkWitness::<C, N, E>::new(endoscalar, points);
+        walk.groups.pop().expect("a walk in one stage is one group")
+    }
+}
+
+/// Witness for a whole walk: every group's points stage and the links.
+pub struct WalkWitness<C: Affine, N: Len, E: Len, Q: Len = Whole> {
+    /// The links stage's states: the walk's initial point, then the state
+    /// after each group. Empty for [`Whole`].
+    pub links: FixedVec<C, LinksLen<N, E, Q>>,
+    /// Each group's points stage.
+    pub groups: Vec<PointsWitness<C, N, E, Q>>,
+}
+
+impl<C: Affine, N: Len, E: Len, Q: Len> Clone for WalkWitness<C, N, E, Q> {
+    fn clone(&self) -> Self {
+        WalkWitness {
+            links: self.links.clone(),
+            groups: self.groups.clone(),
+        }
+    }
+}
+
+impl<C: Affine, N: Len, E: Len, Q: Len> WalkWitness<C, N, E, Q> {
+    /// Creates the witness of the walk over `points` under `endoscalar`.
+    ///
+    /// The first point is the walk's initial point and the rest are its
+    /// inputs. [`paging::Grouping::arrange`] computes each group's states.
+    /// A short last group's unused inputs hold the initial point.
     ///
     /// # Panics
     ///
@@ -161,67 +251,90 @@ impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
         assert_eq!(points.len(), num_points, "expected {num_points} points");
 
         let initial = points[0];
-        let points = &points[1..];
-        let inputs = FixedVec::from_fn(|i| points[i]);
-
         let endoscalar: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
-
-        // The state after each step, as the pages hold them.
-        let interstitials =
-            paging::interstitials(E::len(), initial.to_projective(), points, |acc, input| {
-                *acc = *acc * endoscalar + input.to_projective()
-            });
-
-        let interstitials = {
-            // Batch normalize projective points to affine
-            let mut tmp = vec![C::identity(); interstitials.len()];
-            C::batch_to_affine(&interstitials, &mut tmp);
-            FixedVec::new(tmp).expect("correct length")
-        };
-
-        Self {
+        let arranged = grouping::<N, E, Q>().arrange(
+            initial.to_projective(),
+            &points[1..],
             initial,
-            inputs,
-            interstitials,
-        }
+            |acc, input| *acc = *acc * endoscalar + input.to_projective(),
+        );
+
+        // Batch normalize the projective states to affine.
+        let affine = |states: &[<C as udon::curve::Affine>::Projective]| {
+            let mut tmp = vec![C::identity(); states.len()];
+            C::batch_to_affine(states, &mut tmp);
+            tmp
+        };
+        let links = FixedVec::new(affine(&arranged.links)).expect("correct length");
+        let groups = arranged
+            .groups
+            .into_iter()
+            .map(|group| {
+                let mut states = group.interstitials;
+                states.push(group.entry);
+                let mut states = affine(&states);
+                let initial = states.pop().expect("the entry state");
+                PointsWitness {
+                    initial,
+                    inputs: FixedVec::new(group.inputs).expect("correct length"),
+                    interstitials: FixedVec::new(states).expect("correct length"),
+                }
+            })
+            .collect();
+
+        Self { links, groups }
+    }
+
+    /// Returns the walk's result: the state after its last step.
+    #[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
+    pub fn result(&self) -> C {
+        let grouping = grouping::<N, E, Q>();
+        let last = grouping.groups() - 1;
+        self.groups[last].interstitials[grouping.pages_of(last) - 1]
     }
 }
 
 /// Output gadget containing initial, inputs, and interstitials. See [`PointsWitness`].
 #[derive(Gadget, Consistent)]
-pub struct Points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> {
+pub struct Points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len, Q: Len> {
     #[ragu(gadget)]
     pub initial: Point<'dr, D, C>,
     #[ragu(gadget)]
-    pub inputs: FixedVec<Point<'dr, D, C>, InputsLen<N>>,
+    pub inputs: FixedVec<Point<'dr, D, C>, GroupInputsLen<N, E, Q>>,
     #[ragu(gadget)]
-    pub interstitials: FixedVec<Point<'dr, D, C>, NumStepsLen<N, E>>,
+    pub interstitials: FixedVec<Point<'dr, D, C>, GroupStepsLen<N, E, Q>>,
 }
 
-/// Stage for allocating all point witnesses (inputs and interstitials). It
-/// follows the gap stage `G`, which follows [`EndoscalarStage`].
-pub struct PointsStage<C: Affine, N: Len, E: Len, G = NoGap>(
-    core::marker::PhantomData<(C, N, E, G)>,
+/// Stage for allocating the point witnesses of one group (inputs and
+/// interstitials). It follows the gap stage `G`, which follows
+/// [`EndoscalarStage`].
+///
+/// Every group of a walk has its own polynomial of this one stage type, so
+/// all groups sit at the same gates and share one stage mask and one final
+/// mask. Which group a polynomial holds is in its witness alone. For
+/// [`Whole`] the one group is the walk.
+pub struct PointsStage<C: Affine, N: Len, E: Len, G = NoGap, Q: Len = Whole>(
+    PhantomData<(C, N, E, G, Q)>,
 );
 
-impl<C: Affine, N: Len, E: Len, G> Default for PointsStage<C, N, E, G> {
+impl<C: Affine, N: Len, E: Len, G, Q: Len> Default for PointsStage<C, N, E, G, Q> {
     fn default() -> Self {
-        Self(core::marker::PhantomData)
+        Self(PhantomData)
     }
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>> Stage<C::Base, R>
-    for PointsStage<C, N, E, G>
+impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>, Q: Len> Stage<C::Base, R>
+    for PointsStage<C, N, E, G, Q>
 {
     type Parent = G;
 
     fn values() -> usize {
         // (x, y) coordinates for initial + inputs + interstitials.
-        2 * (1 + InputsLen::<N>::len() + NumStepsLen::<N, E>::len())
+        2 * (1 + GroupInputsLen::<N, E, Q>::len() + GroupStepsLen::<N, E, Q>::len())
     }
 
-    type Witness<'source> = &'source PointsWitness<C, N, E>;
-    type OutputKind = Kind![C::Base; Points<'_, _, C, N, E>];
+    type Witness<'source> = &'source PointsWitness<C, N, E, Q>;
+    type OutputKind = Kind![C::Base; Points<'_, _, C, N, E, Q>];
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
@@ -245,15 +358,70 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>> Stage<C::Base, R>
     }
 }
 
-/// The loaded endoscalar and points stages, as the walk one step is a page
-/// of.
-struct Loaded<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> {
-    unit: PointHorner<'a, 'dr, D, C>,
-    points: &'a Points<'dr, D, C, N, E>,
+/// Output gadget of [`LinksStage`]: the walk's initial point, then the
+/// state after each group.
+#[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
+#[derive(Gadget, Consistent)]
+pub struct Links<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len, Q: Len> {
+    #[ragu(gadget)]
+    pub states: FixedVec<Point<'dr, D, C>, LinksLen<N, E, Q>>,
 }
 
-impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> paging::Walk<'dr, D>
-    for Loaded<'a, 'dr, D, C, N, E>
+/// Stage for the links of a grouped walk, which chain its groups (see
+/// [`paging`](paging#groups)). It follows [`PointsStage`], so a step does
+/// not load it: the circuit that checks a group does, and holds the
+/// group's entry and exit to it with [`paging::link`].
+///
+/// For [`Whole`] the stage holds nothing and takes no gates.
+#[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
+pub struct LinksStage<C: Affine, N: Len, E: Len, G = NoGap, Q: Len = Whole>(
+    PhantomData<(C, N, E, G, Q)>,
+);
+
+impl<C: Affine, N: Len, E: Len, G, Q: Len> Default for LinksStage<C, N, E, G, Q> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>, Q: Len> Stage<C::Base, R>
+    for LinksStage<C, N, E, G, Q>
+{
+    type Parent = PointsStage<C, N, E, G, Q>;
+
+    fn values() -> usize {
+        2 * LinksLen::<N, E, Q>::len()
+    }
+
+    type Witness<'source> = &'source FixedVec<C, LinksLen<N, E, Q>>;
+    type OutputKind = Kind![C::Base; Links<'_, _, C, N, E, Q>];
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        Ok(Links {
+            states: FixedVec::try_from_fn(|i| Point::alloc(dr, witness.as_ref().map(|w| w[i])))?,
+        })
+    }
+}
+
+/// The loaded endoscalar stage and one group's points stage, as the walk a
+/// step of that group is a page of: the group's own walk, from its entry
+/// point over its own inputs.
+struct Loaded<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len, Q: Len> {
+    unit: PointHorner<'a, 'dr, D, C>,
+    points: &'a Points<'dr, D, C, N, E, Q>,
+    /// The number of inputs of the group the points stage holds.
+    num_inputs: usize,
+}
+
+impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len, Q: Len> paging::Walk<'dr, D>
+    for Loaded<'a, 'dr, D, C, N, E, Q>
 {
     type Unit = PointHorner<'a, 'dr, D, C>;
 
@@ -266,7 +434,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> paging::Wa
     }
 
     fn num_inputs(&self) -> usize {
-        InputsLen::<N>::len()
+        self.num_inputs
     }
 
     fn initial(&self) -> &Point<'dr, D, C> {
@@ -290,21 +458,25 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> paging::Wa
 ///
 /// The circuit constrains that `interstitials[step]` equals the Horner
 /// result ([`paging::page`]).
-pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len, G = NoGap> {
+///
+/// In a grouped walk the step is a page of its group's own walk: it loads
+/// its group's points stage polynomial, and the indices above are within
+/// the group ([`group`](Self::group)).
+pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len, G = NoGap, Q: Len = Whole> {
     step: usize,
-    _marker: core::marker::PhantomData<(C, R, N, E, G)>,
+    _marker: PhantomData<(C, R, N, E, G, Q)>,
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len, G> Clone for EndoscalingStep<C, R, N, E, G> {
+impl<C: Affine, R: Rank, N: Len, E: Len, G, Q: Len> Clone for EndoscalingStep<C, R, N, E, G, Q> {
     fn clone(&self) -> Self {
         Self {
             step: self.step,
-            _marker: core::marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
+impl<C: Affine, R: Rank, N: Len, E: Len, G, Q: Len> EndoscalingStep<C, R, N, E, G, Q> {
     /// Creates a new endoscaling step.
     ///
     /// Panics if `step >= NumStepsLen::<N, E>::len()`.
@@ -318,27 +490,34 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
         );
         Self {
             step,
-            _marker: core::marker::PhantomData,
+            _marker: PhantomData,
         }
+    }
+
+    /// Returns the group the step belongs to: the group whose points stage
+    /// polynomial the step loads and its claim takes. Zero for [`Whole`].
+    #[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
+    pub fn group(&self) -> usize {
+        grouping::<N, E, Q>().locate(self.step).0
     }
 }
 
 /// Witness for an endoscaling step.
-pub struct EndoscalingStepWitness<'source, C: Affine, N: Len, E: Len> {
+pub struct EndoscalingStepWitness<'source, C: Affine, N: Len, E: Len, Q: Len = Whole> {
     /// The endoscalar value.
     pub endoscalar: Uendo,
-    /// Point witnesses (inputs and interstitials).
-    pub points: &'source PointsWitness<C, N, E>,
+    /// Point witnesses (inputs and interstitials) of the step's group.
+    pub points: &'source PointsWitness<C, N, E, Q>,
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len, G> MultiStageCircuit<C::Base, R>
-    for EndoscalingStep<C, R, N, E, G>
+impl<C: Affine, R: Rank, N: Len, E: Len, G, Q: Len> MultiStageCircuit<C::Base, R>
+    for EndoscalingStep<C, R, N, E, G, Q>
 where
     G: Stage<C::Base, R, Parent = EndoscalarStage> + Default + Send + Sync + 'static,
 {
-    type Last = PointsStage<C, N, E, G>;
+    type Last = PointsStage<C, N, E, G, Q>;
     type Instance<'source> = ();
-    type Witness<'source> = EndoscalingStepWitness<'source, C, N, E>;
+    type Witness<'source> = EndoscalingStepWitness<'source, C, N, E, Q>;
     type Output = Kind![C::Base; ()];
     type Aux<'source> = ();
 
@@ -357,7 +536,7 @@ where
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (endoscalar_guard, dr) = dr.add_stage::<EndoscalarStage>()?;
         let dr = dr.skip_stage::<G>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C, N, E, G>>()?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C, N, E, G, Q>>()?;
         let dr = dr.finish();
 
         // Stages are loaded unenforced here: the collapse circuit re-emits
@@ -368,22 +547,30 @@ where
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
         let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points))?;
 
-        // The step is one page of the walk: from the initial point or the
-        // previous interstitial, Horner's rule over the step's inputs, held
-        // to the step's own interstitial. With only the initial point, the
-        // page applies nothing and holds it to the output.
+        // The step is one page of its group's walk: from the group's entry
+        // point or the previous interstitial, Horner's rule over the step's
+        // inputs, held to the step's own interstitial. With only the
+        // initial point, the page applies nothing and holds it to the
+        // output.
+        let grouping = grouping::<N, E, Q>();
+        let (group, page) = grouping.locate(self.step);
         paging::page(
             dr,
             &Loaded {
                 unit: PointHorner::new(&endoscalar),
                 points: &points,
+                num_inputs: grouping.inputs_of(group).len(),
             },
-            self.step,
+            page,
         )?;
 
         Ok(WithAux::new((), D::unit()))
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/endoscalar_groups.rs"]
+mod group_tests;
 
 #[cfg(test)]
 mod tests {

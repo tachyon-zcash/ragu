@@ -75,6 +75,41 @@
 //!
 //! A walk with no inputs has one page. That page applies nothing and
 //! enforces that the initial state equals interstitial zero.
+//!
+//! # Groups
+//!
+//! A page loads the stage that holds its walk's values. When one stage
+//! holds the whole walk, the gates a page reserves grow with the walk, and
+//! a long walk leaves a page no room for its applications. A [`Grouping`]
+//! cuts the pages into groups so that a page loads one group alone.
+//!
+//! A group is a walk of its own. It has an entry state, its inputs and one
+//! interstitial per page, in its own stage polynomial. Every group uses
+//! the same stage type, so all groups sit at the same gates and share one
+//! stage mask. A page loads the polynomial of its group and runs [`page`]
+//! with its index within the group. Nothing else about a page changes.
+//!
+//! ```text
+//!   links:   l[0] ────────────── l[1] ────────────── l[2] ─ ⋯ ─ l[G]
+//!             ║                   ║ ║                 ║
+//!   group 0: entry ▶ pages ▶ exit   ║                 ║
+//!   group 1:                      entry ▶ pages ▶ exit
+//! ```
+//!
+//! The groups chain through a links stage. It holds one state per group
+//! boundary: link 0 is the walk's initial state, and link `g + 1` is the
+//! state after group `g`. The last link is the walk's result. No page
+//! loads the links. One circuit per group, the group's check circuit,
+//! loads the links and the group and calls [`link`], which enforces that
+//! the group's entry equals link `g` and its exit equals link `g + 1`.
+//!
+//! The soundness conditions then hold per group, with one more: every
+//! group's check circuit is registered and its claim folded. By induction
+//! over the groups, link `g + 1` equals the unit applied to the inputs of
+//! groups `0..=g` from link 0.
+//!
+//! A grouping of zero pages per group is the whole walk in one stage,
+//! with no links: the layout a short walk uses.
 
 use alloc::vec::Vec;
 use core::ops::Range;
@@ -284,6 +319,204 @@ pub fn interstitials<S: Clone, I>(
         interstitials.push(state.clone());
     }
     interstitials
+}
+
+/// How the pages of a walk are cut into groups, and what each group's
+/// stage and the links stage hold. See [the module's section on
+/// groups](self#groups).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Grouping {
+    capacity: usize,
+    num_inputs: usize,
+    per_group: usize,
+}
+
+impl Grouping {
+    /// Creates the grouping of a walk over `num_inputs` inputs at
+    /// `capacity` applications per page into groups of `per_group` pages.
+    /// A `per_group` of zero keeps the whole walk in one stage.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `capacity` is zero.
+    pub const fn new(capacity: usize, num_inputs: usize, per_group: usize) -> Self {
+        assert!(capacity > 0, "a page applies its unit at least once");
+        Grouping {
+            capacity,
+            num_inputs,
+            per_group,
+        }
+    }
+
+    /// Returns whether the walk is cut into groups that chain through
+    /// links.
+    pub const fn is_grouped(&self) -> bool {
+        self.per_group > 0
+    }
+
+    /// Returns the number of pages of the whole walk.
+    pub const fn pages(&self) -> usize {
+        num_pages(self.capacity, self.num_inputs)
+    }
+
+    /// Returns the number of groups. A walk in one stage is one group.
+    pub const fn groups(&self) -> usize {
+        if self.is_grouped() {
+            self.pages().div_ceil(self.per_group)
+        } else {
+            1
+        }
+    }
+
+    /// Returns the interstitials a group's stage holds: one per page of a
+    /// full group.
+    pub const fn group_pages(&self) -> usize {
+        if self.is_grouped() {
+            self.per_group
+        } else {
+            self.pages()
+        }
+    }
+
+    /// Returns the inputs a group's stage holds: the inputs of a full
+    /// group.
+    pub const fn group_inputs(&self) -> usize {
+        if self.is_grouped() {
+            self.per_group * self.capacity
+        } else {
+            self.num_inputs
+        }
+    }
+
+    /// Returns the number of states the links stage holds: one per group
+    /// boundary, or none for a walk in one stage.
+    pub const fn links(&self) -> usize {
+        if self.is_grouped() {
+            self.groups() + 1
+        } else {
+            0
+        }
+    }
+
+    /// Returns the group of page `page` of the walk and the page's index
+    /// within that group.
+    pub const fn locate(&self, page: usize) -> (usize, usize) {
+        if self.is_grouped() {
+            (page / self.per_group, page % self.per_group)
+        } else {
+            (0, page)
+        }
+    }
+
+    /// Returns the inputs of the walk that group `group` holds. The last
+    /// group can hold fewer than [`group_inputs`](Self::group_inputs).
+    pub fn inputs_of(&self, group: usize) -> Range<usize> {
+        range(self.group_inputs().max(1), group, self.num_inputs)
+    }
+
+    /// Returns the number of pages of group `group`. The last group can
+    /// have fewer than [`group_pages`](Self::group_pages).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `group` is not a group of the walk.
+    #[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
+    pub fn pages_of(&self, group: usize) -> usize {
+        assert!(
+            group < self.groups(),
+            "group {group} is not a group of the walk"
+        );
+        num_pages(self.capacity, self.inputs_of(group).len())
+    }
+
+    /// Computes the values of every group and of the links outside a
+    /// circuit, for a prover to fill the stages.
+    ///
+    /// `apply` is the unit's operation, as for [`interstitials`]. A group
+    /// shorter than a full one is padded: its unused inputs with `padding`
+    /// and its unused interstitials with its exit state. No page reads the
+    /// padding.
+    pub fn arrange<S: Clone, I: Clone>(
+        &self,
+        initial: S,
+        inputs: &[I],
+        padding: I,
+        mut apply: impl FnMut(&mut S, &I),
+    ) -> Arranged<S, I> {
+        assert_eq!(inputs.len(), self.num_inputs, "one value per input");
+        let mut links = Vec::with_capacity(self.links());
+        let mut groups = Vec::with_capacity(self.groups());
+        let mut state = initial;
+        if self.is_grouped() {
+            links.push(state.clone());
+        }
+        for group in 0..self.groups() {
+            let own = &inputs[self.inputs_of(group)];
+            let mut interstitials = interstitials(self.capacity, state.clone(), own, &mut apply);
+            let exit = interstitials.last().expect("a group has a page").clone();
+            interstitials.resize(self.group_pages(), exit.clone());
+            let mut padded = own.to_vec();
+            padded.resize(self.group_inputs(), padding.clone());
+            groups.push(Group {
+                entry: state,
+                inputs: padded,
+                interstitials,
+            });
+            state = exit;
+            if self.is_grouped() {
+                links.push(state.clone());
+            }
+        }
+        Arranged { links, groups }
+    }
+}
+
+/// The values of one group: what its stage holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Group<S, I> {
+    /// The state before the group's first application.
+    pub entry: S,
+    /// The group's inputs, padded to a full group's.
+    pub inputs: Vec<I>,
+    /// The state after each of the group's pages, padded to a full
+    /// group's.
+    pub interstitials: Vec<S>,
+}
+
+/// The values of a grouped walk: what [`Grouping::arrange`] computes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Arranged<S, I> {
+    /// The links: the walk's initial state, then the state after each
+    /// group. Empty for a walk in one stage.
+    pub links: Vec<S>,
+    /// Each group's values.
+    pub groups: Vec<Group<S, I>>,
+}
+
+/// Holds group `group` to the links: enforces that its `entry` state
+/// equals link `group` and its `exit` state, the interstitial of its last
+/// page, equals link `group + 1`.
+///
+/// The check circuit of each group calls this once. See [the module's
+/// section on groups](self#groups).
+///
+/// # Errors
+///
+/// Returns the error of the driver.
+///
+/// # Panics
+///
+/// Panics if `links` has no link `group + 1`.
+#[cfg_attr(not(test), expect(dead_code, reason = "no walk is grouped yet"))]
+pub fn link<'dr, D: Driver<'dr>, T: Gadget<'dr, D, Kind: GadgetEquals<D::F>>>(
+    dr: &mut D,
+    links: &[T],
+    group: usize,
+    entry: &T,
+    exit: &T,
+) -> Result<()> {
+    entry.enforce_equal(dr, &links[group])?;
+    exit.enforce_equal(dr, &links[group + 1])
 }
 
 /// Horner's rule over curve points under an endoscalar: one application is

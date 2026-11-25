@@ -152,7 +152,8 @@ pub type PointsStage<C, P> =
 pub type PointsWitness<C, P> = endoscalar::PointsWitness<C, NumPoints<P>, Endoscalings<P>>;
 
 /// The nested points stage's output gadget.
-pub type Points<'dr, D, C, P> = endoscalar::Points<'dr, D, C, NumPoints<P>, Endoscalings<P>>;
+pub type Points<'dr, D, C, P> =
+    endoscalar::Points<'dr, D, C, NumPoints<P>, Endoscalings<P>, endoscalar::Whole>;
 
 /// A nested endoscaling step.
 pub type EndoscalingStep<C, R, P> =
