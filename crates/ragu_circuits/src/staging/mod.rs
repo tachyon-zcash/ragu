@@ -221,7 +221,11 @@ pub trait Stage<F: Field, R: Rank> {
     /// Returns the number of gates to skip before starting this
     /// stage. The count includes the SYSTEM gate (gate 0), so the base
     /// case `()` returns 1. **This should not be overridden by
-    /// implementations except by the base implementation for `()`**.
+    /// implementations except by the base implementation for `()`**, or by
+    /// a stage laid beside its parent rather than after it: a
+    /// [`StageBuilder`] reserves stages one after another, so no circuit
+    /// can load such a stage with the ones it shares gates with, except in
+    /// [pages](crate::paging) that load them apart.
     fn skip_gates() -> usize {
         Self::Parent::skip_gates() + Self::Parent::num_gates()
     }
