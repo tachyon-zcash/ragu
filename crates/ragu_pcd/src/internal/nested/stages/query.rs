@@ -3,10 +3,7 @@
 //! Alongside the two host-curve commitments it bridges, this stage carries
 //! the nested query values: the claimed evaluations, at the nested $x_n z_n$,
 //! $x_n$ and $w_n$, that the nested [`compute_v`] circuit folds into the
-//! nested quotient polynomial's evaluation. It also carries the value $y_q$
-//! of each of the step's own online Fq polynomials at $\zeta_q$, which
-//! `compute_v` claims and folds (see
-//! [`online`](crate::internal::nested::online)). They ride here because this
+//! nested quotient polynomial's evaluation. They ride here because this
 //! bridge stage's commitment is absorbed before $\alpha$ is squeezed.
 //!
 //! [`compute_v`]: crate::internal::nested::circuits::compute_v
@@ -31,7 +28,6 @@ use crate::{
     Proof,
     internal::nested::{
         self, RxComponent, RxIndex,
-        online::FqPolysLen,
         pcs::{InternalLen, OwnRxLen},
     },
     profile::{
@@ -107,14 +103,6 @@ pub struct Evaluations<F, P: Profile> {
     pub left: ChildEvaluationsWitness<F, P>,
     /// Right child proof evaluations.
     pub right: ChildEvaluationsWitness<F, P>,
-    /// The value of each of the step's own online Fq polynomials at
-    /// $\zeta_q$. The point is the challenge stage's, so it is not held.
-    ///
-    /// No other check reads these values, and they are opened at $w_n$, as
-    /// the `registry_xy` polynomials are. They must be committed before
-    /// $\alpha$, as this stage is: a value chosen after $\alpha$ could
-    /// cancel a false `registry_xy` opening in $f_n$.
-    pub online_fq: FixedVec<F, FqPolysLen<P>>,
 }
 
 impl<F: Field, P: Profile> Evaluations<F, P> {
@@ -134,7 +122,6 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
             randomizer_b_at_x: F::ZERO,
             left: child(),
             right: child(),
-            online_fq: FixedVec::from_fn(|_| F::ZERO),
         }
     }
 }
@@ -207,10 +194,6 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
     pub left: ChildEvaluations<'dr, D, P>,
     #[ragu(gadget)]
     pub right: ChildEvaluations<'dr, D, P>,
-    /// The value of each of the step's own online Fq polynomials at
-    /// $\zeta_q$.
-    #[ragu(gadget)]
-    pub online_fq: FixedVec<Element<'dr, D>, FqPolysLen<P>>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -246,13 +229,12 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
 
     fn values() -> usize {
         // (x, y) per point + fixed registry + registry_wxy + the two fold
-        // randomizers + 2 children + y per online Fq opening
+        // randomizers + 2 children
         2 * (PhaseLen::<P, Native, 3>::len() + Present::<P, Native, 1>::len() + NUM)
             + InternalLen::<P>::len()
             + 1
             + 2
             + 2 * (OwnRxLen::<P>::len() + 4)
-            + P::ONLINE_FQ_POLYS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -291,13 +273,6 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
             )?,
             left: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.left))?,
             right: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.right))?,
-            online_fq: FixedVec::try_from_fn(|i| {
-                Element::alloc(
-                    dr,
-                    allocator,
-                    witness.as_ref().map(|w| w.nested.online_fq[i]),
-                )
-            })?,
         };
 
         Ok(Output {
@@ -321,18 +296,13 @@ mod tests {
     use super::*;
     use crate::{
         internal::tests::{R, assert_stage_values},
-        profile::{
-            Standard,
-            testing::{Opening, Proving},
-        },
+        profile::{Standard, testing::Proving},
     };
 
     #[test]
     fn stage_values_matches_wire_count() {
         assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
-        // With the value of the step's own online Fq polynomial, alone and
-        // beside an extension.
-        assert_stage_values(&Stage::<EqAffine, R, Opening>::default());
+        // Beside an extension.
         assert_stage_values(&Stage::<EqAffine, R, Proving>::default());
     }
 }

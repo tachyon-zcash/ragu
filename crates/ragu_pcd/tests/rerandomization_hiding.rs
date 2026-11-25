@@ -108,8 +108,6 @@ impl<'a> Parts<'a> {
             native_points_walk_rx,
             online_polynomials,
             step_binding,
-            online_fq_commitments,
-            online_fq_openings,
             bridge_preamble_rx,
             bridge_hash_rx,
             bridge_s_prime_rx,
@@ -209,9 +207,7 @@ impl<'a> Parts<'a> {
                 && native_extension_stage_commitments.is_empty()
                 && nested_extension_circuit_commitments.is_empty()
                 && nested_extension_stage_commitments.is_empty()
-                && step_binding.is_empty()
-                && online_fq_commitments.is_empty()
-                && online_fq_openings.is_empty(),
+                && step_binding.is_empty(),
             "the standard profile stores none of a profile's own values"
         );
 

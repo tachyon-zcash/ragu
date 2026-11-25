@@ -22,10 +22,7 @@ use crate::{
             native_components, nested_components,
         },
     },
-    internal::{
-        native::online::StepBindingLen,
-        nested::online::{BoundCommitmentsLen, BoundOpeningsLen},
-    },
+    internal::native::online::StepBindingLen,
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     serialization::{
@@ -132,8 +129,6 @@ codec!([C: ProfiledCycle] Instance<C> {
     native_p => Point,
     online_commitments => Array<Point>,
     step_binding => FixedSequence<Scalar, StepBindingLen<C::Profile>>,
-    online_fq_commitments => FixedSequence<Point, BoundCommitmentsLen<C::Profile>>,
-    online_fq_openings => FixedSequence<Scalar, BoundOpeningsLen<C::Profile>>,
     nested => FixedSequence<Point, Nested<C::Profile>>,
     nested_registry_xy => Point,
     nested_p => Point,

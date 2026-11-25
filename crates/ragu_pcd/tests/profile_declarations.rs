@@ -1,7 +1,7 @@
 use ragu_circuits::polynomials::{AggregatorRank, R, WalletRank};
 
 use super::{
-    testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Opening, Wider},
+    testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Wider},
     *,
 };
 use crate::{compress::runs::num_runs, decompress::aggregator};
@@ -214,7 +214,6 @@ fn consistency_binds_every_staged_circuit() {
             stages,
             online: vec![],
             batch: Vec::new(),
-            openings: Vec::new(),
         }),
     };
     assert!(binding(1, vec![1, 0]).is_consistent());
@@ -315,7 +314,6 @@ fn malformed_declarations_are_refused() {
                     stages: vec![0, 1],
                     online: vec![],
                     batch: Vec::new(),
-                    openings: Vec::new(),
                 }),
             }
         }
@@ -357,7 +355,6 @@ fn malformed_declarations_are_refused() {
                     stages: vec![1],
                     online: vec![],
                     batch: Vec::new(),
-                    openings: Vec::new(),
                 }),
             }
         }
@@ -580,10 +577,10 @@ fn standard_is_the_crate_layout() {
 }
 
 #[test]
-fn an_online_fq_polynomial_is_a_native_walk_point() {
-    // The point joins the nested batch's commitments in the native
-    // walk. A full walk then needs another native step, and with it
-    // the batch grows.
+fn a_nested_online_polynomial_is_a_native_walk_point() {
+    // The polynomial's commitment joins the nested batch's commitments
+    // in the native walk. A full walk then needs another native step,
+    // and with it the batch grows.
     let base = Shape::solve(0, 0, 0, 4, 4);
     let with_fq = Shape::solve(0, 0, 1, 4, 4);
     assert_eq!(with_fq.online_fq, 1);
@@ -595,11 +592,11 @@ fn an_online_fq_polynomial_is_a_native_walk_point() {
 }
 
 #[test]
-fn an_online_fq_polynomial_alone_fills_the_native_walk() {
-    // The standard layout with the slot on. Its native walk has room
-    // for one more point, so the point adds no step and no polynomial.
-    let shape = Shape::of::<Opening>();
-    assert_eq!(shape, Shape::solve(0, 0, 1, 4, 4));
+fn a_nested_online_polynomial_alone_fills_the_native_walk() {
+    // The standard layout with one nested online polynomial. Its native
+    // walk has room for one more point, so the point adds no step and no
+    // rx polynomial.
+    let shape = Shape::solve(0, 0, 1, 4, 4);
     assert_eq!(
         shape,
         Shape {
@@ -614,8 +611,6 @@ fn an_online_fq_polynomial_alone_fills_the_native_walk() {
         }
     );
     assert_eq!(shape.polynomials(), 103);
-    assert_eq!(native::RxIndex::num::<Opening>(), shape.native_rx);
-    assert_eq!(nested::RxIndex::num::<Opening>(), shape.nested_rx);
 
     // A second point overflows the walk and adds a native step. The
     // children's commitments of that step's rx polynomial are two more
@@ -636,29 +631,9 @@ fn an_online_fq_polynomial_alone_fills_the_native_walk() {
     );
 }
 
-#[test]
-fn check_refuses_more_online_fq_polynomials_than_a_step_opens() {
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    struct TooMany;
-    impl Profile for TooMany {
-        const NAME: &'static str = "too-many";
-        const NATIVE_EXTENSION: usize = 0;
-        const NESTED_EXTENSION: usize = 0;
-        const ONLINE_FQ_POLYS: usize = crate::profile::NUM_ONLINE_FQ_POLYS + 1;
-
-        type Context<'params, Base, R, B>
-            = ()
-        where
-            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
-            R: Rank,
-            B: SelectableBackend;
-    }
-    assert!(TooMany::check().is_err());
-}
-
-/// The aggregator's shape follows its pinned circuits, its one online
-/// Fq polynomial and its online batches, and grows with the header size
-/// through the transcript circuits.
+/// The aggregator's shape follows its pinned circuits and its online
+/// batches, and grows with the header size through the transcript
+/// circuits.
 #[test]
 fn aggregator_declares_the_decompression() {
     let shape = Shape::of::<Aggregator<4>>();
@@ -773,9 +748,9 @@ fn extensions_lengthen_both_walks() {
 }
 
 /// An extension proves: an application in the [`Proving`] profile,
-/// one trivial circuit on each side and one online Fq polynomial per
-/// step, seeds, fuses, verifies and compresses at the rank above the
-/// wallet's, where the fuse has room for the two polynomials.
+/// one trivial circuit on each side, seeds, fuses, verifies and
+/// compresses at the rank above the wallet's, where the fuse has room
+/// for the two polynomials.
 #[test]
 fn an_extension_proves_verifies_and_compresses() -> Result<()> {
     use rand::{SeedableRng, rngs::StdRng};
@@ -785,40 +760,11 @@ fn an_extension_proves_verifies_and_compresses() -> Result<()> {
 
     const HEADER_SIZE: usize = 4;
     assert_ne!(Shape::of::<Proving>(), Shape::of::<Standard>());
-    // Each step also commits an online Fq polynomial, which the nested
-    // `compute_v` opens and folds in the step's own nested batch.
-    assert_eq!(Shape::of::<Proving>().online_fq, 1);
 
     let app = ApplicationBuilder::<Profiled<Pasta, Proving>, R<14>, HEADER_SIZE>::new()
         .register(UnitStep)?
         .finalize(crate::pasta::baked_aggregator())?;
     let mut rng = StdRng::seed_from_u64(14);
-    let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
-    let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
-    let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;
-    assert!(app.verify_uncompressed(&fused, &mut rng)?);
-    let compressed = app.compress(&fused, &mut rng)?;
-    assert!(app.verify_compressed(&compressed)?);
-    Ok(())
-}
-
-/// The slot proves without an extension: an application in the
-/// [`Opening`] profile, one online Fq polynomial per step and nothing
-/// else beyond the fuse, seeds, fuses, verifies and compresses at the
-/// wallet rank.
-#[test]
-fn an_online_fq_polynomial_proves_verifies_and_compresses() -> Result<()> {
-    use rand::{SeedableRng, rngs::StdRng};
-
-    use super::testing::UnitStep;
-    use crate::ApplicationBuilder;
-
-    const HEADER_SIZE: usize = 4;
-
-    let app = ApplicationBuilder::<Profiled<Pasta, Opening>, R<13>, HEADER_SIZE>::new()
-        .register(UnitStep)?
-        .finalize(crate::pasta::baked())?;
-    let mut rng = StdRng::seed_from_u64(13);
     let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;

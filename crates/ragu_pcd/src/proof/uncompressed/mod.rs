@@ -208,17 +208,6 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// The parent binds its copy to that export. Empty for a profile without
     /// a statement circuit.
     pub(crate) step_binding: Vec<C::CircuitField>,
-    /// The commitments of the step's online Fq polynomials the profile's
-    /// native binding names, in its order: what the step's
-    /// `bind_endoscalar` exports and its binding circuit exposes, which
-    /// the parent holds once for both claims. Empty for a profile that
-    /// names none.
-    pub(crate) online_fq_commitments: Vec<C::NestedCurve>,
-    /// The openings of the step's online Fq polynomials the profile's
-    /// nested binding names, the point then the value of each, in its
-    /// order: what the step's nested `compute_v` exports and its binding
-    /// circuit exposes. Empty for a profile that names none.
-    pub(crate) online_fq_openings: Vec<C::ScalarField>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -431,10 +420,6 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.nested_extension_stage_rxs.len() == nested_extension.stages
             && self.nested_extension_stage_commitments.len() == nested_extension.stages
             && self.step_binding.len() == native::online::StepBindingLen::<C::Profile>::len()
-            && self.online_fq_commitments.len()
-                == nested::online::BoundCommitmentsLen::<C::Profile>::len()
-            && self.online_fq_openings.len()
-                == nested::online::BoundOpeningsLen::<C::Profile>::len()
     }
 }
 

@@ -509,7 +509,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&Decompressed<Base>>,
         output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
-        online_fq_openings: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -519,14 +518,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (
-            context,
-            source,
-            output_commitments,
-            online_fq_openings,
-            registry,
-            rng,
-        );
+        let _ = (context, source, output_commitments, registry, rng);
         Err(Error::Initialization(NO_ONLINE_STAGES.into()))
     }
 
@@ -534,7 +526,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&Decompressed<Base>>,
         output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
-        online_fq_openings: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         online: Option<&Witness<'_, Base::ScalarField, Self, online_stages::Nested>>,
         native_online_commitments: &[Base::HostCurve],
@@ -548,7 +539,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(H)?;
         let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
-        let _ = online_fq_openings;
         context.nested_rxs::<Self>(
             source,
             *output_commitments,
@@ -723,7 +713,6 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
             // The nested batch's s(X) of the nested IPA: its commitment
             // is that IPA's G'.
             batch: vec![online::slot::IPA as u32],
-            openings: Vec::new(),
         }),
     }
 }
@@ -779,7 +768,6 @@ pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
             online: vec![0, 1],
             // The native batch's s(X) of the host IPA.
             batch: vec![online::slot::IPA as u32],
-            openings: Vec::new(),
         }),
     }
 }

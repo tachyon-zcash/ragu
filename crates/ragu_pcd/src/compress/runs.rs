@@ -52,8 +52,7 @@ pub(crate) enum Run {
     /// The host commitments the instance lists, its registry restriction's
     /// and $p$'s.
     Commitments,
-    /// The scalar field's instance values, then the online Fq openings
-    /// the proof exports, in a profile whose nested binding names any.
+    /// The scalar field's instance values.
     Scalars,
     /// The host reduction's inner error commitment.
     Inner,
@@ -112,9 +111,7 @@ impl Run {
         };
         match self {
             Run::Commitments => points(native_points_of::<P>()),
-            Run::Scalars => elements(
-                NESTED_SCALARS + crate::internal::nested::online::bound_openings::<P>().len() * 2,
-            ),
+            Run::Scalars => elements(NESTED_SCALARS),
             Run::Inner | Run::Outer | Run::F | Run::SCommitment => points(1),
             Run::Split | Run::Round(_) => points(2),
             Run::Epsilons => elements(2),

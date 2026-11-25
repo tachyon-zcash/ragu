@@ -191,8 +191,8 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
     }
 
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq commitment and has no
-        // online batch, so the circuit's instance is the unified one.
+        // The standard profile has no online batch, so the circuit's
+        // instance is the unified one.
         once(self.unified.clone())
     }
 
@@ -240,8 +240,8 @@ impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
     }
 
     fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq opening and has no
-        // online batch, so the circuit's instance is the unified one.
+        // The standard profile has no online batch, so the circuit's
+        // instance is the unified one.
         once(self.unified.clone())
     }
 

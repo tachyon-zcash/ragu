@@ -31,7 +31,7 @@ use crate::{
         native::{self, stages::points as native_points},
         nested,
     },
-    profile::{Profile, ProfiledCycle},
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
@@ -40,19 +40,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 {
     /// Commits the native points preamble stage and the bridge preamble
     /// stage, which carries `stage`'s commitment, returning the bridge
-    /// witness for the nested fold and circuits. `source` is what the step
-    /// supplies the profile's prover, which commits its online Fq
-    /// polynomials here.
+    /// witness for the nested fold and circuits.
     pub(super) fn compute_preamble<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         stage: &NativeApplicationStage<C, R>,
-        source: Option<&crate::profile::Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::preamble::Witness<C::HostCurve, C::Profile>> {
-        self.commit_native_points_preamble(rng, left, right, source, builder)?;
+        self.commit_native_points_preamble(rng, left, right, builder)?;
         self.compute_bridge_preamble(rng, left, right, stage, builder)
     }
 
@@ -126,43 +123,23 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     }
 
     /// Commits the native points binding and preamble stages over the
-    /// children's nested commitments and the step's own online Fq
-    /// commitments, before $w$ is squeezed; the preamble bridge carries
-    /// their commitments.
+    /// children's nested commitments and the commitments of the step's
+    /// nested online polynomials fixed before $w$, before $w$ is squeezed;
+    /// the preamble bridge carries their commitments.
     pub(crate) fn commit_native_points_preamble<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        source: Option<&crate::profile::Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        // The profile's prover supplies its online Fq polynomials: a
-        // placeholder in every slot by default.
-        let polynomials =
-            C::Profile::online_fq_polynomials::<C::Base, R, B>(&self.context, source)?;
-        if polynomials.len() != C::Profile::ONLINE_FQ_POLYS {
-            return Err(ragu_core::Error::Initialization(
-                "the profile's prover did not supply its online Fq polynomials".into(),
-            ));
-        }
-        builder.set_online_fq_polynomials(polynomials);
-
-        // The step's own online Fq commitments, which the preamble stage
-        // holds.
-        let mut online_fq = builder.online_fq_commitments().to_vec();
-        online_fq.extend_from_slice(&builder.nested_online_phase::<0>());
-        let online_fq = &online_fq;
-
-        // Test hook: this runs on the thread that calls `fuse`, outside its
-        // parallel jobs, as the hook's thread-local requires.
-        #[cfg(test)]
-        let online_fq = &crate::online_fq_oracles_tests::mutate_stage_commitments(online_fq);
+        // The commitments of the step's nested online polynomials fixed
+        // before w, which the preamble stage holds.
+        let online_fq = &builder.nested_online_phase::<0>();
 
         let (binding, preamble) = native_points::preamble_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
-            [&left.online_fq_commitments, &right.online_fq_commitments],
             online_fq,
             FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
         );

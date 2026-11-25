@@ -346,27 +346,21 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
     }
 
     /// The `bind_endoscalar` circuit's $k(y)$ for this child: k(y) for
-    /// `(unified, online_fq, online_points, 0)`, the unified instance
-    /// followed by the commitments of the step's online Fq polynomials its
-    /// native binding names, `online_fq`, then the actual nested online walk
-    /// points. A profile that exports neither keeps the unified target,
-    /// `unified_ky`.
+    /// `(unified, online_points, 0)`, the unified instance followed by the
+    /// actual nested online walk points. A profile without a nested online
+    /// batch keeps the unified target, `unified_ky`.
     pub fn bind_endoscalar_ky(
         &self,
         dr: &mut D,
         y: &Element<'dr, D>,
         unified_ky: &Element<'dr, D>,
-        online_fq: &[Point<'dr, D, C::NestedCurve>],
     ) -> Result<Element<'dr, D>> {
-        // Setup-fixed empty exports preserve the existing unified target.
-        if online_fq.is_empty() && C::Profile::NESTED_ONLINE.is_empty() {
+        // A setup-fixed empty export preserves the existing unified target.
+        if C::Profile::NESTED_ONLINE.is_empty() {
             return Ok(unified_ky.clone());
         }
         let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
-        for point in online_fq {
-            point.write(dr, &mut ky)?;
-        }
         self.online_points.write(dr, &mut ky)?;
         Element::zero(dr).write(dr, &mut ky)?;
         ky.finish_ky(dr)

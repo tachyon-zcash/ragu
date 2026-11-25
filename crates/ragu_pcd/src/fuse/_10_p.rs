@@ -137,7 +137,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             mask: randomizer.mask_commitment,
         };
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
-            .chain(batch.commitments(current, builder.online_fq_commitments()))
+            .chain(batch.commitments(current))
             .chain(builder.nested_online().commitments().iter().copied())
             .collect();
         assert_eq!(
@@ -146,7 +146,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         Inputs::from_walk(
             &points,
-            [&left.online_fq_commitments, &right.online_fq_commitments],
             FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
         )
     }

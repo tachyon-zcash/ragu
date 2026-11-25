@@ -90,15 +90,6 @@ pub(crate) struct Instance<C: Cycle> {
     /// output header and the circuit id; none for a profile without a
     /// statement circuit.
     pub step_binding: Vec<C::CircuitField>,
-    /// The commitments of the step's online Fq polynomials it exports,
-    /// which its `bind_endoscalar` and binding circuits' claims take; none
-    /// for a profile whose native binding names none.
-    pub online_fq_commitments: Vec<C::NestedCurve>,
-    /// The openings of the step's online Fq polynomials it exports, a
-    /// point then a value each, which its nested `compute_v` and binding
-    /// circuits' claims take; none for a profile whose nested binding
-    /// names none.
-    pub online_fq_openings: Vec<C::ScalarField>,
 
     /// The nested commitments in [`nested_components`] order, the bridge
     /// stages and the challenge stage among them.
@@ -234,8 +225,6 @@ impl<C: ProfiledCycle> Instance<C> {
             native_p: proof.native_p_commitment(),
             online_commitments: proof.online_commitments(),
             step_binding: proof.step_binding.clone(),
-            online_fq_commitments: proof.online_fq_commitments.clone(),
-            online_fq_openings: proof.online_fq_openings.clone(),
             nested: nested_components::<C::Profile>()
                 .map(|component| match component {
                     nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -328,16 +317,11 @@ impl<C: ProfiledCycle> Instance<C> {
             }
         }
         let mut nested = transcript.nested();
-        for &point in self
-            .nested
-            .iter()
-            .chain([
-                &self.nested_registry_xy,
-                &self.nested_p,
-                &self.nested_challenges_partial,
-            ])
-            .chain(&self.online_fq_commitments)
-        {
+        for &point in self.nested.iter().chain([
+            &self.nested_registry_xy,
+            &self.nested_p,
+            &self.nested_challenges_partial,
+        ]) {
             nested.write_point(point)?;
         }
         let (l, r) = (self.nested_left, self.nested_right);
@@ -351,10 +335,7 @@ impl<C: ProfiledCycle> Instance<C> {
             r.y,
             self.nested_a_at_u,
             self.nested_b_at_u,
-        ]
-        .into_iter()
-        .chain(self.online_fq_openings.iter().copied())
-        {
+        ] {
             nested.write_scalar(scalar)?;
         }
         // The same coordinates form the nested compute-v target and the
@@ -510,7 +491,6 @@ impl<C: ProfiledCycle> Instance<C> {
         let unified = self.unified(challenges);
         let nested_bound = ky::native_bound::<C::Profile, _>(
             |index| self.nested_commitment(nested::RxComponent::Rx(index)),
-            |i| self.online_fq_commitments[i],
             |slot| self.nested_online_commitments[slot],
         );
         let nested_online_stages = ky::nested_online_stages::<C::Profile, _>(|index| {
@@ -525,7 +505,6 @@ impl<C: ProfiledCycle> Instance<C> {
                     step_binding: &self.step_binding,
                     unified: &unified,
                     nested_bound: &nested_bound,
-                    online_fq: &self.online_fq_commitments,
                     nested_online_stages: &nested_online_stages,
                     nested_online_commitments: &self.nested_online_commitments,
                     native_online_fold: &self.native_online_fold,
@@ -541,7 +520,6 @@ impl<C: ProfiledCycle> Instance<C> {
         );
         let (compute_v, online_helper) = ky::nested_online_ky_of::<C>(
             &self.nested_unified(challenges)?,
-            &self.online_fq_openings,
             &ky::nested_online_values::<C>(challenges, &self.nested_online_fold)?,
             &ky::native_online_stages::<C::Profile, _>(|index| {
                 self.native_commitment(native::RxComponent::Rx(index))
@@ -555,7 +533,7 @@ impl<C: ProfiledCycle> Instance<C> {
             online_helper,
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
-            binding: ky::binding_ky_of(&native_bound, &self.online_fq_openings, nested_y)?,
+            binding: ky::binding_ky_of(&native_bound, nested_y)?,
         };
         Ok((native, nested))
     }

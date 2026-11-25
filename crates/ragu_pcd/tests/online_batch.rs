@@ -69,7 +69,6 @@ impl Profile for OnlineBatch {
         _: &Self::Context<'params, Base, Rk, B>,
         _: Option<&core::convert::Infallible>,
         _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
-        _: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, Rk>,
         online: Option<&circuit::Witness<'_, Base::ScalarField, Self, Nested>>,
         _: &[Base::HostCurve],
@@ -1097,18 +1096,17 @@ pub(crate) fn mutate_nested_auxiliary_query<P: Affine>(point: P) -> P {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct LegacyMixed;
+struct Multipoint;
 /// The test profile's context, a slope its prover reads; no step supplies
 /// anything to its extension.
 impl crate::profile::ProverContext for u64 {
     type Source = core::convert::Infallible;
 }
 
-impl Profile for LegacyMixed {
-    const NAME: &'static str = "legacy-and-multipoint-batch";
+impl Profile for Multipoint {
+    const NAME: &'static str = "multipoint-batch";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
-    const ONLINE_FQ_POLYS: usize = 1;
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
     const NESTED_ONLINE: Layout = Layout {
@@ -1159,13 +1157,12 @@ impl Profile for LegacyMixed {
 }
 
 #[test]
-fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitments() -> Result<()>
-{
-    type Mixed = Profiled<Pasta, LegacyMixed>;
+fn a_multipoint_slot_is_one_commitment() -> Result<()> {
+    type Mixed = Profiled<Pasta, Multipoint>;
     let app = ApplicationBuilder::<Mixed, Rk, 2>::new()
         .register(UnitStep)?
         .finalize_with(crate::pasta::baked_aggregator(), 2)?;
-    assert_eq!(crate::profile::Shape::of::<LegacyMixed>().online_fq, 2);
+    assert_eq!(crate::profile::Shape::of::<Multipoint>().online_fq, 1);
     let mut rng = StdRng::seed_from_u64(0x606050);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
@@ -1180,7 +1177,7 @@ fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitme
 
 #[test]
 fn a_nonzero_constant_nested_polynomial_compresses_with_a_zero_quotient_fold() -> Result<()> {
-    type Mixed = Profiled<Pasta, LegacyMixed>;
+    type Mixed = Profiled<Pasta, Multipoint>;
     let app = ApplicationBuilder::<Mixed, Rk, 2>::new()
         .register(UnitStep)?
         .finalize_with(crate::pasta::baked_aggregator(), 0)?;

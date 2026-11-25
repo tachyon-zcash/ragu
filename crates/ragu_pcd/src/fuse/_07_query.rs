@@ -14,8 +14,6 @@
 //! nested-curve commitment enters the native points stage committed before
 //! $u$ (see `_08_f`).
 
-use alloc::vec::Vec;
-
 use ragu_circuits::{Blind, polynomials::Rank, staging::StageExt};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
@@ -30,10 +28,7 @@ use super::{
 use crate::{
     Application, Proof,
     fuse::par_join,
-    internal::{
-        native,
-        nested::{self, online as online_fq},
-    },
+    internal::{native, nested},
     profile::ProfiledCycle,
     proof::ProofBuilder,
 };
@@ -236,32 +231,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ),
         );
 
-        // The value of each online Fq polynomial at its opening point.
-        let online_fq_point = online_fq::point(w);
-        let online_fq = FixedVec::try_from(
-            online_fq::openings(builder.online_fq_polynomials().len())
-                .map(|opening| {
-                    let poly = &builder.online_fq_polynomials()[opening.polynomial];
-                    let value = B::sparse_eval(poly, online_fq_point);
-                    // Test hook: this runs on the thread that calls `fuse`,
-                    // outside its parallel jobs, as the hook's thread-local
-                    // requires.
-                    #[cfg(test)]
-                    let value = crate::online_fq_oracles_tests::mutate_query_value(value);
-                    value
-                })
-                .collect::<Vec<_>>(),
-        )?;
-        // The openings the step exports, for a profile whose nested
-        // binding names any: the point the nested `compute_v` opens at,
-        // the challenge stage's lift of w, then the value the query stage
-        // holds.
-        builder.set_online_fq_openings(
-            online_fq::bound_openings::<C::Profile>()
-                .iter()
-                .flat_map(|&slot| [w, online_fq[slot as usize]])
-                .collect(),
-        );
         let nested_query = nested::stages::query::Evaluations {
             fixed_registry,
             registry_wxy,
@@ -269,7 +238,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             randomizer_b_at_x: B::sparse_eval(&randomizer.b, x),
             left: left_witness?,
             right: right_witness?,
-            online_fq,
         };
 
         builder.set_nested_registry_xy_poly(registry_xy_poly);

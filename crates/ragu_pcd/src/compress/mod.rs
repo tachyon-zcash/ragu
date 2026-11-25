@@ -80,10 +80,7 @@ use self::{
 };
 use crate::{
     CompressedProof, SelectableBackend,
-    internal::{
-        native::online::StepBindingLen,
-        nested::online::{BoundCommitmentsLen, BoundOpeningsLen},
-    },
+    internal::native::online::StepBindingLen,
     ipa::{CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript},
     profile::{Profile, ProfiledCycle},
 };
@@ -127,10 +124,6 @@ impl<C: ProfiledCycle> CompressedProof<C> {
             && self.instance.nested.len() == nested_components::<C::Profile>().count()
             && self.instance.step_binding.len()
                 == <StepBindingLen<C::Profile> as ragu_primitives::vec::Len>::len()
-            && self.instance.online_fq_commitments.len()
-                == <BoundCommitmentsLen<C::Profile> as ragu_primitives::vec::Len>::len()
-            && self.instance.online_fq_openings.len()
-                == <BoundOpeningsLen<C::Profile> as ragu_primitives::vec::Len>::len()
             && self.instance.native_mesh_claims.len()
                 == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
             && self.instance.nested_mesh_claims.len()

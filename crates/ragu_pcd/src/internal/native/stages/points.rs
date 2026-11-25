@@ -75,7 +75,7 @@ use crate::{
         endoscalar::{InputsLen, PointsWitness},
         nested::{
             self,
-            online::{BoundCommitmentsLen, FqEarlyPointsLen, FqPointsLen},
+            online::{FqEarlyPointsLen, FqPointsLen},
             pcs::NUM_CURRENT_POINTS,
         },
     },
@@ -170,7 +170,8 @@ pub enum InputSource {
     RandomizerB,
     /// The step's own nested batch randomizer, in [`FStage`].
     Mask,
-    /// The step's own online Fq commitment, by index, in [`PreambleStage`].
+    /// The commitment of one of the step's nested online polynomials fixed
+    /// before $w$, by index, in [`PreambleStage`].
     OnlineFq(usize),
     /// An online auxiliary in its later commitment phase, at a phase-local index.
     Auxiliary(Phase, usize),
@@ -181,8 +182,9 @@ pub enum InputSource {
 /// nested rx commitments in [`nested::RxIndex::all`] order, then its $a_n$,
 /// $b_n$, `registry_xy` and $P_n$; then the current step's two
 /// `registry_wx`, `registry_wy`, $A_n$, $B_n$, `registry_xy`, its two fold
-/// randomizers and its batch randomizer; then the step's own online Fq
-/// commitments (see [`online`](crate::internal::nested::online)).
+/// randomizers and its batch randomizer; then the commitments of the
+/// step's nested online polynomials (see
+/// [`online`](crate::internal::nested::online)).
 ///
 /// # Panics
 ///
@@ -255,7 +257,6 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
             if index < FqEarlyPointsLen::<P>::len() {
                 InputSource::OnlineFq(index)
             } else {
-                let index = index - P::ONLINE_FQ_POLYS;
                 let phase = P::NESTED_ONLINE.polynomials[index];
                 InputSource::Auxiliary(phase, index - P::NESTED_ONLINE.phase_range(phase).start)
             }
@@ -276,10 +277,6 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
     pub p: C,
     /// The child's nested extension stage commitments, by stage.
     pub extension: FixedVec<C, nested::NumExtensionStages<P>>,
-    /// The commitments of the child's own online Fq polynomials it
-    /// exported, tied to its `bind_endoscalar` and binding circuits. The
-    /// walk does not fold them: the child's own walk did.
-    pub online_fq: FixedVec<C, BoundCommitmentsLen<P>>,
 }
 
 /// Witness of [`BindingStage`]: the points tied to each child's instance
@@ -296,7 +293,8 @@ pub struct BindingWitness<C: Affine, P: Profile> {
 #[derive(Clone)]
 pub struct PreambleWitness<C: Affine, P: Profile> {
     pub points: FixedVec<C, ChildrenLen<P>>,
-    /// The step's own online Fq commitments.
+    /// The commitments of the step's nested online polynomials fixed
+    /// before $w$.
     pub online_fq: FixedVec<C, FqEarlyPointsLen<P>>,
 }
 
@@ -365,19 +363,16 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 
 /// Splits the two children's points, each in the order
 /// [`nested::pcs::child_commitments`] fixes, into the binding and preamble
-/// stages' witnesses. The binding stage also holds `exported`, the online
-/// Fq commitments the left and the right child exported, and the preamble
-/// stage `online_fq`, the step's own online Fq commitments.
+/// stages' witnesses. The preamble stage also holds `online_fq`, the
+/// commitments of the step's nested online polynomials fixed before $w$.
 ///
 /// # Panics
 ///
-/// Panics if either child has other than [`num_child_points`] points or
-/// other than the profile's exported commitments, or if `online_fq` has
-/// other than [`FqEarlyPointsLen`] points.
+/// Panics if either child has other than [`num_child_points`] points, or
+/// if `online_fq` has other than [`FqEarlyPointsLen`] points.
 pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
-    exported: [&[C]; 2],
     online_fq: &[C],
     online_input: FixedVec<C, Present<P, Nested, 1>>,
 ) -> (BindingWitness<C, P>, PreambleWitness<C, P>) {
@@ -385,7 +380,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     let nested_rx = nested::RxIndex::num::<P>();
     assert_eq!(left.len(), num_child_points);
     assert_eq!(right.len(), num_child_points);
-    let bound = |points: &[C], exported: &[C]| ChildBindingWitness {
+    let bound = |points: &[C]| ChildBindingWitness {
         bridges: core::array::from_fn(|i| points[nested::RxIndex::BRIDGES[i].position::<P>()]),
         challenges: points[child_challenges::<P>()],
         a: points[nested_rx],
@@ -395,7 +390,6 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
         extension: FixedVec::from_fn(|j| {
             points[nested::RxIndex::ExtensionStage(j as u32).position::<P>()]
         }),
-        online_fq: FixedVec::new(exported.to_vec()).expect("the exported online Fq commitments"),
     };
     let rest = |points: &[C]| {
         points
@@ -410,12 +404,13 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     (
         BindingWitness {
             online_input,
-            left: bound(left, exported[0]),
-            right: bound(right, exported[1]),
+            left: bound(left),
+            right: bound(right),
         },
         PreambleWitness {
             points: FixedVec::new(points).expect("num_children_points points"),
-            online_fq: FixedVec::new(online_fq.to_vec()).expect("ONLINE_FQ_POLYS points"),
+            online_fq: FixedVec::new(online_fq.to_vec())
+                .expect("the nested online commitments fixed before w"),
         },
     )
 }
@@ -432,26 +427,18 @@ pub struct Inputs<C: Affine, P: Profile> {
 }
 
 impl<C: Affine, P: Profile> Inputs<C, P> {
-    /// Splits the walk's points, the initial $F_n$ first, into the stages,
-    /// with `exported`, the online Fq commitments the left and the right
-    /// child exported, which the binding stage holds and the walk does not
-    /// fold.
+    /// Splits the walk's points, the initial $F_n$ first, into the stages.
     ///
     /// # Panics
     ///
     /// Panics if `points.len() != NumPoints::<P>::len()`.
-    pub fn from_walk(
-        points: &[C],
-        exported: [&[C]; 2],
-        online_input: FixedVec<C, Present<P, Nested, 1>>,
-    ) -> Self {
+    pub fn from_walk(points: &[C], online_input: FixedVec<C, Present<P, Nested, 1>>) -> Self {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
         let current = &points[1 + 2 * num_child_points..];
         let (binding, preamble) = preamble_witnesses::<C, P>(
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
-            exported,
             &current[NUM_CURRENT_POINTS..NUM_CURRENT_POINTS + FqEarlyPointsLen::<P>::len()],
             online_input,
         );
@@ -459,26 +446,20 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             binding,
             preamble,
             registry_wx: RegistryWxWitness {
-                online_points: phase_points::<P, Nested, 1, _>(
-                    &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
-                ),
+                online_points: phase_points::<P, Nested, 1, _>(&current[NUM_CURRENT_POINTS..]),
                 registry_wx0: current[0],
                 registry_wx1: current[1],
                 randomizer_a: current[6],
                 randomizer_b: current[7],
             },
             ab: AbWitness {
-                online_points: phase_points::<P, Nested, 2, _>(
-                    &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
-                ),
+                online_points: phase_points::<P, Nested, 2, _>(&current[NUM_CURRENT_POINTS..]),
                 registry_wy: current[2],
                 a: current[3],
                 b: current[4],
             },
             f: FWitness {
-                online_points: phase_points::<P, Nested, 3, _>(
-                    &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
-                ),
+                online_points: phase_points::<P, Nested, 3, _>(&current[NUM_CURRENT_POINTS..]),
                 registry_xy: current[5],
                 f: points[0],
                 mask: current[8],
@@ -548,10 +529,6 @@ pub struct ChildBinding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>
     /// The child's nested extension stage commitments, by stage.
     #[ragu(gadget)]
     pub extension: FixedVec<Point<'dr, D, C>, nested::NumExtensionStages<P>>,
-    /// The commitments of the child's own online Fq polynomials it
-    /// exported.
-    #[ragu(gadget)]
-    pub online_fq: FixedVec<Point<'dr, D, C>, BoundCommitmentsLen<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, D, C, P> {
@@ -567,9 +544,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, 
             p: Point::alloc(dr, witness.as_ref().map(|w| w.p))?,
             extension: FixedVec::try_from_fn(|j| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.extension[j]))
-            })?,
-            online_fq: FixedVec::try_from_fn(|j| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.online_fq[j]))
             })?,
         })
     }
@@ -760,11 +734,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
     type OutputKind = Kind![C::Base; Binding<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point, of each child: the walked points and the
-        // exported online Fq commitments; then this step's nested online
-        // input stage.
-        4 * (num_child_bindings::<P>() + BoundCommitmentsLen::<P>::len())
-            + 2 * Present::<P, Nested, 1>::len()
+        // (x, y) per point, of each child's walked points; then this
+        // step's nested online input stage.
+        4 * num_child_bindings::<P>() + 2 * Present::<P, Nested, 1>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -881,10 +853,7 @@ mod tests {
     use super::*;
     use crate::{
         internal::tests::{R, assert_stage_values},
-        profile::{
-            Standard,
-            testing::{Opening, Proving},
-        },
+        profile::{Standard, testing::Proving},
     };
 
     type C = <Pasta as ragu_core::Cycle>::NestedCurve;
@@ -903,16 +872,15 @@ mod tests {
     fn stage_values_match_wire_counts() {
         let _: PhantomData<EpAffine> = PhantomData::<C>;
         stage_values_match_wire_counts_in::<Standard>();
-        // With the step's own online Fq commitment in the preamble stage,
-        // alone and beside an extension.
-        stage_values_match_wire_counts_in::<Opening>();
+        // Beside an extension.
         stage_values_match_wire_counts_in::<Proving>();
     }
 
     /// Every input has exactly one source, and splitting the walk into the
     /// stages and reading it back is the identity, in profile `P`. The
-    /// step's own online Fq commitments are the walk's last inputs, in slot
-    /// order, read from the preamble stage.
+    /// commitments of the step's nested online polynomials are the walk's
+    /// last inputs, in slot order, the ones fixed before $w$ read from the
+    /// preamble stage.
     fn walk_round_trips_through_the_stages_in<P: Profile>() {
         use rand::{Rng, SeedableRng, rngs::StdRng};
         use udon::{curve::Projective, field::Field};
@@ -924,14 +892,7 @@ mod tests {
                 .to_affine()
             })
             .collect();
-        // The children's exported online Fq commitments are held beside
-        // the walk's points and are not among them.
-        let exported = alloc::vec![points[0]; BoundCommitmentsLen::<P>::len()];
-        let inputs = Inputs::<C, P>::from_walk(
-            &points,
-            [&exported, &exported],
-            FixedVec::from_fn(|_| points[0]),
-        );
+        let inputs = Inputs::<C, P>::from_walk(&points, FixedVec::from_fn(|_| points[0]));
         assert_eq!(inputs.walk(), points);
 
         let num_inputs = NumInputs::<P>::len();
@@ -970,15 +931,13 @@ mod tests {
         }
         assert_eq!(bindings, 2 * num_child_bindings::<P>());
         assert!(children.iter().all(|&c| c));
-        assert_eq!(online_fq, FqPointsLen::<P>::len());
+        assert_eq!(online_fq, FqEarlyPointsLen::<P>::len());
     }
 
     #[test]
     fn walk_round_trips_through_the_stages() {
         walk_round_trips_through_the_stages_in::<Standard>();
-        // With the step's own online Fq commitment at the walk's tail,
-        // alone and beside an extension.
-        walk_round_trips_through_the_stages_in::<Opening>();
+        // Beside an extension.
         walk_round_trips_through_the_stages_in::<Proving>();
     }
 

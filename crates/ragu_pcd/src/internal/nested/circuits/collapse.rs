@@ -306,29 +306,17 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // extension stages it names, then of their own online slots it
         // names, as the bridge preamble holds them. A profile without a
         // binding computes nothing here.
-        let left_binding = ky::binding_ky(
-            dr,
-            y,
-            &stages.preamble.left.bound(),
-            &stages.preamble.left.online_fq_openings,
-        )?;
-        let right_binding = ky::binding_ky(
-            dr,
-            y,
-            &stages.preamble.right.bound(),
-            &stages.preamble.right.online_fq_openings,
-        )?;
-        // The children's `compute_v` claims take the same exported
-        // openings after the unified instance, so the opening a child's
-        // binding circuit exposes is the one its `compute_v` folded, then
-        // the online helper's values and the online batch's commitments. A
-        // profile that exports none of them keeps the unified k(y).
+        let left_binding = ky::binding_ky(dr, y, &stages.preamble.left.bound())?;
+        let right_binding = ky::binding_ky(dr, y, &stages.preamble.right.bound())?;
+        // The children's `compute_v` claims take the online helper's
+        // values and the online batch's commitments after the unified
+        // instance. A profile that exports none of them keeps the unified
+        // k(y).
         let (left_compute_v, left_online_helper) = ky::nested_online_ky::<_, _, P>(
             dr,
             y,
             &stages.preamble.left.nested_instance(),
             &left_unified,
-            &stages.preamble.left.online_fq_openings,
             &stages.preamble.left.online_values,
             &ky::native_online_stages::<P, _>(|index| stages.preamble.left[index].clone()),
             &stages.preamble.left.online_points,
@@ -339,7 +327,6 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             y,
             &stages.preamble.right.nested_instance(),
             &right_unified,
-            &stages.preamble.right.online_fq_openings,
             &stages.preamble.right.online_values,
             &ky::native_online_stages::<P, _>(|index| stages.preamble.right[index].clone()),
             &stages.preamble.right.online_points,

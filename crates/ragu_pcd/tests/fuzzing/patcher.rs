@@ -455,7 +455,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         self.commit_native_online_inputs(rng, &mut builder)?;
         self.commit_nested_online_inputs(rng, &mut builder)?;
         let nested_preamble =
-            self.compute_preamble(rng, &left, &right, &application_stage, None, &mut builder)?;
+            self.compute_preamble(rng, &left, &right, &application_stage, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;

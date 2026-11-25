@@ -23,7 +23,7 @@ use crate::{
             self, RxIndex, online,
             stages::points::{self as native_points, Inputs},
         },
-        nested::{self, NumPoints, online as online_fq},
+        nested::{self, NumPoints},
     },
     profile::{Profile, ProfiledCycle},
     proof::ProofBuilder,
@@ -221,15 +221,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // Every placeholder is the commitment of a polynomial this proof
         // holds, so that p_n is their beta-fold and P_n its commitment, as
         // a parent's batch requires of a child.
-        builder.set_online_fq_polynomials(
-            (0..C::Profile::ONLINE_FQ_POLYS)
-                .map(|_| online_fq::placeholder())
-                .collect(),
-        );
-        builder.set_online_fq_openings(alloc::vec![
-            C::ScalarField::ZERO;
-            online_fq::BoundOpeningsLen::<C::Profile>::len()
-        ]);
         let (nested_p_poly, nested_p_commitment) = {
             let nested_commitment = self.nested().commit(&ones_nested);
             let registry_xy_commitment = builder.nested_registry_xy_commitment();
@@ -261,13 +252,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             push(nested_commitment, &ones_nested); // fold randomizer a
             push(nested_commitment, &ones_nested); // fold randomizer b
             push(nested_commitment, &ones_nested); // batch randomizer
-            for (poly, &commitment) in builder
-                .online_fq_polynomials()
-                .iter()
-                .zip(builder.online_fq_commitments())
-            {
-                push(commitment, poly); // the step's own online Fq polynomial
-            }
             for (poly, &point) in nested_online_polynomials
                 .iter()
                 .zip(&nested_online_commitments)
@@ -275,12 +259,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 push(point, poly);
             }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
-            // The children stand for proofs like this one, so they
-            // exported the commitments this one does.
-            let exported = builder.exported_online_fq_commitments();
             let inputs = Inputs::from_walk(
                 &points,
-                [&exported, &exported],
                 FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
             );
             self.commit_native_points_stages(&mut trivial_rng, &inputs, &mut builder)
@@ -544,8 +524,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     y: nested_one,
                     u: nested_one,
                 },
-                online_fq_openings: FixedVec::new(builder.online_fq_openings().to_vec())
-                    .expect("the openings the profile exports"),
             };
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
