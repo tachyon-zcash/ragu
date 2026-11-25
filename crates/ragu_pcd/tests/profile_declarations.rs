@@ -226,8 +226,9 @@ fn consistency_binds_every_staged_circuit() {
 }
 
 /// The profile's checks refuse a malformed extension, a statement
-/// circuit on the nested side, and a binding naming a stage the other
-/// side does not have, from either side.
+/// circuit on the nested side, a binding naming a stage the other side
+/// does not have, from either side, and a native binding naming a batch
+/// polynomial the step does not have or an output header slot.
 #[test]
 fn malformed_declarations_are_refused() {
     use alloc::vec;
@@ -392,12 +393,63 @@ fn malformed_declarations_are_refused() {
         }
     }
 
+    /// [`Crossing`] with its native binding naming a slot of the step's
+    /// output header, whose commitment is a host-curve point: only the
+    /// nested binding circuit holds one.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct StrayOnline;
+
+    impl Profile for StrayOnline {
+        const NAME: &'static str = "stray online";
+        const NATIVE_EXTENSION: usize = 1;
+        const NESTED_EXTENSION: usize = 2;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            let mut extension = Crossing::native_extension();
+            extension
+                .binding
+                .as_mut()
+                .expect("the crossing profile's native binding")
+                .online = vec![0];
+            extension
+        }
+
+        fn nested_extension() -> Extension {
+            Crossing::nested_extension()
+        }
+    }
+
+    /// The refusal's reason, for a declaration `check` refuses.
+    fn reason(result: Result<()>) -> alloc::string::String {
+        use alloc::string::ToString;
+        match result {
+            Err(Error::Initialization(reason)) => reason.to_string(),
+            Err(error) => panic!("unexpected error: {error}"),
+            Ok(()) => panic!("the declaration was accepted"),
+        }
+    }
+
     assert!(Crossing::check().is_ok());
     assert!(StrayStatement::check().is_err());
     assert!(NestedStatement::check().is_err());
     assert!(StrayBinding::check().is_err());
     assert!(StrayNestedBinding::check().is_err());
-    assert!(StrayBatch::check().is_err());
+    // Each refusal of a binding's slots gives its own reason.
+    assert_eq!(
+        reason(StrayBatch::check()),
+        "the native binding circuit names a polynomial the nested online batch does not have"
+    );
+    assert_eq!(
+        reason(StrayOnline::check()),
+        "the native binding circuit names an output header slot, whose commitment is a point only the nested binding circuit holds"
+    );
 }
 
 /// A profile's name identifies it in diagnostics, so the checks refuse
@@ -567,7 +619,7 @@ fn standard_is_the_crate_layout() {
             nested_points: 122,
             nested_steps: 31,
             nested_rx: 45,
-            online_fq: 0,
+            nested_online: 0,
             native_points: 108,
             native_steps: 27,
             source_polynomials: 0,
@@ -582,13 +634,13 @@ fn a_nested_online_polynomial_is_a_native_walk_point() {
     // in the native walk. A full walk then needs another native step,
     // and with it the batch grows.
     let base = Shape::solve(0, 0, 0, 4, 4);
-    let with_fq = Shape::solve(0, 0, 1, 4, 4);
-    assert_eq!(with_fq.online_fq, 1);
+    let with_online = Shape::solve(0, 0, 1, 4, 4);
+    assert_eq!(with_online.nested_online, 1);
     assert_eq!(
-        with_fq.native_points,
-        nested::pcs::num_batched_points(with_fq.nested_rx, 0) + 1
+        with_online.native_points,
+        nested::pcs::num_batched_points(with_online.nested_rx, 0) + 1
     );
-    assert!(with_fq.native_points > base.native_points);
+    assert!(with_online.native_points > base.native_points);
 }
 
 #[test]
@@ -604,7 +656,7 @@ fn a_nested_online_polynomial_alone_fills_the_native_walk() {
             nested_points: 122,
             nested_steps: 31,
             nested_rx: 45,
-            online_fq: 1,
+            nested_online: 1,
             native_points: 109,
             native_steps: 27,
             source_polynomials: 0,
@@ -623,7 +675,7 @@ fn a_nested_online_polynomial_alone_fills_the_native_walk() {
             nested_points: 124,
             nested_steps: 31,
             nested_rx: 45,
-            online_fq: 2,
+            nested_online: 2,
             native_points: 110,
             native_steps: 28,
             source_polynomials: 0,

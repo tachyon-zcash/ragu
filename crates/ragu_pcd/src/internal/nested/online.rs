@@ -8,11 +8,8 @@
 //! of its deadline, and the native walk folds each commitment into $P_n$
 //! after the nested batch's other commitments.
 
-use core::marker::PhantomData;
-
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Result;
-use ragu_primitives::vec::Len;
 use rand::CryptoRng;
 
 use super::challenge;
@@ -24,24 +21,6 @@ use crate::{
     },
     proof::ProofBuilder,
 };
-
-/// Length type for the commitments of the nested batch's polynomials,
-/// which the native walk folds.
-pub struct FqPointsLen<P: Profile>(PhantomData<P>);
-impl<P: Profile> Len for FqPointsLen<P> {
-    fn len() -> usize {
-        P::NESTED_ONLINE.polynomials.len()
-    }
-}
-
-/// Length type for the commitments fixed before $w$. Later auxiliaries
-/// live in later stages.
-pub struct FqEarlyPointsLen<P: Profile>(PhantomData<P>);
-impl<P: Profile> Len for FqEarlyPointsLen<P> {
-    fn len() -> usize {
-        <crate::profile::online::stages::PhaseLen<P, crate::profile::online::stages::Nested, 0> as Len>::len()
-    }
-}
 
 impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'params, C, R, HEADER_SIZE, B>

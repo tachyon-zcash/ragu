@@ -171,7 +171,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
 
         // The nested online commitments, as the walk takes them.
         let online_points = preamble
-            .online_fq
+            .online_points
             .iter()
             .chain(registry_wx.online_points.iter())
             .chain(ab.online_points.iter())

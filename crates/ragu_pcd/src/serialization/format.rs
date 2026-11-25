@@ -359,7 +359,7 @@ mod tests {
                 nested_points: 122,
                 nested_steps: 31,
                 nested_rx: 45,
-                online_fq: 0,
+                nested_online: 0,
                 native_points: 108,
                 native_steps: 27,
                 source_polynomials: 0,

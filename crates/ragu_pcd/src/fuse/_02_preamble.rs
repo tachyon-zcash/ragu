@@ -135,12 +135,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     ) -> Result<()> {
         // The commitments of the step's nested online polynomials fixed
         // before w, which the preamble stage holds.
-        let online_fq = &builder.nested_online_phase::<0>();
+        let online_points = &builder.nested_online_phase::<0>();
 
         let (binding, preamble) = native_points::preamble_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
-            online_fq,
+            online_points,
             FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<

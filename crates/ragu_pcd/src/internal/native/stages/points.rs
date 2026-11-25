@@ -15,9 +15,8 @@
 //!   commitments, $A_n$, $B_n$, `registry_xy`, $P_n$ and the nested
 //!   extension stages, fixed before $w$ and carried by the `preamble`
 //!   bridge.
-//! - [`PreambleStage`] holds the rest of the children's nested commitments
-//!   and the step's own online Fq commitments, fixed before $w$ and carried
-//!   by the `preamble` bridge.
+//! - [`PreambleStage`] holds the rest of the children's nested commitments,
+//!   fixed before $w$ and carried by the `preamble` bridge.
 //! - [`RegistryWxStage`] holds $m_n(w_n, x_{i,n}, Y)$, fixed before $y$ and
 //!   carried by the `s_prime` bridge.
 //! - [`AbStage`] holds $m_n(w_n, X, y_n)$, $A_n$ and $B_n$, fixed before $x$
@@ -29,6 +28,14 @@
 //! `registry_wy` restriction is opened at $x_n$, and the `registry_xy`
 //! restriction is pinned to the registry by the parent's opening at its own
 //! $w$, so neither needs a stage of its own before the batching challenge.
+//!
+//! The last four stages also hold the commitments of the profile's nested
+//! online batch ([`Profile::NESTED_ONLINE`]), each in the stage of its
+//! [`Phase`]: the polynomials fixed before $w$ in [`PreambleStage`], before
+//! $y$ in [`RegistryWxStage`], before $x$ in [`AbStage`] and before $\alpha$
+//! in [`FStage`]. A polynomial of the batch is so committed before the
+//! challenge its phase names, which a profile that opens it at that
+//! challenge relies on.
 //!
 //! [`BindingStage`] is the root of the whole native stage tree, so the
 //! circuits on the preamble chain reserve it too: that is what lets
@@ -73,17 +80,13 @@ use crate::{
     internal::{
         Side,
         endoscalar::{InputsLen, PointsWitness},
-        nested::{
-            self,
-            online::{FqEarlyPointsLen, FqPointsLen},
-            pcs::NUM_CURRENT_POINTS,
-        },
+        nested::{self, pcs::NUM_CURRENT_POINTS},
     },
     profile::{
         Profile,
         online::{
             Phase,
-            stages::{Nested, PhaseLen, Present, phase_points},
+            stages::{Nested, PhaseLen, PolynomialsLen, Present, phase_points},
         },
     },
 };
@@ -172,7 +175,7 @@ pub enum InputSource {
     Mask,
     /// The commitment of one of the step's nested online polynomials fixed
     /// before $w$, by index, in [`PreambleStage`].
-    OnlineFq(usize),
+    Online(usize),
     /// An online auxiliary in its later commitment phase, at a phase-local index.
     Auxiliary(Phase, usize),
 }
@@ -252,10 +255,10 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
     ];
     match i - 2 * num_child_points {
         j if j < NUM_CURRENT_POINTS => CURRENT[j],
-        j if j - NUM_CURRENT_POINTS < FqPointsLen::<P>::len() => {
+        j if j - NUM_CURRENT_POINTS < PolynomialsLen::<P, Nested>::len() => {
             let index = j - NUM_CURRENT_POINTS;
-            if index < FqEarlyPointsLen::<P>::len() {
-                InputSource::OnlineFq(index)
+            if index < PhaseLen::<P, Nested, 0>::len() {
+                InputSource::Online(index)
             } else {
                 let phase = P::NESTED_ONLINE.polynomials[index];
                 InputSource::Auxiliary(phase, index - P::NESTED_ONLINE.phase_range(phase).start)
@@ -295,7 +298,7 @@ pub struct PreambleWitness<C: Affine, P: Profile> {
     pub points: FixedVec<C, ChildrenLen<P>>,
     /// The commitments of the step's nested online polynomials fixed
     /// before $w$.
-    pub online_fq: FixedVec<C, FqEarlyPointsLen<P>>,
+    pub online_points: FixedVec<C, PhaseLen<P, Nested, 0>>,
 }
 
 /// Witness of [`RegistryWxStage`].
@@ -363,17 +366,17 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 
 /// Splits the two children's points, each in the order
 /// [`nested::pcs::child_commitments`] fixes, into the binding and preamble
-/// stages' witnesses. The preamble stage also holds `online_fq`, the
+/// stages' witnesses. The preamble stage also holds `online_points`, the
 /// commitments of the step's nested online polynomials fixed before $w$.
 ///
 /// # Panics
 ///
 /// Panics if either child has other than [`num_child_points`] points, or
-/// if `online_fq` has other than [`FqEarlyPointsLen`] points.
+/// if `online_points` has other than one point per such polynomial.
 pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
-    online_fq: &[C],
+    online_points: &[C],
     online_input: FixedVec<C, Present<P, Nested, 1>>,
 ) -> (BindingWitness<C, P>, PreambleWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
@@ -409,7 +412,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
         },
         PreambleWitness {
             points: FixedVec::new(points).expect("num_children_points points"),
-            online_fq: FixedVec::new(online_fq.to_vec())
+            online_points: FixedVec::new(online_points.to_vec())
                 .expect("the nested online commitments fixed before w"),
         },
     )
@@ -439,7 +442,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
         let (binding, preamble) = preamble_witnesses::<C, P>(
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
-            &current[NUM_CURRENT_POINTS..NUM_CURRENT_POINTS + FqEarlyPointsLen::<P>::len()],
+            &current[NUM_CURRENT_POINTS..NUM_CURRENT_POINTS + PhaseLen::<P, Nested, 0>::len()],
             online_input,
         );
         Self {
@@ -491,9 +494,9 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::RandomizerA => self.registry_wx.randomizer_a,
             InputSource::RandomizerB => self.registry_wx.randomizer_b,
             InputSource::Mask => self.f.mask,
-            InputSource::OnlineFq(j) => self.preamble.online_fq[j],
+            InputSource::Online(j) => self.preamble.online_points[j],
             InputSource::Auxiliary(phase, j) => match phase {
-                Phase::BeforeW => unreachable!("early points use OnlineFq"),
+                Phase::BeforeW => unreachable!("early points use Online"),
                 Phase::BeforeY => self.registry_wx.online_points[j],
                 Phase::BeforeX => self.ab.online_points[j],
                 Phase::BeforeAlpha => self.f.online_points[j],
@@ -566,9 +569,10 @@ pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub points: FixedVec<Point<'dr, D, C>, ChildrenLen<P>>,
-    /// The step's own online Fq commitments.
+    /// The commitments of the step's nested online polynomials fixed
+    /// before $w$.
     #[ragu(gadget)]
-    pub online_fq: FixedVec<Point<'dr, D, C>, FqEarlyPointsLen<P>>,
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Nested, 0>>,
 }
 
 /// Output gadget of [`RegistryWxStage`].
@@ -672,9 +676,9 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::RandomizerA => &self.registry_wx.randomizer_a,
             InputSource::RandomizerB => &self.registry_wx.randomizer_b,
             InputSource::Mask => &self.f.mask,
-            InputSource::OnlineFq(j) => &self.preamble.online_fq[j],
+            InputSource::Online(j) => &self.preamble.online_points[j],
             InputSource::Auxiliary(phase, j) => match phase {
-                Phase::BeforeW => unreachable!("early points use OnlineFq"),
+                Phase::BeforeW => unreachable!("early points use Online"),
                 Phase::BeforeY => &self.registry_wx.online_points[j],
                 Phase::BeforeX => &self.ab.online_points[j],
                 Phase::BeforeAlpha => &self.f.online_points[j],
@@ -757,8 +761,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
     }
 }
 
-/// The rest of the children's nested commitments and the step's own online
-/// Fq commitments, committed before $w$.
+/// The rest of the children's nested commitments and the commitments of
+/// the step's nested online polynomials fixed before $w$, committed before
+/// $w$.
 #[derive(Default)]
 pub struct PreambleStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
 
@@ -768,7 +773,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
     type OutputKind = Kind![C::Base; Preamble<'_, _, C, P>];
 
     fn values() -> usize {
-        2 * (num_children_points::<P>() + FqEarlyPointsLen::<P>::len())
+        2 * (num_children_points::<P>() + PhaseLen::<P, Nested, 0>::len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -783,8 +788,8 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
             points: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.points[i]))
             })?,
-            online_fq: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.online_fq[i]))
+            online_points: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
             })?,
         })
     }
@@ -905,10 +910,10 @@ mod tests {
         let mut children = alloc::vec![false; num_children_points::<P>()];
         let mut sources = Vec::new();
         let mut bindings = 0;
-        // The batch's slots seen so far: slot `online_fq` is input
-        // `first_online + online_fq`.
-        let mut online_fq = 0;
-        let first_online = num_inputs - FqPointsLen::<P>::len();
+        // The batch's slots seen so far: slot `online` is input
+        // `first_online + online`.
+        let mut online = 0;
+        let first_online = num_inputs - PolynomialsLen::<P, Nested>::len();
         for i in 0..num_inputs {
             let source = input_source::<P>(i);
             assert!(
@@ -928,17 +933,17 @@ mod tests {
                     assert!(!children[k], "child point {k} sourced twice");
                     children[k] = true;
                 }
-                InputSource::OnlineFq(j) => {
-                    assert_eq!(j, online_fq, "a commitment out of slot order");
+                InputSource::Online(j) => {
+                    assert_eq!(j, online, "a commitment out of slot order");
                     assert_eq!(i, first_online + j);
                     assert_eq!(P::NESTED_ONLINE.polynomials[j], Phase::BeforeW);
                     // Input `i` is point `1 + i`: the initial point is first.
-                    assert_eq!(inputs.preamble.online_fq[j], points[1 + i]);
-                    online_fq += 1;
+                    assert_eq!(inputs.preamble.online_points[j], points[1 + i]);
+                    online += 1;
                 }
                 InputSource::Auxiliary(phase, j) => {
                     let slot = P::NESTED_ONLINE.phase_range(phase).start + j;
-                    assert_eq!(slot, online_fq, "a commitment out of slot order");
+                    assert_eq!(slot, online, "a commitment out of slot order");
                     assert_eq!(i, first_online + slot);
                     assert_eq!(P::NESTED_ONLINE.polynomials[slot], phase);
                     let staged = match phase {
@@ -948,14 +953,14 @@ mod tests {
                         Phase::BeforeAlpha => inputs.f.online_points[j],
                     };
                     assert_eq!(staged, points[1 + i]);
-                    online_fq += 1;
+                    online += 1;
                 }
                 _ => {}
             }
         }
         assert_eq!(bindings, 2 * num_child_bindings::<P>());
         assert!(children.iter().all(|&c| c));
-        assert_eq!(online_fq, FqPointsLen::<P>::len());
+        assert_eq!(online, PolynomialsLen::<P, Nested>::len());
     }
 
     #[test]

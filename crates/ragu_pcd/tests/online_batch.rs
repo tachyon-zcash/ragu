@@ -1162,7 +1162,7 @@ fn a_multipoint_slot_is_one_commitment() -> Result<()> {
     let app = ApplicationBuilder::<Mixed, Rk, 2>::new()
         .register(UnitStep)?
         .finalize_with(crate::pasta::baked_aggregator(), 2)?;
-    assert_eq!(crate::profile::Shape::of::<Multipoint>().online_fq, 1);
+    assert_eq!(crate::profile::Shape::of::<Multipoint>().nested_online, 1);
     let mut rng = StdRng::seed_from_u64(0x606050);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;

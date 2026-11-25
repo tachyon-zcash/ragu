@@ -447,7 +447,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::inputs::<Self, online::stages::Native, _>()
     }
 
-    /// Supplies native online polynomials at one commitment deadline.
+    /// Supplies native online polynomials at one commitment deadline, for
+    /// the proof the profile's extension runs over in this step, as
+    /// [`native_online_inputs`](Self::native_online_inputs) does: `source`'s,
+    /// or the context's canonical proof without.
     ///
     /// Return only the slots declared for `phase` that are not owned by the
     /// source mesh, in declaration order. The protocol prepares mesh slots.
@@ -558,7 +561,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::inputs::<Self, online::stages::Nested, _>()
     }
 
-    /// Supplies nested online polynomials at one commitment deadline.
+    /// Supplies nested online polynomials at one commitment deadline, for
+    /// the proof the profile's extension runs over in this step, as
+    /// [`nested_online_inputs`](Self::nested_online_inputs) does: `source`'s,
+    /// or the context's canonical proof without.
     ///
     /// Return only the slots declared for `phase` that are not owned by the
     /// source mesh, in declaration order. The protocol prepares mesh slots.
@@ -659,10 +665,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// constant, so that a profile declaring one without the other does not
     /// lay out a proof; if either extension is not
     /// [consistent](Extension::is_consistent); if the nested extension names
-    /// a statement circuit, which only the native side carries; or if an
-    /// extension's binding names a stage or an online slot the step does not
-    /// have; or if the product of the two endoscaling counts is at most
-    /// four.
+    /// a statement circuit, which only the native side carries; if an
+    /// extension's binding names a stage, an output header slot or a batch
+    /// polynomial the step does not have; if the native extension's binding
+    /// names an output header slot at all; or if the product of the two
+    /// endoscaling counts is at most four.
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
@@ -758,21 +765,30 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         // the other field's batch.
         let within =
             |slots: &[u32], count: usize| slots.iter().all(|&slot| (slot as usize) < count);
-        if let Some(binding) = &native.binding
-            && !(binding.online.is_empty()
-                && within(&binding.batch, Self::NESTED_ONLINE.polynomials.len()))
-        {
-            return Err(Error::Initialization(
-                "the native binding circuit names an online slot the step does not have".into(),
-            ));
+        if let Some(binding) = &native.binding {
+            if !binding.online.is_empty() {
+                return Err(Error::Initialization(
+                    "the native binding circuit names an output header slot, whose commitment is a point only the nested binding circuit holds".into(),
+                ));
+            }
+            if !within(&binding.batch, Self::NESTED_ONLINE.polynomials.len()) {
+                return Err(Error::Initialization(
+                    "the native binding circuit names a polynomial the nested online batch does not have".into(),
+                ));
+            }
         }
-        if let Some(binding) = &nested.binding
-            && !(within(&binding.online, crate::header::NUM_ONLINE_FP_POLYS)
-                && within(&binding.batch, Self::NATIVE_ONLINE.polynomials.len()))
-        {
-            return Err(Error::Initialization(
-                "the nested binding circuit names an online slot the step does not have".into(),
-            ));
+        if let Some(binding) = &nested.binding {
+            if !within(&binding.online, crate::header::NUM_ONLINE_FP_POLYS) {
+                return Err(Error::Initialization(
+                    "the nested binding circuit names an output header slot the step does not have"
+                        .into(),
+                ));
+            }
+            if !within(&binding.batch, Self::NATIVE_ONLINE.polynomials.len()) {
+                return Err(Error::Initialization(
+                    "the nested binding circuit names a polynomial the native online batch does not have".into(),
+                ));
+            }
         }
         online::stages::check::<Self, online::stages::Native>()?;
         online::stages::check::<Self, online::stages::Nested>()?;
@@ -1579,11 +1595,12 @@ pub struct Shape {
     /// The nested rx polynomials, with the nested online batch's helper
     /// circuit and stages when [`Profile::NESTED_ONLINE`] is nonempty.
     pub nested_rx: usize,
-    /// The step's own polynomials over the scalar field: the
-    /// [`Profile::NESTED_ONLINE`] polynomials.
-    pub online_fq: usize,
+    /// The polynomials of the nested online batch
+    /// ([`Profile::NESTED_ONLINE`]).
+    pub nested_online: usize,
     /// The host-curve points the native walk folds: the nested batch, with
-    /// the commitments of the [`online_fq`](Self::online_fq) polynomials.
+    /// the commitments of the [`nested_online`](Self::nested_online)
+    /// polynomials.
     pub native_points: usize,
     /// The native walk's steps: the fixed point, where the count the batch
     /// needs is the count the native rx polynomials were sized with.
@@ -1634,14 +1651,14 @@ impl Shape {
     pub const fn solve(
         native_extension: usize,
         nested_extension: usize,
-        online_fq: usize,
+        nested_online: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
         Self::solve_with_online(
             native_extension,
             nested_extension,
-            online_fq,
+            nested_online,
             0,
             native_endoscalings,
             nested_endoscalings,
@@ -1651,8 +1668,8 @@ impl Shape {
     const fn solve_with_online(
         native_extension: usize,
         nested_extension: usize,
-        online_fq: usize,
-        online_fp: usize,
+        nested_online: usize,
+        native_online: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
@@ -1663,8 +1680,8 @@ impl Shape {
                 native_steps,
                 native_extension,
                 nested_extension,
-                online_fq,
-                online_fp,
+                nested_online,
+                native_online,
                 native_endoscalings,
                 nested_endoscalings,
             );
@@ -1683,23 +1700,23 @@ impl Shape {
         native_steps: usize,
         native_extension: usize,
         nested_extension: usize,
-        online_fq: usize,
-        online_fp: usize,
+        nested_online: usize,
+        native_online: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
         let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
-        let nested_points = nested::num_endoscaling_points(native_rx) + online_fp;
+        let nested_points = nested::num_endoscaling_points(native_rx) + native_online;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
-        let native_points = nested::pcs::num_batched_points(nested_rx, online_fq);
+        let native_points = nested::pcs::num_batched_points(nested_rx, nested_online);
         let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {
             native_rx,
             nested_points,
             nested_steps,
             nested_rx,
-            online_fq,
+            nested_online,
             native_points,
             native_steps,
             source_polynomials: 0,

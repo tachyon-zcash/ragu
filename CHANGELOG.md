@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `NUM_ONLINE_POLYNOMIALS` and `NUM_ONLINE_QUERIES` are renamed to
   `NUM_ONLINE_FP_POLYS` and `NUM_ONLINE_FP_QUERIES`. `Shape` gains
-  `online_fq`, and `Shape::solve` takes the count of nested online
+  `nested_online`, and `Shape::solve` takes the count of nested online
   polynomials. The internal online polynomial helpers live in
   `native::online` and `nested::online`.
 

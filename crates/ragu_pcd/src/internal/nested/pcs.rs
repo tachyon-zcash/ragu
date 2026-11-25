@@ -111,12 +111,12 @@ pub const fn num_child_points(nested_rx: usize) -> usize {
 pub const NUM_CURRENT_POINTS: usize = 9;
 
 /// The number of nested-curve points the batch folds into $P_n$, which the
-/// native walk walks, for `nested_rx` rx polynomials and `online_fq`
+/// native walk walks, for `nested_rx` rx polynomials and `nested_online`
 /// polynomials of the nested online batch: $f_n$, then each child's points,
 /// then the current step's, then the nested online batch's commitments.
 /// [`Batch::commitments`] gives the first three in this order, after $f_n$.
-pub const fn num_batched_points(nested_rx: usize, online_fq: usize) -> usize {
-    1 + 2 * num_child_points(nested_rx) + NUM_CURRENT_POINTS + online_fq
+pub const fn num_batched_points(nested_rx: usize, nested_online: usize) -> usize {
+    1 + 2 * num_child_points(nested_rx) + NUM_CURRENT_POINTS + nested_online
 }
 
 /// Number of nested-curve points the batch folds into $P_n$ in the standard

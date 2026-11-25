@@ -107,9 +107,9 @@ pub(crate) struct Messages<P: Affine> {
 impl<C: ProfiledCycle> CompressedProof<C> {
     /// Whether the messages have the shape the verifier reads: one
     /// commitment per component, the step binding's openings of a profile
-    /// with a statement circuit, the online Fq commitments and openings its
-    /// bindings name, one opening per derived polynomial, one value per
-    /// batched polynomial and one IPA round per bit of the rank.
+    /// with a statement circuit, the commitments, sums and mesh claims of
+    /// its online batches, one opening per derived polynomial, one value
+    /// per batched polynomial and one IPA round per bit of the rank.
     fn well_formed<R: Rank>(&self) -> bool {
         fn side<P: Affine, R: Rank>(messages: &Messages<P>, mesh_polynomials: usize) -> bool {
             let derived = Derived::ALL.len();
