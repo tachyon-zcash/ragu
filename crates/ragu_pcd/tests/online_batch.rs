@@ -72,6 +72,7 @@ impl Profile for OnlineBatch {
         _: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, Rk>,
         online: Option<&circuit::Witness<'_, Base::ScalarField, Self, Nested>>,
+        _: &[Base::HostCurve],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, Rk>>
     where
@@ -414,6 +415,7 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
     }
     fn native_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         _: &[Base::CircuitField],
         _: PreparationChallenges<Base::CircuitField>,
@@ -809,6 +811,7 @@ impl Profile for NativePhases {
     }
     fn native_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         inputs: &[Base::CircuitField],
         challenges: PreparationChallenges<Base::CircuitField>,

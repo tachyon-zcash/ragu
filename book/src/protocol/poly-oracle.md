@@ -52,7 +52,8 @@ internal circuits.
   - in a `Step`, we refer to the $6$ total public online poly commitments as `[L0, L1, R0, R1, O0, O1]`
   - a header lists the kinds of polynomial its proofs carry, one unit type per slot or `Padding`, as `Header::OnlinePolyCommit`; a step reads, prepares and opens a polynomial by its kind, so a slot the header leaves to padding cannot be addressed at all
   - Ragu proves that an opening is of the committed polynomial, not which polynomial was committed: what `Step::prepare` returns is prover data, so an output slot whose opening the step's circuit leaves unconstrained holds a polynomial of the prover's choosing. A slot the step does not open is padding: Ragu opens it at $\zeta$ and holds the value to one after the step's circuit; a slot opened and left unconstrained is a hint, as $\cm_g, \cm_h$ are [below](#changes)
-  - a compressed proof's statement carries the header's fields and not these commitments: under a profile that decompresses statements, the decompressed proof keeps the fields and carries none of the original polynomials (the decompression's own $s(X)$ in the first slot, padding in the last), so a header that can pass through decompression must not rely on its slots
+  - compression carries the two output commitments. Aggregator decompression preserves the header and binds its output slots to those commitments. The aggregator supplies the matching coefficients for later oracle queries.
+  - the slots hold public values, and Ragu does not hide them: their commitments are deterministic, rerandomization leaves them unchanged, and compression and decompression carry them as they are. A private polynomial belongs in the application stage (C2), not in a slot
 - C2: a two-phase application circuit: an application stage, committed before $\zeta$, holds the staged values a check at $\zeta$ reads but no header carries, such as the roots $\tg_i$ of a private polynomial $\prod_i (X - \tg_i)$; the circuit, synthesized after $\zeta$, evaluates such a polynomial in-circuit from the staged values and relates it to the public slots' openings. Such a polynomial has no commitment slot; profile-internal circuits commit online polynomials through C6 below
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
   - public poly commitments are carried in proofs and associated with their output headers
@@ -83,6 +84,42 @@ internal circuits.
   - the profile fixes distinct polynomial slots, their commitment phases and the opening list; each polynomial may be opened at several points
   - consumers read authenticated staged inputs, opening wires and opposite-field commitment points; the public application API is unchanged
   - source-registry restrictions have an additional identity obligation: a setup-bound mesh carries both children's obligations and reduces all new identities to one outgoing restriction per field, closed at terminal verification
+
+## Tachyon Stamp Handoff {#stamp-handoff}
+
+In Tachyon's intended wallet-to-aggregator flow, a
+`CompressedPcd<Pasta, Stamp>` pairs the Stamp's header data with its
+compressed proof.
+
+| Location | Contents |
+| --- | --- |
+| Stamp header data | Anchor and tachygram-set bridge hash |
+| Compressed proof's online commitment slots | Action-set commitment in `O0` and tachygram-set commitment in `O1` |
+
+The wallet can compress the Stamp directly. The aggregator reconstructs the
+two set polynomials from the covered action digests and tachygrams in the
+transaction data. Each polynomial has the encoded members of its set as
+roots. The aggregator passes their coefficients in slot order to
+`Application::decompress_with_polynomials`. `StampLift` opens the two
+polynomials to carry the sets forward at a new anchor. `StampMerge` opens
+both inputs' polynomials and their products. After the lifts and merges,
+the aggregator compresses the final proof.
+
+The decompression circuits verify the wallet proof and equate the new
+Stamp's two commitment points with the verified wallet points. The
+usual output queries fold claims about the supplied polynomials into the
+polynomial commitment scheme (PCS) accumulator. Terminal verification
+checks the accumulated claims against the carried commitments.
+
+These sets are public like the header fields, so Tachyon uses deterministic,
+unblinded commitments as compact representations of the polynomials. A
+Tachyon verifier can reconstruct the polynomials from transaction data and
+compare the recomputed commitments with the Stamp's certified commitments.
+
+Application steps query the header-associated slots through `Oracles`. The
+aggregator's internal circuits use separate profile slots for the IPA helpers
+and wallet registry restrictions. For what a compressed aggregator proof
+exposes, see [Decompression privacy](recursion/decompression.md#privacy).
 
 ## Changes to Tachyon Proof Tree {#changes}
 
@@ -689,4 +726,4 @@ Source-mesh preparation adds prover work that the census does not time. Each fus
 
 #### Remaining work {#v6-remaining}
 
-The `Aggregator` profile declares its registry queries as a source mesh of nine introduced restrictions and seven helpers per field (`decompress::online`), and its chunk circuits are the batch's consumers. Using an online commitment as an IPA's folded generator stays with V5's slot and the decompression step's output slot. The profile is unaudited and behind the `unstable-aggregator` feature. Compression-format optimization is separate work.
+The `Aggregator` profile declares its registry queries as a source mesh of nine introduced restrictions and seven helpers per field (`decompress::online`), and its chunk circuits are the batch's consumers. The nested IPA uses V5's slot for its folded generator. The host IPA uses a slot in the native batch. The profile is unaudited. Compression-format optimization is separate work.

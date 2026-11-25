@@ -63,12 +63,13 @@ pub struct ApplicationBuilder<
     /// which finalization installs instead of building one. Boxed to keep
     /// the builder small across by-value `register` calls.
     pub(crate) bootstrap: Option<Box<Proof<C, R>>>,
-    /// The header type each registered step outputs, by suffix, and
-    /// whether its proofs carry an online polynomial, in a slot its
-    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) does not leave to
-    /// padding: what a profile's context is checked against (see
+    /// The header type each registered step outputs, by suffix: what a
+    /// profile's context is checked against (see
     /// [`Profile::check_context`]).
-    pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
+    pub(crate) output_headers: BTreeMap<crate::header::Suffix, TypeId>,
+    /// The suffix of the first header a registered step outputs or reads
+    /// that names an online polynomial, if any.
+    polynomial_header: Option<crate::header::Suffix>,
     /// Whether [`Self::finalize`] prepares tables of the commitment
     /// generators (see [`Self::with_commitment_tables`]).
     commitment_tables: bool,
@@ -99,6 +100,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: BTreeMap::new(),
             bootstrap: None,
             output_headers: BTreeMap::new(),
+            polynomial_header: None,
             commitment_tables: false,
             _marker: PhantomData,
         }
@@ -223,6 +225,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: self.header_map,
             bootstrap: self.bootstrap,
             output_headers: self.output_headers,
+            polynomial_header: self.polynomial_header,
             commitment_tables: self.commitment_tables,
             _marker: PhantomData,
         }
@@ -272,12 +275,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
+        self.note_online_polynomials::<S::Output>();
+        self.note_online_polynomials::<S::Left>();
+        self.note_online_polynomials::<S::Right>();
         self.output_headers.insert(
             <S::Output as Header<C::CircuitField>>::SUFFIX,
-            (
-                TypeId::of::<S::Output>(),
-                !<<S::Output as Header<C::CircuitField>>::OnlinePolyCommit as crate::header::OnlinePolyCommit>::is_padding(),
-            ),
+            TypeId::of::<S::Output>(),
         );
 
         let stage_size = self.stage_size.max(S::NUM_STAGED);
@@ -381,6 +384,23 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 ));
             }
             self.stage_size = stage_size;
+        }
+        // A decompression step that does not carry the source proof's online
+        // polynomials leaves both output slots as padding (see
+        // `Extension::statement`). It accepts any application suffix, so
+        // every header the application registers must leave its slots to
+        // padding.
+        if decompresses
+            && !crate::profile::decompresses_online_polynomials::<C::Profile>()
+            && let Some(suffix) = self.polynomial_header
+        {
+            return Err(Error::Initialization(
+                alloc::format!(
+                    "the header at suffix {} names an online polynomial, but the profile's decompression step leaves both output slots as padding",
+                    suffix.get()
+                )
+                .into(),
+            ));
         }
         C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
         C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
@@ -486,7 +506,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // proof's statement (see `step::internal::decompress`).
         if decompresses {
             self = self.register_internal_step(
-                crate::step::internal::decompress::Decompress::<()>::new(),
+                crate::step::internal::decompress::Decompress::<()>::new(
+                    crate::profile::decompresses_online_polynomials::<C::Profile>(),
+                ),
             )?;
         }
 
@@ -537,7 +559,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_registry,
             params,
             num_application_steps: self.num_application_steps,
-            #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
@@ -635,6 +656,18 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
     }
 
+    /// Records the suffix of `H` if its
+    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) names an online
+    /// polynomial, for the check `finalize_with` makes of a profile whose
+    /// decompression step pads its output slots.
+    fn note_online_polynomials<H: Header<C::CircuitField>>(&mut self) {
+        if TypeId::of::<H::OnlinePolyCommit>()
+            != TypeId::of::<(crate::header::Padding, crate::header::Padding)>()
+        {
+            self.polynomial_header.get_or_insert(H::SUFFIX);
+        }
+    }
+
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
         if H::SUFFIX.get() < crate::header::NUM_INTERNAL_SUFFIXES as u64
             && TypeId::of::<H>() != TypeId::of::<()>()
@@ -677,10 +710,8 @@ pub struct Application<
         Option<crate::profile::online::SourceRegistry<'params, C::ScalarField>>,
     pub(crate) params: &'params C::Params,
     pub(crate) num_application_steps: usize,
-    /// The header type each registered step outputs, by suffix, and
-    /// whether its proofs carry an online polynomial.
-    #[cfg(feature = "unstable-aggregator")]
-    pub(crate) output_headers: BTreeMap<crate::header::Suffix, (TypeId, bool)>,
+    /// The header type each registered step outputs, by suffix.
+    pub(crate) output_headers: BTreeMap<crate::header::Suffix, TypeId>,
     /// The application stage's size, in values.
     pub(crate) stage_size: usize,
     /// The profile's prover context: what its prover holds across proofs
@@ -714,11 +745,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         &self.context
     }
 
-    /// The header type each registered step outputs, by suffix, and
-    /// whether its proofs carry an online polynomial: the headers the
-    /// application's statements carry.
-    #[cfg(feature = "unstable-aggregator")]
-    pub(crate) fn output_headers(&self) -> &BTreeMap<crate::header::Suffix, (TypeId, bool)> {
+    /// The header type each registered step outputs, by suffix: the
+    /// headers the application's statements carry.
+    pub(crate) fn output_headers(&self) -> &BTreeMap<crate::header::Suffix, TypeId> {
         &self.output_headers
     }
 
@@ -798,13 +827,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// can compare them with commitments to candidate polynomials or from
     /// the original proof.
     ///
-    /// The application decides whether to publish those coefficients or
-    /// commitments. To publish with padding, [`fuse`](Self::fuse) a final
-    /// application step whose output header declares `(Padding, Padding)`
-    /// before rerandomizing. For compressed publication, compress the
-    /// resulting rerandomized proof. See [Publishing with Padding][padding].
+    /// See [Publishing Proofs][publication].
     ///
-    /// [padding]: https://tachyon.z.cash/ragu/guide/writing_circuits.html#publishing-with-padding
+    /// [publication]: https://tachyon.z.cash/ragu/guide/writing_circuits.html#publishing-proofs
     ///
     /// # Hiding scope
     ///

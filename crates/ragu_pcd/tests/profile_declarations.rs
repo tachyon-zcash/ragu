@@ -213,6 +213,7 @@ fn consistency_binds_every_staged_circuit() {
             circuit,
             stages,
             online: vec![],
+            native_online: Vec::new(),
             openings: Vec::new(),
         }),
     };
@@ -313,6 +314,7 @@ fn malformed_declarations_are_refused() {
                     circuit: 0,
                     stages: vec![0, 1],
                     online: vec![],
+                    native_online: Vec::new(),
                     openings: Vec::new(),
                 }),
             }
@@ -354,6 +356,7 @@ fn malformed_declarations_are_refused() {
                     circuit: 0,
                     stages: vec![1],
                     online: vec![],
+                    native_online: Vec::new(),
                     openings: Vec::new(),
                 }),
             }
@@ -638,7 +641,7 @@ fn aggregator_declares_the_decompression() {
             native_circuits + 2 + 6 + batch,
             19 + 1 + nested_stages + batch,
             1 + 20,
-            20,
+            21,
             per_step,
             per_step,
         );

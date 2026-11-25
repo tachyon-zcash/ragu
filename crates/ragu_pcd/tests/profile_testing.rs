@@ -430,8 +430,8 @@ impl<F: Field> StatementContext<F> {
     }
 
     /// Replaces, from now on, each value of the step binding the
-    /// statement circuit exposes that `binding` sets: the flag, the
-    /// opening's point and value, and the digest, in that order. A test
+    /// statement circuit exposes that `binding` sets: the flag and the
+    /// digest, in that order. A test
     /// exposes a binding its step did not make this way; all `None`
     /// restores the step's own.
     pub(crate) fn expose_binding(&self, binding: [Option<F>; STEP_BINDING]) {
@@ -439,17 +439,15 @@ impl<F: Field> StatementContext<F> {
     }
 
     /// What the statement circuit exposes: the header set, then the
-    /// step binding of a decompression that opened its first output
-    /// slot at `opening` and staged `digest`; or the unit header
+    /// step binding of a decompression that staged `digest`; or the unit header
     /// padded to `HEADER_SIZE`, then the binding of any other step,
     /// all zero.
     fn statement<C: Cycle<CircuitField = F>, const HEADER_SIZE: usize>(
         &self,
-        opening: [F; 2],
         digest: F,
     ) -> Result<Vec<F>> {
         let (mut header, binding) = match self.header.lock().unwrap().clone() {
-            Some(header) => (header, [F::ONE, opening[0], opening[1], digest]),
+            Some(header) => (header, [F::ONE, digest]),
             None => (
                 ky::output_header::<C, (), HEADER_SIZE>(())?,
                 [F::ZERO; STEP_BINDING],
@@ -522,14 +520,8 @@ impl Profile for Decompressing {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        use crate::{
-            header::NUM_ONLINE_FP_POLYS,
-            step::internal::decompress::{DIGEST_SLOT, S_SLOT},
-        };
-        let header = context.statement::<Base, HEADER_SIZE>(
-            online_openings[2 * NUM_ONLINE_FP_POLYS + S_SLOT],
-            online_openings[DIGEST_SLOT][0],
-        )?;
+        use crate::step::internal::decompress::DIGEST_SLOT;
+        let header = context.statement::<Base, HEADER_SIZE>(online_openings[DIGEST_SLOT][0])?;
         let (trace, ()) = StatementCircuit::<Base::CircuitField, HEADER_SIZE>::new()
             .trace(header.as_slice())?
             .into_parts();
@@ -832,6 +824,7 @@ impl Profile for Crossing {
                 circuit: 0,
                 stages: vec![0],
                 online: vec![],
+                native_online: Vec::new(),
                 openings: Vec::new(),
             }),
         }
@@ -983,6 +976,7 @@ impl Profile for CrossingBack {
                 circuit: 0,
                 stages: vec![0],
                 online: vec![],
+                native_online: Vec::new(),
                 openings: Vec::new(),
             }),
         }

@@ -210,13 +210,10 @@ let fresh_pcd = app.rerandomize(pcd, &mut rng)?;
 ```
 
 The full output exposes the input's online polynomial coefficients, and
-compression exposes their deterministic commitments. The application chooses
-whether to publish that state or [publish with padding][padding]. For the
-standard profile, the goal is to hide which valid input was used given the
-same encoded header, online polynomials and shared bootstrap. Joint hiding
-of the output fields remains unproved.
-
-[padding]: ../guide/writing_circuits.md#publishing-with-padding
+compression exposes their deterministic commitments. For the standard
+profile, the goal is to hide which valid input was used given the same
+encoded header, online polynomials and shared bootstrap. Joint hiding of
+the output fields remains unproved.
 
 Internally, rerandomization fuses the input twice through a dedicated
 rerandomization step, each time with the application's bootstrap proof as the
@@ -277,8 +274,7 @@ reasons. For instance, in shielded transaction aggregation,
 broadcasting transaction data in compressed mode optimizes for
 bandwidth. A [compressed proof](../protocol/recursion/compression.md) is
 terminal for the application that made it: it can be verified but not folded
-further. An application of the aggregator profile, which is unaudited and
-behind the `unstable-aggregator` feature, can
+further. An application of the unaudited aggregator profile can
 [decompress](../protocol/recursion/decompression.md) a compressed proof of a
 standard application into a proof of its own, and fold that.
 

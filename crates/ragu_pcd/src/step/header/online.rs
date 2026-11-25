@@ -33,19 +33,17 @@ use core::any::TypeId;
 /// circuit; a header whose convention makes a slot padding needs nothing
 /// from the steps that output it.
 ///
-/// The polynomial commitments are deterministic for their coefficients;
-/// opening points and values are public. Values intended to stay out of
-/// the public instance belong in the application stage, staged by
-/// [`Step::prepare`](crate::step::Step::prepare); public openings can
-/// still reveal those values.
+/// The slots hold public values. Ragu does not hide them: their
+/// commitments are deterministic, rerandomization leaves them unchanged,
+/// and compression and decompression carry them as they are. Do not put
+/// a private polynomial in a slot. Private values belong in the
+/// application stage, staged by [`Step::prepare`](crate::step::Step::prepare);
+/// public openings can still reveal those values.
 ///
-/// A compressed proof's statement carries only the header's fields, so a
-/// header type registered at a suffix a decompressed statement can land on
-/// must treat its slots as padding: the decompression step holds them to
-/// the constant one, and a step that opens them expecting the polynomial
-/// the fields describe checks the wrong polynomial. Binding those slots to
-/// the compressed proof's own online commitments would be a change to the
-/// statement extension's contract.
+/// Aggregator decompression binds the output commitments to the wallet
+/// proof's commitments. Supply the matching coefficients to
+/// [`Application::decompress_with_polynomials`](crate::Application::decompress_with_polynomials)
+/// so later steps can open the slots.
 ///
 /// [`Header`]: super::Header
 pub const NUM_ONLINE_FP_POLYS: usize = 2;
@@ -183,11 +181,6 @@ pub trait OnlinePolyCommit: sealed::Sealed + Send + Sync + 'static {
     /// Whether every non-padding kind occurs at most once.
     #[doc(hidden)]
     fn has_unique_kinds() -> bool;
-
-    /// Whether every slot is [`Padding`]: the header's proofs carry no
-    /// online polynomial.
-    #[doc(hidden)]
-    fn is_padding() -> bool;
 }
 
 // The tuple impls below and the `Has` impls give one entry per slot. They
@@ -200,10 +193,6 @@ const _: () = assert!(
 impl<A: OnlinePolySlot, B: OnlinePolySlot> OnlinePolyCommit for (A, B) {
     fn has_unique_kinds() -> bool {
         TypeId::of::<A>() != TypeId::of::<B>() || TypeId::of::<A>() == TypeId::of::<Padding>()
-    }
-
-    fn is_padding() -> bool {
-        TypeId::of::<A>() == TypeId::of::<Padding>() && TypeId::of::<B>() == TypeId::of::<Padding>()
     }
 }
 
@@ -281,13 +270,5 @@ mod tests {
         assert!(<(First, Second) as OnlinePolyCommit>::has_unique_kinds());
         assert!(<(Padding, Padding) as OnlinePolyCommit>::has_unique_kinds());
         assert!(!<(First, First) as OnlinePolyCommit>::has_unique_kinds());
-    }
-
-    #[test]
-    fn only_a_list_of_padding_is_padding() {
-        assert!(<(Padding, Padding) as OnlinePolyCommit>::is_padding());
-        assert!(!<(First, Padding) as OnlinePolyCommit>::is_padding());
-        assert!(!<(Padding, Second) as OnlinePolyCommit>::is_padding());
-        assert!(!<(First, Second) as OnlinePolyCommit>::is_padding());
     }
 }

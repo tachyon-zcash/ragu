@@ -46,8 +46,8 @@ The verifier's group arithmetic is dominated by one multiscalar multiplication
 of size $4n$ on each curve. Like the decider, it also evaluates the registry
 polynomials at the points the claims refer to. In the standard profile a
 compressed proof is terminal: it can be verified, and no step accepts it as a
-child. An application of the aggregator profile, which is unaudited and behind
-an unstable feature, can continue from one. Its
+child. An application of the unaudited aggregator profile can continue from
+one. Its
 [decompression](../recursion/decompression.md) checks this verifier's equations
 in circuits, with a compressed proof of a standard application as the witness,
 and produces a proof that a fuse accepts as a child.

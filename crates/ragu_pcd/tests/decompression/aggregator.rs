@@ -23,7 +23,7 @@ use ragu_core::{
     maybe::Maybe,
     pasta::{Fp, Fq, Pasta},
 };
-use ragu_primitives::{Element, allocator::Allocator};
+use ragu_primitives::{Element, GadgetExt, allocator::Allocator};
 use rand::{SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
@@ -44,8 +44,12 @@ use crate::{
 
 type P = Aggregator<HEADER_SIZE>;
 
-/// The pinned layouts are the schedules' at the aggregator rank, for the
-/// test header size and for the internal tests', and lay out as the
+fn padding() -> [Vec<Fp>; 2] {
+    core::array::from_fn(|_| alloc::vec![Fp::ONE])
+}
+
+/// The pinned layouts match the schedules at the aggregator rank at sampled
+/// header widths and every width-band boundary, and lay out as the
 /// module says: transcript chunks first and digits chunks last, over six
 /// native stages and, on the nested side, a stage per run, the trailing
 /// stage and the lifts, work and digits stages, with the statement and
@@ -54,24 +58,36 @@ type P = Aggregator<HEADER_SIZE>;
 fn pinned_layout_is_the_schedules() {
     /// The internal tests' header size.
     const CENSUS: usize = crate::internal::tests::HEADER_SIZE;
-    std::println!(
-        "native counts at census header: {:?}",
-        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap()
-    );
-    assert_eq!(
-        P::native_circuits(HEADER_SIZE),
-        native_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
-        "the native pins for the test header size"
-    );
+    fn check_native_counts<const H: usize>() {
+        assert_eq!(
+            Aggregator::<H>::native_circuits(H),
+            native_counts::<Pasta, WalletRank, AggregatorRank, H>().unwrap(),
+            "native circuit counts at header size {H}"
+        );
+    }
+    check_native_counts::<HEADER_SIZE>();
+    check_native_counts::<CENSUS>();
+    check_native_counts::<195>();
+    // Every header size compiles its own copy of the schedule, which the
+    // CI runners cannot afford in this test target, so the nightly tests
+    // check the rest of the range and the boundaries between transcript
+    // counts.
+    #[cfg(ragu_pcd_nightly_tests)]
+    {
+        check_native_counts::<1>();
+        check_native_counts::<2>();
+        check_native_counts::<3>();
+        check_native_counts::<9>();
+        check_native_counts::<57>();
+        check_native_counts::<58>();
+        check_native_counts::<100>();
+        check_native_counts::<153>();
+        check_native_counts::<154>();
+    }
     assert_eq!(
         P::NESTED_CIRCUITS,
         nested_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
         "the nested pins"
-    );
-    assert_eq!(
-        Aggregator::<CENSUS>::native_circuits(CENSUS),
-        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap(),
-        "the native pins for the internal tests' header size"
     );
     assert_eq!(
         P::native_extension(),
@@ -161,15 +177,18 @@ fn pinned_layout_is_the_schedules() {
 }
 
 /// Every chunk and mask of both sides registers through the hooks at
-/// the aggregator rank, one past the last fails, and the wallet rank
-/// is refused.
+/// the aggregator rank at the maximum profile width. One past the last
+/// fails, and the wallet rank is refused.
 #[test]
 fn hooks_register_every_chunk_and_stage() {
+    const H: usize = 195;
+    type Wide = Aggregator<H>;
+
     let params = crate::pasta::baked_aggregator();
-    let native = P::native_extension();
+    let native = Wide::native_extension();
     let mut registry = RegistryBuilder::<Fp, AggregatorRank>::new();
     for circuit in 0..native.circuits.len() {
-        registry = P::register_native_circuit::<Pasta, AggregatorRank, HEADER_SIZE>(
+        registry = Wide::register_native_circuit::<Pasta, AggregatorRank, H>(
             circuit,
             CircuitSlot::new(registry),
             params,
@@ -178,7 +197,7 @@ fn hooks_register_every_chunk_and_stage() {
         .into_registry();
     }
     for mask in 0..native.masks() {
-        registry = P::register_native_mask::<Pasta, AggregatorRank, HEADER_SIZE>(
+        registry = Wide::register_native_mask::<Pasta, AggregatorRank, H>(
             mask,
             MaskSlot::new(registry),
             params,
@@ -188,7 +207,7 @@ fn hooks_register_every_chunk_and_stage() {
     }
     assert_eq!(registry.num_internal_circuits(), native.internal());
     assert!(matches!(
-        P::register_native_mask::<Pasta, AggregatorRank, HEADER_SIZE>(
+        Wide::register_native_mask::<Pasta, AggregatorRank, H>(
             native.masks(),
             MaskSlot::new(registry),
             params
@@ -196,7 +215,7 @@ fn hooks_register_every_chunk_and_stage() {
         Err(Error::Initialization(_))
     ));
     assert!(matches!(
-        P::register_native_circuit::<Pasta, TestR, HEADER_SIZE>(
+        Wide::register_native_circuit::<Pasta, TestR, H>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params
@@ -204,10 +223,10 @@ fn hooks_register_every_chunk_and_stage() {
         Err(Error::Initialization(_))
     ));
 
-    let nested = P::nested_extension();
+    let nested = Wide::nested_extension();
     let mut registry = RegistryBuilder::<Fq, AggregatorRank>::new();
     for circuit in 0..nested.circuits.len() {
-        registry = P::register_nested_circuit::<Pasta, AggregatorRank>(
+        registry = Wide::register_nested_circuit::<Pasta, AggregatorRank>(
             circuit,
             CircuitSlot::new(registry),
             params,
@@ -216,14 +235,17 @@ fn hooks_register_every_chunk_and_stage() {
         .into_registry();
     }
     for mask in 0..nested.masks() {
-        registry =
-            P::register_nested_mask::<Pasta, AggregatorRank>(mask, MaskSlot::new(registry), params)
-                .unwrap()
-                .into_registry();
+        registry = Wide::register_nested_mask::<Pasta, AggregatorRank>(
+            mask,
+            MaskSlot::new(registry),
+            params,
+        )
+        .unwrap()
+        .into_registry();
     }
     assert_eq!(registry.num_internal_circuits(), nested.internal());
     assert!(matches!(
-        P::register_nested_circuit::<Pasta, TestR>(
+        Wide::register_nested_circuit::<Pasta, TestR>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params
@@ -380,13 +402,16 @@ struct Carried;
 
 impl crate::header::OnlinePoly for Carried {}
 
-/// A header whose proofs carry a [`Carried`] polynomial in their first
-/// slot.
+#[derive(Clone, Copy)]
+struct CarriedSecond;
+impl crate::header::OnlinePoly for CarriedSecond {}
+
+/// A header with two application polynomials.
 struct Carrying;
 
 impl Header<Fp> for Carrying {
-    const SUFFIX: Suffix = Suffix::new(7);
-    type OnlinePolyCommit = (Carried, crate::header::Padding);
+    const SUFFIX: Suffix = Suffix::new(8);
+    type OnlinePolyCommit = (Carried, CarriedSecond);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -399,13 +424,25 @@ impl Header<Fp> for Carrying {
     }
 }
 
-/// A seed step outputting its witness as a [`Carrying`] header, its slot
-/// left at the constant one.
+/// A seed step with two constant application polynomials.
 struct CarryingLeaf;
 
 impl<C: Cycle<CircuitField = Fp>> Step<C> for CarryingLeaf {
     const INDEX: Index = Index::new(0);
-    type Witness<'source> = Fp;
+    type Witness<'source> = (Fp, [Fp; 2]);
+    const NUM_STAGED: usize = 2;
+
+    fn prepare(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: crate::step::HeaderInput<'_, Fp, ()>,
+        _: crate::step::HeaderInput<'_, Fp, ()>,
+    ) -> Result<crate::step::Prepared<Fp, Carrying>> {
+        Ok(crate::step::Prepared::new()
+            .poly(Carried, [witness.1[0]])
+            .poly(CarriedSecond, [witness.1[1]])
+            .stage(witness.1))
+    }
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
@@ -414,8 +451,8 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for CarryingLeaf {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
         &self,
         dr: &mut D,
-        _: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
-        witness: DriverValue<D, Fp>,
+        oracles: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
+        witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
     ) -> Result<(
@@ -430,8 +467,14 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for CarryingLeaf {
         let allocator = &mut ragu_primitives::allocator::Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
-        let output = Encoded::new(dr, allocator, witness.clone())?;
-        Ok(((left, right, output), witness, D::unit()))
+        let zeta = oracles.zeta().clone();
+        let first = oracles.output(Carried).open(dr, &zeta)?;
+        let second = oracles.output(CarriedSecond).open(dr, &zeta)?;
+        first.enforce_equal(dr, &oracles.staged()[0])?;
+        second.enforce_equal(dr, &oracles.staged()[1])?;
+        let data = witness.map(|(data, _)| data);
+        let output = Encoded::new(dr, allocator, data.clone())?;
+        Ok(((left, right, output), data, D::unit()))
     }
 }
 
@@ -476,9 +519,8 @@ fn every_consumer(
 /// carrying the wallet proof's header and data, which verifies; the same
 /// decompression under another header fails, since the statement circuit's
 /// claim holds the decompression step's output header to the decompressed
-/// statement's, and so does one whose first output slot holds a polynomial
-/// other than the host IPA's $s(X)$, since the step binding holds that
-/// IPA's $G'$ to the slot.
+/// statement's. A decompression with a substituted output polynomial
+/// fails the nested binding to the wallet proof's commitments.
 #[test]
 fn decompresses_a_wallet_proof() {
     let pasta = crate::pasta::baked_aggregator();
@@ -515,12 +557,9 @@ fn decompresses_a_wallet_proof() {
         ),
         "another exported commitment fails"
     );
-    // The step folded its own application claim, so it also exposes what
-    // the statement claim's step binding reads of its online openings:
-    // the point and the value at which it opened its first output slot
-    // and the digest it staged. Its `hashes_1` claim and the statement
-    // claim take the proof's copy, so another value fails one of them.
-    assert_eq!(proof.step_binding.len(), 3);
+    // The left opening's point exposes the staged digest. The
+    // `hashes_1` and statement claims bind it to the step.
+    assert_eq!(proof.step_binding.len(), 1);
     for i in 0..proof.step_binding.len() {
         let mut other = proof.clone();
         other.step_binding[i] += Fp::ONE;
@@ -546,12 +585,8 @@ fn decompresses_a_wallet_proof() {
     let (relabelled, ()) = app
         .fuse_with_source(
             &mut rng,
-            Decompress::<Value>::new(),
-            (
-                Fp::from(43),
-                decompressed.host_rounds(),
-                decompressed.transcript_digest(),
-            ),
+            Decompress::<Value>::new(true),
+            (Fp::from(43), padding(), decompressed.transcript_digest()),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&decompressed),
@@ -562,31 +597,30 @@ fn decompresses_a_wallet_proof() {
         "a relabelled decompression fails"
     );
 
-    // The step binding: the decompression step's first output slot holds
-    // s(X) over the host IPA's round challenges. A step that commits the
-    // polynomial of other challenges there has neither the opening the
-    // circuit-field side expects nor the commitment the scalar-field
-    // side's G' is, and its proof fails.
-    let decompressed = app.context().prepare(&compressed).unwrap();
-    let mut rounds = decompressed.host_rounds();
-    rounds[0] += Fp::ONE;
-    let (other_slot, ()) = app
-        .fuse_with_source(
+    // A prover who puts another polynomial in either output slot has
+    // internally consistent PCS openings, but the commitment disagrees
+    // with the one the chunks verified. Check all consuming paths.
+    for slot in 0..2 {
+        let mut wrong = padding();
+        wrong[slot] = alloc::vec![Fp::from(2)];
+        let (other_slot, ()) = app
+            .fuse_with_source(
+                &mut rng,
+                Decompress::<Value>::new(true),
+                (Fp::from(42), wrong, decompressed.transcript_digest()),
+                app.bootstrap_pcd(),
+                app.bootstrap_pcd(),
+                Some(&decompressed),
+            )
+            .unwrap();
+        every_consumer(
+            &app,
+            other_slot,
+            false,
             &mut rng,
-            Decompress::<Value>::new(),
-            (Fp::from(42), rounds, decompressed.transcript_digest()),
-            app.bootstrap_pcd(),
-            app.bootstrap_pcd(),
-            Some(&decompressed),
-        )
-        .unwrap();
-    every_consumer(
-        &app,
-        other_slot,
-        false,
-        &mut rng,
-        "a decompression whose slot holds another polynomial",
-    );
+            "another output polynomial",
+        );
+    }
 
     // The transcript digest: the step stages the compression transcript's
     // last squeeze before its challenge, so both IPAs' round challenges,
@@ -597,10 +631,10 @@ fn decompresses_a_wallet_proof() {
     let (other_digest, ()) = app
         .fuse_with_source(
             &mut rng,
-            Decompress::<Value>::new(),
+            Decompress::<Value>::new(true),
             (
                 Fp::from(42),
-                decompressed.host_rounds(),
+                padding(),
                 decompressed.transcript_digest() + Fp::ONE,
             ),
             app.bootstrap_pcd(),
@@ -625,12 +659,8 @@ fn decompresses_a_wallet_proof() {
     let (other_fq, ()) = crate::decompress::support::with_other_fq_polynomial(|| {
         app.fuse_with_source(
             &mut rng,
-            Decompress::<Value>::new(),
-            (
-                Fp::from(42),
-                decompressed.host_rounds(),
-                decompressed.transcript_digest(),
-            ),
+            Decompress::<Value>::new(true),
+            (Fp::from(42), padding(), decompressed.transcript_digest()),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&decompressed),
@@ -766,12 +796,8 @@ fn a_decompression_cannot_output_the_dummy_suffix() {
     let decompressed = app.context().prepare(&compressed).unwrap();
     match app.fuse_with_source(
         &mut rng,
-        Decompress::<Dummy>::new(),
-        (
-            (),
-            decompressed.host_rounds(),
-            decompressed.transcript_digest(),
-        ),
+        Decompress::<Dummy>::new(true),
+        ((), padding(), decompressed.transcript_digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
         Some(&decompressed),
@@ -903,12 +929,8 @@ fn another_applications_registry_is_rejected_in_either_stage() {
     let (forged, ()) = ours
         .fuse_with_source(
             &mut rng,
-            Decompress::<Value>::new(),
-            (
-                Fp::from(42),
-                prepared.host_rounds(),
-                prepared.transcript_digest(),
-            ),
+            Decompress::<Value>::new(true),
+            (Fp::from(42), padding(), prepared.transcript_digest()),
             ours.bootstrap_pcd(),
             ours.bootstrap_pcd(),
             Some(&prepared),
@@ -937,31 +959,192 @@ fn another_applications_registry_is_rejected_in_either_stage() {
     );
 }
 
-/// A decompressed proof's slots hold the host IPA's $s(X)$ and padding,
-/// not the polynomials the wallet's proof carried, so the aggregator
-/// refuses a wallet application whose steps output a header naming a
-/// polynomial: a step of its own could open the slot as that polynomial.
+/// A wallet step that drops the polynomial slots while preserving the data.
+struct PadCarrying;
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for PadCarrying {
+    const INDEX: Index = Index::new(1);
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = Carrying;
+    type Right = ();
+    type Output = Value;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
+        &self,
+        dr: &mut D,
+        _: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
+        _: DriverValue<D, ()>,
+        left: DriverValue<D, Fp>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Carrying, H>,
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, Value, H>,
+        ),
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
+        let value = Element::alloc(dr, allocator, left.clone())?;
+        Ok((
+            (
+                Encoded::from_gadget(value.clone()),
+                Encoded::new(dr, allocator, right)?,
+                Encoded::from_gadget(value),
+            ),
+            left,
+            D::unit(),
+        ))
+    }
+}
+
+/// An aggregator must register every header its wallet outputs, padding
+/// or not. Registering both, it decompresses either output.
 #[test]
-fn a_wallet_whose_headers_name_a_polynomial_is_refused() {
+fn decompression_accepts_a_padded_output_from_a_wallet_with_online_polynomials() {
     let pasta = crate::pasta::baked_aggregator();
     let mut rng = StdRng::seed_from_u64(42);
-    let wallet = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-        .register(CarryingLeaf)
+    let wallet = || {
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+            .register(CarryingLeaf)
+            .unwrap()
+            .register(PadCarrying)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap()
+    };
+
+    // The wallet outputs `Carrying` and `Value`; an aggregator that
+    // registers `Value` alone is refused.
+    let missing = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
         .unwrap()
-        .finalize(pasta)
-        .unwrap();
-    let refused = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
-        .register(CarryingLeaf)
-        .unwrap()
-        .finalize_with(pasta, Decompression::new(wallet, &mut rng).unwrap());
+        .finalize_with(pasta, Decompression::new(wallet(), &mut rng).unwrap());
     assert!(
-        matches!(
-            refused,
-            Err(Error::Initialization(ref reason))
-                if reason.to_string().contains("online polynomial")
-        ),
-        "a wallet header naming a polynomial"
+        matches!(missing, Err(Error::Initialization(ref reason)) if reason.to_string().contains("registers no header")),
+        "an unregistered header that carries online polynomials"
     );
+
+    let wallet = wallet();
+    let (carrying, _) = wallet
+        .seed(&mut rng, CarryingLeaf, (Fp::from(42), [Fp::ONE; 2]))
+        .unwrap();
+    let carrying_proof = wallet.compress(&carrying, &mut rng).unwrap();
+    let (padded, _) = wallet
+        .fuse(
+            &mut rng,
+            PadCarrying,
+            (),
+            carrying,
+            wallet.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    let padded_proof = wallet.compress(&padded, &mut rng).unwrap();
+    assert!(wallet.verify_compressed(&carrying_proof).unwrap());
+    assert!(wallet.verify_compressed(&padded_proof).unwrap());
+    // The carrying header declares a polynomial even when its commitment
+    // happens to equal the padding commitment.
+    assert_eq!(
+        carrying_proof.online_commitments(),
+        padded_proof.online_commitments(),
+    );
+
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(CarryingLeaf)
+        .unwrap()
+        .register(PadCarrying)
+        .unwrap()
+        .finalize_with(pasta, Decompression::new(wallet, &mut rng).unwrap())
+        .unwrap();
+    let carried = app
+        .decompress_with_polynomials(&mut rng, &carrying_proof, padding())
+        .unwrap();
+    assert!(app.verify_uncompressed(&carried, &mut rng).unwrap());
+
+    let decompressed = app.decompress(&mut rng, &padded_proof).unwrap();
+    assert_eq!(*decompressed.data(), Fp::from(42));
+    let parent = app.rerandomize(decompressed, &mut rng).unwrap();
+    let compressed = app.compress(&parent, &mut rng).unwrap();
+    assert!(app.verify_compressed(&compressed).unwrap());
+}
+
+/// A profile whose decompression step pads its output slots refuses every
+/// header that names an online polynomial, output or read: a decompressed
+/// statement can land at any application suffix.
+#[test]
+fn a_padding_decompression_refuses_headers_with_online_polynomials() {
+    use crate::profile::testing::{Decompressing, StatementContext};
+    type Padded = Profiled<Pasta, Decompressing>;
+    let params = crate::pasta::baked_aggregator();
+    let refused = |result: Result<Application<'_, Padded, AggregatorRank, HEADER_SIZE>>| matches!(result, Err(Error::Initialization(ref reason)) if reason.to_string().contains("names an online polynomial"));
+
+    let outputs = ApplicationBuilder::<Padded, AggregatorRank, HEADER_SIZE>::new()
+        .register(CarryingLeaf)
+        .unwrap()
+        .finalize_with(params, StatementContext::default());
+    assert!(refused(outputs), "a step that outputs `Carrying`");
+
+    let reads = ApplicationBuilder::<Padded, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .register(PadCarrying)
+        .unwrap()
+        .finalize_with(params, StatementContext::default());
+    assert!(refused(reads), "a step that reads `Carrying`");
+}
+
+#[test]
+fn decompression_preserves_both_wallet_commitments_for_the_next_fuse() {
+    let params = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(103);
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
+        .register(CarryingLeaf)
+        .unwrap()
+        .finalize(params)
+        .unwrap();
+    let (leaf, ()) = wallet
+        .seed(
+            &mut rng,
+            CarryingLeaf,
+            (Fp::from(42), [Fp::from(5), Fp::from(7)]),
+        )
+        .unwrap();
+    let polynomials = leaf.polynomials();
+    let compressed = wallet.compress(&leaf, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(CarryingLeaf)
+        .unwrap()
+        .finalize_with(params, Decompression::new(wallet, &mut rng).unwrap())
+        .unwrap();
+    // Coefficients that do not commit to the wallet proof's commitments
+    // are refused before any proving.
+    for slot in 0..polynomials.len() {
+        let mut wrong = polynomials.clone();
+        wrong[slot][0] += Fp::ONE;
+        assert!(
+            matches!(
+                app.decompress_with_polynomials(&mut rng, &compressed, wrong),
+                Err(Error::InvalidWitness(ref reason))
+                    if reason.to_string().contains("online commitments")
+            ),
+            "other coefficients in slot {slot}"
+        );
+    }
+    let node = app
+        .decompress_with_polynomials(&mut rng, &compressed, polynomials.clone())
+        .unwrap();
+    assert_eq!(node.data(), leaf.data());
+    assert_eq!(node.commitments(), compressed.online_commitments());
+    assert_eq!(node.polynomials(), polynomials);
+    assert!(app.verify_uncompressed(&node, &mut rng).unwrap());
+
+    // Rerandomize opens both child slots and copies them through the fuses.
+    let parent = app.rerandomize(node, &mut rng).unwrap();
+    let result = app.compress(&parent, &mut rng).unwrap();
+    assert_eq!(result.online_commitments(), compressed.online_commitments());
+    assert!(app.verify_compressed(&result).unwrap());
 }
 
 /// Decompressed wallet proofs recurse: two fuse under a step of the
@@ -1032,8 +1215,8 @@ fn sides_from_different_proofs_are_rejected() {
     let (node, ()) = app
         .fuse_with_source(
             &mut rng,
-            Decompress::<Value>::new(),
-            (Fp::from(42), mixed.host_rounds(), mixed.transcript_digest()),
+            Decompress::<Value>::new(true),
+            (Fp::from(42), padding(), mixed.transcript_digest()),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&mixed),

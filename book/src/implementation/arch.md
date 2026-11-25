@@ -154,6 +154,6 @@ APIs that represent, compute, or manipulate them.
 | Seed (first step) | `Application::seed()` | `ragu_pcd` |
 | Fuse (accumulate) | `Application::fuse()` | `ragu_pcd` |
 | [Compression](../protocol/recursion/compression.md) (terminal proof) | `Application::compress()`, `Application::verify_compressed()`, `CompressedProof<C>` | `ragu_pcd` |
-| [Decompression](../protocol/recursion/decompression.md) (a compressed proof continued by a second application) | `profile::Aggregator`, `profile::Decompression`, `Application::decompress()`, behind the `unstable-aggregator` feature | `ragu_pcd` |
+| [Decompression](../protocol/recursion/decompression.md) (a compressed proof continued by a second application) | `profile::Aggregator`, `profile::Decompression`, `Application::decompress()`, `Application::decompress_with_polynomials()` | `ragu_pcd` |
 
 [Pasta curve cycle]: https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/

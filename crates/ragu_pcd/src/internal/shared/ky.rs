@@ -208,6 +208,7 @@ pub fn native_bound<P: Profile, T>(
 pub fn nested_bound<P: Profile, T>(
     commitment: impl Fn(native::RxIndex) -> T,
     online: impl Fn(usize) -> T,
+    native_online: impl Fn(usize) -> T,
 ) -> Vec<T> {
     let binding = crate::profile::nested_extension::<P>().binding;
     let mut points = bound(binding.as_ref(), |j| {
@@ -215,6 +216,12 @@ pub fn nested_bound<P: Profile, T>(
     });
     if let Some(binding) = &binding {
         points.extend(binding.online.iter().map(|&slot| online(slot as usize)));
+        points.extend(
+            binding
+                .native_online
+                .iter()
+                .map(|&slot| native_online(slot as usize)),
+        );
     }
     points
 }

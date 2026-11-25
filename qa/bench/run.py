@@ -30,7 +30,7 @@ import tomllib
 
 SCHEMA = 1
 BENCH = Path("crates/ragu_pcd/benches/workflow.rs")
-FEATURES = ["std", "test-utils", "baked-aggregator", "unstable-aggregator"]
+FEATURES = ["std", "test-utils", "baked-aggregator"]
 TIMINGS = {
     "wallet": {"finalize": 1, "seed": 2, "verify_uncompressed": 2,
                "compress": 2, "verify_compressed": 2, "fuse": 1},

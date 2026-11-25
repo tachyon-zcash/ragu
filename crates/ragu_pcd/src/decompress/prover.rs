@@ -71,14 +71,14 @@ use crate::{
         },
         transcript as compression_transcript,
     },
-    header::{Header, NUM_ONLINE_FP_POLYS},
+    header::{Header, NUM_ONLINE_FP_POLYS, Padding},
     internal::{ky, native, nested},
     ipa::{IpaCycle, IpaTranscript, MSM, Params},
     profile::{
         Aggregator, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext, Standard,
     },
     proof::bridge_alpha_power,
-    step::internal::decompress::{DIGEST_SLOT, Decompress, S_SLOT},
+    step::internal::decompress::{DIGEST_SLOT, Decompress},
 };
 
 /// A compressed proof prepared for decompression: both sides' stages
@@ -150,15 +150,29 @@ where
     /// Prepares the canonical decompression of `wallet`'s proofs: its
     /// bootstrap proof, compressed and run through both sides' chunks.
     ///
-    /// `wallet` must be the network's wallet application, built from the
-    /// same steps as every wallet's and finalized over the aggregator's own
-    /// parameters, whose tables reach rank `R`, such as
-    /// `baked_aggregator()`: their prefix is the Standard tables, so its
-    /// proofs are those of a wallet over `baked()`. `finalize_with` holds
-    /// the aggregator's parameters and header types to its and refuses
-    /// source registries other than the wallet's. The online meshes hold
-    /// the decompression's registry evaluations to those registries. The
-    /// caller must still select the network's intended wallet application.
+    /// The wallet and aggregator have separate registries. The aggregator
+    /// registers every wallet application step, next to any steps of its
+    /// own. Registration is manual: a finalized `Application` does not keep
+    /// its steps, so the application registers the wallet's steps with both
+    /// builders. `finalize_with` checks headers, not steps: it refuses an
+    /// aggregator that does not register the wallet's header type at every
+    /// suffix the wallet's steps output, so a missing wallet step whose
+    /// output header another registered step also outputs is not caught.
+    /// Step indices are local to each application.
+    /// Pass the network's wallet application as `wallet`, with the native
+    /// and nested registries used to produce incoming wallet proofs. Ragu
+    /// registers the internal `Decompress` step and its circuits in the
+    /// aggregator. The [`Aggregator`] profile verifies rank-13 wallet
+    /// proofs in rank-15 circuits and produces a proof under the
+    /// aggregator's registries.
+    ///
+    /// Finalize the wallet over the aggregator's parameters, whose tables
+    /// reach rank `R`. For example, the prefix of `baked_aggregator()` is
+    /// the Standard table used by `baked()`. At `finalize_with`, the
+    /// aggregator must share the wallet's parameters and register the
+    /// wallet's own header type at every suffix the wallet's steps output,
+    /// whether or not the header carries online polynomials. The online
+    /// meshes bind decompression to the wallet's registry evaluations.
     ///
     /// # Errors
     ///
@@ -215,6 +229,16 @@ where
             B,
             H,
         >(&self.wallet, pcd)?))
+    }
+
+    /// The host IPA's challenge polynomial occupies a native batch slot.
+    pub(super) fn host_ipa_polynomial(
+        &self,
+        source: Option<&Decompressed<C>>,
+    ) -> sparse::Polynomial<C::CircuitField, R> {
+        source.map_or_else(crate::internal::native::online::padding, |source| {
+            sparse::Polynomial::from_coeffs(crate::ipa::challenge_polynomial(&source.host_rounds()))
+        })
     }
 
     /// The step's online Fq polynomial: the challenge polynomial $s(X)$
@@ -288,9 +312,8 @@ where
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
         let params = self.wallet.params;
-        // The decompression step sets the step binding: its flag, the
-        // opening of the slot it committed s(X) in and the digest it
-        // staged, the point at which it opened its digest slot.
+        // The decompression step sets the flag and exposes its staged
+        // digest as the point at which it opened the left slot.
         let stepped;
         let prepared = match source {
             Some(decompressed) => {
@@ -299,7 +322,6 @@ where
                     .native
                     .for_decompression::<WalletRank, HEADER_SIZE>(
                         params,
-                        online_openings[2 * NUM_ONLINE_FP_POLYS + S_SLOT],
                         online_openings[DIGEST_SLOT][0],
                     )?;
                 &stepped
@@ -368,7 +390,8 @@ where
     pub(crate) fn nested_rxs<P: Profile>(
         &self,
         source: Option<&Decompressed<C>>,
-        output_commitments: &[C::HostCurve; NUM_ONLINE_FP_POLYS],
+        output_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
+        host_ipa_commitment: C::HostCurve,
         online_fq_openings: &[C::ScalarField],
         registry: &Registry<'_, C::ScalarField, R>,
         (online_input, online_query): (Vec<C::ScalarField>, Vec<C::ScalarField>),
@@ -380,17 +403,16 @@ where
                 "the aggregator's step exports the opening of its one online Fq polynomial".into(),
             ));
         };
-        // Every step's binding circuit exposes the commitment of its own
-        // output slot, which the decompression step's holds the host
-        // IPA's G' to, and the opening of its online Fq polynomial, which
-        // every step's chunks hold to the nested IPA's s(X).
+        // The binding exposes the application's output commitments, the
+        // host IPA's batch commitment and the nested IPA's opening.
         let prepared: Prepared<C, Nested> = self
             .sides(source)
             .nested
             .for_step::<WalletRank, HEADER_SIZE>(
                 params,
                 source.is_some(),
-                output_commitments[S_SLOT],
+                output_commitments,
+                host_ipa_commitment,
                 [x, y],
             )?
             .with_online(online_input, online_query)?;
@@ -513,32 +535,77 @@ where
     R: Rank,
     B: SelectableBackend,
 {
-    /// Decompresses `pcd`, a compressed proof of the wallet application,
-    /// into a proof of this application carrying the same header and data:
-    /// the decompression step's, proved against the bootstrap proof with
-    /// the chunks run over `pcd`.
+    /// Decompresses a wallet proof whose output header declares two padding
+    /// slots. Use [`Self::decompress_with_polynomials`] for headers with
+    /// application polynomials.
     ///
     /// # Errors
     ///
-    /// Fails if the wallet application's verifier would reject `pcd`,
-    /// before any proving, or if proving fails.
+    /// Fails if the wallet application's verifier rejects `pcd` or proving
+    /// fails.
     ///
     /// # Soundness
     ///
-    /// See [`Aggregator`]'s *Soundness*: the profile is unaudited and
-    /// behind the `unstable-aggregator` feature.
-    pub fn decompress<RNG: CryptoRng, H: Header<C::CircuitField>>(
+    /// See the unaudited [`Aggregator`] profile's soundness documentation.
+    pub fn decompress<RNG: CryptoRng, H>(
         &self,
         rng: &mut RNG,
         pcd: &CompressedPcd<C, H>,
+    ) -> Result<Pcd<Profiled<C, Aggregator<HEADER_SIZE>>, R, H>>
+    where
+        H: Header<C::CircuitField, OnlinePolyCommit = (Padding, Padding)>,
+    {
+        self.decompress_with_polynomials(
+            rng,
+            pcd,
+            core::array::from_fn(|_| alloc::vec![C::CircuitField::ONE]),
+        )
+    }
+
+    /// Decompresses a wallet proof with the supplied online polynomial
+    /// coefficients, in slot order and ascending degree. For an
+    /// application-defined header, a registered aggregator step must
+    /// declare the wallet's output header type at the same suffix.
+    /// Supply the constant one for an unused slot.
+    ///
+    /// The decompression proof binds both output commitments to the ones
+    /// verified in the compressed wallet proof. Later fuses can open them
+    /// through the usual online oracle API. Coefficients that do not commit
+    /// to the wallet proof's online commitments are refused before proving.
+    ///
+    /// # Errors
+    /// Fails if the wallet's compressed verifier rejects the proof, the
+    /// coefficients do not commit to the wallet proof's online commitments,
+    /// or proving fails.
+    pub fn decompress_with_polynomials<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        rng: &mut RNG,
+        pcd: &CompressedPcd<C, H>,
+        polynomials: [Vec<C::CircuitField>; NUM_ONLINE_FP_POLYS],
     ) -> Result<Pcd<Profiled<C, Aggregator<HEADER_SIZE>>, R, H>> {
         let decompressed = self.context.prepare(pcd)?;
+        // The circuits hold the output commitments to the wallet proof's,
+        // which its verifier just accepted, so other coefficients would
+        // only yield a proof that no verifier accepts.
+        for (coefficients, expected) in polynomials.iter().zip(pcd.online_commitments()) {
+            if self.commit(coefficients)? != expected {
+                return Err(Error::InvalidWitness(
+                    "the coefficients do not commit to the wallet proof's online commitments"
+                        .into(),
+                ));
+            }
+        }
         let (pcd, ()) = self.fuse_with_source(
             rng,
-            Decompress::<H>::new(),
+            // The flag registration derives (see `finalize_with`), so this
+            // circuit is the registered one. `C` here is the wallet's cycle,
+            // whose profile is `Standard`: name the aggregator's.
+            Decompress::<H>::new(crate::profile::decompresses_online_polynomials::<
+                Aggregator<HEADER_SIZE>,
+            >()),
             (
                 pcd.data().clone(),
-                decompressed.host_rounds(),
+                polynomials,
                 decompressed.transcript_digest(),
             ),
             self.bootstrap_pcd(),
@@ -1591,22 +1658,15 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
-    /// The side as the decompression step proves it: the flag set and the
-    /// step binding the step's own, `opening`, the point and value at
-    /// which it opened the output slot holding $s(X)$, and `digest`, the
-    /// transcript digest it staged. Any other step proves the side as
-    /// prepared, the binding all zero.
+    /// Sets the flag and the staged compression transcript digest.
     pub(crate) fn for_decompression<K: Rank, const HEADER_SIZE: usize>(
         &self,
         params: &C::Params,
-        opening: [C::CircuitField; 2],
         digest: C::CircuitField,
     ) -> Result<Self> {
         let mut prepared = self.clone();
         let step = prepared.schedule.layout.instance.step;
         prepared.instance.elements[step.at(stages::step::FLAG)] = C::CircuitField::ONE;
-        prepared.instance.elements[step.at(stages::step::X)] = opening[0];
-        prepared.instance.elements[step.at(stages::step::Y)] = opening[1];
         prepared.instance.elements[step.at(stages::step::DIGEST)] = digest;
         prepared.rerun::<K, HEADER_SIZE>(
             params,
@@ -1617,16 +1677,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Nested> {
-    /// The side as a step proves it: the commitment of the step's output
-    /// slot the binding circuit exposes, `slot_commitment`, the flag, set
-    /// in the decompression step, under which that commitment is the
-    /// host IPA's $G'$, and `fq_opening`, the point and value at which the
-    /// step opened its online Fq polynomial.
+    /// Supplies the commitments, opening and flag the enclosing step
+    /// exposes to its nested binding circuit.
     pub(crate) fn for_step<K: Rank, const HEADER_SIZE: usize>(
         &self,
         params: &C::Params,
         decompression: bool,
-        slot_commitment: C::HostCurve,
+        output_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
+        host_ipa_commitment: C::HostCurve,
         fq_opening: [C::ScalarField; 2],
     ) -> Result<Self> {
         let mut prepared = self.clone();
@@ -1637,17 +1695,19 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Nested> {
             .expect("the scalar-field side holds the online Fq opening");
         prepared.work.elements[x] = fq_opening[0];
         prepared.work.elements[y] = fq_opening[1];
-        let (slot, digits_sum) = {
-            let regions = &prepared.schedule.regions;
-            (
-                regions
-                    .slot_commitment
-                    .expect("the scalar-field side exposes the slot commitment"),
-                regions.digits_sum,
-            )
-        };
+        let regions = &prepared.schedule.regions;
+        let digits_sum = regions.digits_sum;
+        let slots = regions
+            .output_commitments
+            .expect("the output commitments are exposed");
+        let host_ipa = regions
+            .host_ipa_commitment
+            .expect("the host IPA commitment is exposed");
         prepared.aux.flags[0] = decompression;
-        prepared.work.points[slot] = slot_commitment;
+        for (slot, commitment) in slots.into_iter().zip(output_commitments) {
+            prepared.work.points[slot] = commitment;
+        }
+        prepared.work.points[host_ipa] = host_ipa_commitment;
         prepared.rerun::<K, HEADER_SIZE>(params, |chunk| match chunk {
             Chunk::EqualIf { .. } => true,
             Chunk::Sums { sums } => sums.iter().any(|(out, _)| *out == digits_sum),

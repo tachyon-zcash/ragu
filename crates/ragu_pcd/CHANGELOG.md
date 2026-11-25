@@ -13,10 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Standard, Aggregator, Shape}`. Profiles declare internal extension circuits,
   stages, statement and cross-cycle bindings, and endoscaling work, and a
   prover context (`ProverContext`) whose `Source` a decompression step supplies
-  in place of the context's proof. The `Aggregator` profile, its
-  `Decompression` context and `Application::decompress` sit behind the
-  `unstable-aggregator` feature: the construction is unaudited. The
-  decompression takes the wallet registry's evaluations as claimed values of
+  in place of the context's proof. The unaudited `Aggregator` profile,
+  its `Decompression` context and the decompression methods are public.
+  Decompression takes the wallet registry's evaluations as claimed values of
   the profile's online batches, on restrictions its source meshes hold to
   the wallet application's registries, and holds the proof's circuit to the
   wallet registry's domain; a verifier of aggregator proofs so builds the
@@ -24,11 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound, over round challenges fixed before the step's challenge: the
   decompression step stages the compression transcript's last squeeze, and
   the extension holds it to the squeeze it computes, through the step
-  binding. The host curve's:
-  the decompression step commits that IPA's challenge polynomial in its
-  first output slot, and the extension holds its opening and commitment
-  through the statement circuit's step binding (`profile::STEP_BINDING`) and
-  the nested binding circuit's online slots (`Binding::online`). The nested
+  binding. The decompression step commits the host IPA's challenge
+  polynomial in the native batch. Its opening is checked by the native
+  extension and its commitment is bound through `Binding::native_online`. The nested
   curve's: every step commits that IPA's challenge polynomial as its online
   Fq polynomial (`Profile::online_fq_polynomials`), and exports its
   commitment and opening for the slots the profile's bindings name
@@ -37,18 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instances; a proof and a compressed proof of such a profile carry them.
   `Profile::native_extension_rxs` is handed the step's six online openings.
   A step folds its own application claim, so in a profile with a statement
-  circuit its `hashes_1` exports the step binding's openings after its
+  circuit its `hashes_1` exports the step binding's staged digest after its
   output header and circuit id, and a proof and a compressed proof of such
   a profile carry them.
   A profile with a statement circuit reserves an application stage of at
   least one value, which the decompression step stages. A
   profile that names none, the Standard one included, exports nothing and
   its proofs are unchanged.
-  `Aggregator` is pinned for 4-element headers alone; other header sizes do
-  not compile. An `Aggregator` application refuses, at `finalize_with`, a
-  wallet application whose steps output a header naming an online
-  polynomial: a decompressed proof's slots hold the host IPA's challenge
-  polynomial and padding, not the compressed proof's polynomials.
+  `Aggregator` accepts header sizes from 1 through 195 field elements.
+  `Application::decompress_with_polynomials` accepts coefficients for both
+  wallet output slots and binds their commitments to the wallet proof. It
+  refuses coefficients that do not commit to the wallet proof's commitments.
+  `finalize_with` refuses an aggregator that does not register the
+  wallet's own header type at every suffix the wallet's steps output.
+  Under a profile whose decompression step pads its output slots,
+  `finalize_with` refuses a step that outputs or reads a header naming an
+  online polynomial.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
   profile-specific prover context. The extension API is experimental while
   decompression is integrated. `finalize` checks a profile's declaration

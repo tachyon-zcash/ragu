@@ -230,6 +230,8 @@ pub(crate) enum Chunk {
     /// the unified one's alone.
     Targets {
         out: Vec<usize>,
+        /// The native bridge target includes the output header.
+        header_size: usize,
     },
     /// The fold's $W(r)$ for both layers, $t(r, z)$ and $1/r$.
     RevdotWeights {
@@ -293,15 +295,14 @@ pub(crate) enum Chunk {
         left: PointSrc,
         right: PointSrc,
     },
-    /// Enforces that `left` equals `right` when the other side's flag
+    /// Enforces each pair's equality when the other side's flag
     /// `flag` is set: its bit, by index into the side's foreign flags,
     /// which the chunk allocates as a witness and the other side's digits
     /// stage binds, its signed digit's part of that stage's commitment
     /// (`bind`) riding along as a scaling's digits' does.
     EqualIf {
         flag: usize,
-        left: PointSrc,
-        right: PointSrc,
+        pairs: Vec<[PointSrc; 2]>,
         bind: Bind,
     },
     /// Holds what the side takes from the aggregator's online stages to
@@ -449,12 +450,11 @@ pub(crate) struct Regions {
     pub inverse_scaled: Vec<usize>,
     /// $G'$, prover-supplied.
     pub g_prime: usize,
-    /// Scalar-field side: the commitment of the first output slot of the
-    /// step that proves the chunks, prover-supplied, which the binding
-    /// circuit exposes for the proof's consumer to hold to that
-    /// commitment, and which the decompression flag holds $G'$ to. None on
-    /// the circuit-field side.
-    pub slot_commitment: Option<usize>,
+    /// Scalar-field side: the aggregator proof's two application output
+    /// commitments, bound to the wallet proof under the decompression flag.
+    pub output_commitments: Option<[usize; crate::header::NUM_ONLINE_FP_POLYS]>,
+    /// Scalar-field side: the host IPA helper's native batch commitment.
+    pub host_ipa_commitment: Option<usize>,
     /// The IPA's left-hand side and its three scaled terms.
     pub ipa_left: usize,
     pub ipa_terms: [usize; 3],
@@ -622,7 +622,10 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
             })
             .sum(),
         // The one-off chunks, at the larger of the two sides' measures.
-        Chunk::Targets { .. } => 210,
+        // The fitted cost covers both sides at four elements. Each
+        // additional header element is allocated and absorbed by Horner
+        // evaluation of the native bridge target.
+        Chunk::Targets { header_size, .. } => 210 + 2 * header_size.saturating_sub(4),
         Chunk::RevdotWeights { .. } => 1440,
         Chunk::Bindings { .. } => 1080,
         Chunk::RevdotPublic { .. } => 355,
@@ -661,7 +664,7 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
         Chunk::Curve { points } => CURVE * points.len(),
         // Equalities of wires the circuit holds already take no gate.
         Chunk::Sign { .. } | Chunk::Equal { .. } | Chunk::Online { .. } => 0,
-        Chunk::EqualIf { .. } => EQUAL_IF,
+        Chunk::EqualIf { pairs, .. } => EQUAL_IF + 2 * (pairs.len() - 1),
     }
 }
 
@@ -1253,10 +1256,10 @@ impl Builder {
         }
     }
 
-    /// Holds `left` to `right` under the other side's flag `flag`, whose
+    /// Holds the points of each pair equal under the other side's flag, whose
     /// digit's part of that side's digits stage commitment goes into a
     /// slot [`digits_sum`](Self::digits_sum) takes. A flag is taken once.
-    fn equal_if(&mut self, flag: usize, left: PointSrc, right: PointSrc) {
+    fn equal_if(&mut self, flag: usize, pairs: Vec<[PointSrc; 2]>) {
         assert!(
             self.flag_bound[flag].is_none(),
             "a foreign flag binds its digit once"
@@ -1271,8 +1274,7 @@ impl Builder {
         };
         self.chunks.push(Chunk::EqualIf {
             flag,
-            left,
-            right,
+            pairs,
             bind: Bind {
                 generators,
                 init: None,
@@ -1707,6 +1709,7 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
     b.regions.targets = b.slots.elements(body.targets);
     b.chunks.push(Chunk::Targets {
         out: b.regions.targets.clone(),
+        header_size: layout.instance.output_header.len,
     });
     let mut named: Vec<(CircuitIndex, usize)> = Vec::new();
     b.regions.restrictions = body
@@ -2651,31 +2654,41 @@ fn nested_schedule_with<
         },
     );
 
-    // The step binding: the commitment of the first output slot of the
-    // step that proves the chunks, which the binding circuit exposes, and
-    // in the decompression step, by the other side's flag, is G': that
-    // step commits the host IPA's s(X) there, whose commitment over the
-    // same generators G' is, and the other side checks its opening against
-    // s(X). Held to the curve as every point the prover supplies is.
-    // The opening of the step's online Fq polynomial, which holds the
-    // nested curve's s(X): the point and value the binding circuit exposes
-    // and the IPA's scalars check, supplied by the prover.
+    // The binding claim ties these commitments to the aggregator's PCS.
+    // Under the decompression flag, its application slots carry the wallet
+    // proof's own commitments, and the native batch's s(X) commits to G'.
     let opening = [b.slots.element(), b.slots.element()];
     b.regions.fq_opening = Some(opening);
     b.regions.exposed_elements = opening.to_vec();
 
-    let slot = b.slots.point();
-    b.regions.slot_commitment = Some(slot);
-    let slot_commitment = PointSrc::Work(slot);
+    let outputs = core::array::from_fn(|_| b.slots.point());
+    let host_ipa = b.slots.point();
+    b.regions.output_commitments = Some(outputs);
+    b.regions.host_ipa_commitment = Some(host_ipa);
     b.chunks.push(Chunk::Curve {
-        points: vec![slot_commitment],
+        points: outputs
+            .into_iter()
+            .chain([host_ipa])
+            .map(PointSrc::Work)
+            .collect(),
     });
-    b.equal_if(0, slot_commitment, PointSrc::Work(b.regions.g_prime));
+    let wallet_start = layout
+        .instance
+        .commitments
+        .at(layout.instance.commitments.len - outputs.len());
+    let pairs = outputs
+        .into_iter()
+        .enumerate()
+        .map(|(i, slot)| [PointSrc::Work(slot), PointSrc::Instance(wallet_start + i)])
+        .chain([[PointSrc::Work(host_ipa), PointSrc::Work(b.regions.g_prime)]])
+        .collect();
+    b.equal_if(0, pairs);
 
-    // The circuit-field side's digits stage, from the scalings' parts and
-    // the flag's, and this side's digits for it, last of all.
     b.digits_sum();
-    b.regions.exposed = vec![b.regions.digits_sum, slot];
+    b.regions.exposed = core::iter::once(b.regions.digits_sum)
+        .chain(outputs)
+        .chain([host_ipa])
+        .collect();
     assert_eq!(
         digits.len(),
         3 + AB_TERMS,

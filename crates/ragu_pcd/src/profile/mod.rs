@@ -79,18 +79,18 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
-#[cfg(feature = "unstable-aggregator")]
-pub use crate::decompress::{
-    aggregator::Aggregator,
-    aggregator::Counts,
-    prover::{Decompressed, Decompression},
-};
-pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
     header::Suffix,
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
+};
+pub use crate::{
+    decompress::{
+        aggregator::{Aggregator, Counts},
+        prover::{Decompressed, Decompression},
+    },
+    internal::nested::online::NUM_ONLINE_FQ_POLYS,
 };
 
 /// The internal circuits a proof carries beyond the fuse's own: an
@@ -526,6 +526,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default handles empty phases and rejects a phase needing polynomials.
     fn native_online_polynomials<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
         phase: online::Phase,
         inputs: &[Base::CircuitField],
         challenges: online::PreparationChallenges<Base::CircuitField>,
@@ -535,7 +536,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         R: Rank,
         B: SelectableBackend,
     {
-        let _ = (context, inputs, challenges);
+        let _ = (context, source, inputs, challenges);
         online::defaults::polynomials::<Self, online::stages::Native, _>(phase)
     }
 
@@ -673,7 +674,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 
     /// Traces the user extension with the online batch's immutable stage
-    /// data, beside what [`Self::nested_extension_rxs`] takes.
+    /// data and the commitments of the native profile batch, beside what
+    /// [`Self::nested_extension_rxs`] takes.
     ///
     /// Consumer circuits reserve the declared online prefix. Their witnesses
     /// must use `online`'s input and query values, including the opposite
@@ -693,6 +695,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online: Option<
             &online::circuit::Witness<'_, Base::ScalarField, Self, online::stages::Nested>,
         >,
+        native_online_commitments: &[Base::HostCurve],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
     where
@@ -701,7 +704,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = online;
+        let _ = (online, native_online_commitments);
         Self::nested_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(
             context,
             source,
@@ -829,7 +832,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         let within =
             |slots: &[u32], count: usize| slots.iter().all(|&slot| (slot as usize) < count);
         if let Some(binding) = &native.binding
-            && !(within(&binding.online, Self::ONLINE_FQ_POLYS) && binding.openings.is_empty())
+            && !(within(&binding.online, Self::ONLINE_FQ_POLYS)
+                && binding.native_online.is_empty()
+                && binding.openings.is_empty())
         {
             return Err(Error::Initialization(
                 "the native binding circuit exposes commitments of the step's online Fq polynomials alone".into(),
@@ -837,6 +842,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         if let Some(binding) = &nested.binding
             && !(within(&binding.online, crate::header::NUM_ONLINE_FP_POLYS)
+                && within(
+                    &binding.native_online,
+                    Self::NATIVE_ONLINE.polynomials.len(),
+                )
                 && within(&binding.openings, Self::ONLINE_FQ_POLYS))
         {
             return Err(Error::Initialization(
@@ -871,6 +880,16 @@ pub(crate) fn native_extension<P: Profile>() -> Extension {
 /// The registered nested extension, including the online batch helper.
 pub(crate) fn nested_extension<P: Profile>() -> Extension {
     online::stages::layout::<P, online::stages::Nested>()
+}
+
+/// Whether `P`'s decompression step carries the source proof's online
+/// polynomials: `P` declares a statement circuit and its nested binding
+/// names both output slots (see [`Extension::statement`]).
+pub(crate) fn decompresses_online_polynomials<P: Profile>() -> bool {
+    P::native_extension().statement.is_some()
+        && P::nested_extension()
+            .binding
+            .is_some_and(|binding| binding.online.len() == crate::header::NUM_ONLINE_FP_POLYS)
 }
 
 /// A registry slot a profile's circuit hook fills with one internal circuit.
@@ -1156,32 +1175,20 @@ pub struct Extension {
     /// other extension, and always on the nested side.
     ///
     /// After the header the output carries the step binding,
-    /// [`STEP_BINDING`] elements the same claim sets: a flag, one in a
-    /// proof of the decompression step and zero in any other, then the
-    /// point and the value at which the decompression step opened its
-    /// first output slot, then the point at which it opened its left
-    /// input's first slot, a value it staged, all zero in any other step.
-    /// An extension reads its circuits' own step from them: the flag says
-    /// whether the proof it verified is the one decompressed, the opening
-    /// is of a polynomial that step committed before its challenge, and
-    /// the staged value was committed with it, so that a digest staged
-    /// there fixes, before that challenge, whatever the extension hashes
-    /// to it. The extension's prover is handed the step's openings
-    /// through [`native_extension_rxs`](Profile::native_extension_rxs).
+    /// [`STEP_BINDING`] elements: the decompression flag and the point at
+    /// which the step opened the bootstrap's first slot, the digest the
+    /// decompressor staged. Both are zero for an ordinary step.
     ///
-    /// The statement binds the header's fields only. A profile that declares
-    /// one registers the decompression step, whose output proof carries the
-    /// verified header with none of the compressed proof's polynomials in
-    /// its online slots, the step's own in the first and the constant one
-    /// in the last, and a step consuming that proof cannot tell it from one
-    /// a registered step produced. Before declaring a statement, either every header a
-    /// decompressed statement can carry must treat its slots as padding, or
-    /// the statement must also expose the compressed proof's online
-    /// commitments for the decompression step to hold its output slots to
-    /// (see [`NUM_ONLINE_FP_POLYS`](crate::header::NUM_ONLINE_FP_POLYS)).
-    /// The aggregator profile takes the first: its
-    /// [`check_context`](Profile::check_context) refuses a wallet
-    /// application whose steps output a header naming a polynomial.
+    /// The native claim binds the header alone. If the nested binding
+    /// names both output slots ([`Binding::online`]), the decompression
+    /// step carries the source proof's online polynomials, and the nested
+    /// extension must hold its output commitments to the source proof's,
+    /// as the aggregator's does. Otherwise the step leaves both output
+    /// slots as padding, so every header a decompressed statement can carry
+    /// must leave its slots to padding: the step accepts any application
+    /// suffix, so [`finalize_with`](crate::ApplicationBuilder::finalize_with)
+    /// refuses an application with a step that outputs or reads a header
+    /// naming an online polynomial.
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is
@@ -1193,7 +1200,7 @@ pub struct Extension {
 
 /// The elements a statement circuit's public output ends with, after the
 /// output header: the step binding (see [`Extension::statement`]).
-pub const STEP_BINDING: usize = 4;
+pub const STEP_BINDING: usize = 2;
 
 /// An extension's binding circuit: the circuit, by index among the
 /// extension's circuits, whose public output is one point per stage of
@@ -1237,6 +1244,9 @@ pub struct Binding {
     /// step; naming one has the step export its commitment for its parent
     /// to hold, which a profile that names none does not pay for.
     pub online: Vec<u32>,
+    /// Native profile batch commitments, after the application slot points.
+    /// Only the nested binding circuit can expose these host-curve points.
+    pub native_online: Vec<u32>,
     /// The step's online polynomials over the scalar field whose openings
     /// the circuit's output ends with, after its points: for each slot the
     /// point and the value the step's nested `compute_v` opened it at,
@@ -1327,6 +1337,7 @@ impl Extension {
                     && !binding.stages.is_empty()
                     && distinct(&binding.stages)
                     && distinct(&binding.online)
+                    && distinct(&binding.native_online)
                     && distinct(&binding.openings)
             });
         // In gate order, which leaves `last()` the stage whose final mask
