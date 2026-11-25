@@ -137,6 +137,14 @@ const POLYNOMIALS: [Phase; slot::OUTGOING + 1] = {
     phases
 };
 
+// Each batch opens its IPA's challenge polynomial at the step's y, and the
+// chunks hold the opening to s(y). That makes the commitment the IPA's G'
+// only if the step fixes the polynomial before it draws y.
+const _: () = assert!(
+    matches!(POLYNOMIALS[slot::IPA], Phase::BeforeW | Phase::BeforeY),
+    "the IPA's challenge polynomial is committed before y, where it is opened"
+);
+
 const fn restriction(polynomial: usize, x: usize, y: usize, helper: usize) -> Restriction {
     Restriction {
         polynomial,

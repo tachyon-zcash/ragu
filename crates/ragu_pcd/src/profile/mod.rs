@@ -1168,6 +1168,15 @@ pub struct Binding {
     /// [`Profile::NATIVE_ONLINE`], and the native binding names
     /// polynomials of [`Profile::NESTED_ONLINE`]. The claim's $k(y)$
     /// holds each point to the commitment the step's walk folded.
+    ///
+    /// The claim binds the commitment and nothing else. The batch proves
+    /// that a claimed value is an opening of the committed polynomial, not
+    /// which polynomial was committed. A profile that takes the point for
+    /// the commitment of a polynomial it expects must have its circuits
+    /// hold an opening of the slot, at a challenge of the step, to the
+    /// expected polynomial's value there. The slot's
+    /// [`Phase`](online::Phase) must then be no later than that challenge,
+    /// and what the expected value depends on must be fixed before it.
     pub batch: Vec<u32>,
 }
 
