@@ -641,15 +641,15 @@ fn aggregator_declares_the_decompression() {
     let nested_stages = aggregator::nested_stages(num_runs::<WalletRank>());
     assert_eq!(nested_stages, 27, "a stage per run, then four");
     // Each field's online batch: its three stages and its helper among
-    // the side's polynomials, the mesh's twenty polynomials among the
-    // points the other side's walk folds, and the outgoing restriction
-    // the proof retains.
+    // the side's polynomials, the mesh's twenty polynomials and the IPA's
+    // challenge polynomial among the points the other side's walk folds,
+    // and the outgoing restriction the proof retains.
     let batch = online::stages::RXS;
     let expected = |native_circuits: usize| {
         let mut shape = Shape::solve_with_online(
             native_circuits + 2 + 6 + batch,
             19 + 1 + nested_stages + batch,
-            1 + 20,
+            21,
             21,
             per_step,
             per_step,
