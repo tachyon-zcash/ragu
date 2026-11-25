@@ -82,6 +82,7 @@
 //! [`build`]: crate::internal::nested::claims::build
 //! [`ChildOutput::nested_instance`]: stages::preamble::ChildOutput::nested_instance
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::{
@@ -107,7 +108,7 @@ use crate::{
         ky,
         native::RxIndex,
         nested::{
-            Points, RevdotParameters,
+            RevdotParameters,
             claims::{TwoProofKySource, ky_values},
             stages::{self, challenges},
             unified,
@@ -116,35 +117,6 @@ use crate::{
     },
     profile::Profile,
 };
-
-/// A cursor over the points stage's inputs that enforces each one equal to
-/// the copy a bridge stage holds.
-struct Walker<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    points: &'pts Points<'dr, D, C, P>,
-    index: usize,
-}
-
-impl<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walker<'pts, 'dr, D, C, P> {
-    fn new(points: &'pts Points<'dr, D, C, P>) -> Self {
-        Self { points, index: 0 }
-    }
-
-    /// Enforces that the next input of the points stage equals `point`.
-    fn enforce_equal(&mut self, dr: &mut D, point: &Point<'dr, D, C>) -> Result<()> {
-        self.points.inputs[self.index].enforce_equal(dr, point)?;
-        self.index += 1;
-        Ok(())
-    }
-
-    /// Asserts that every input of the points stage was enforced.
-    fn finish(self) {
-        assert_eq!(
-            self.index,
-            self.points.inputs.len(),
-            "the walk did not consume every input of the points stage"
-        );
-    }
-}
 
 /// Enforces every point of the points stage equal to the copy a bridge
 /// stage holds, in the order `compute_p` (`_10_p`) accumulates them.
@@ -171,51 +143,53 @@ where
         f,
         ..
     } = stages;
-    let mut walker = Walker::new(points);
-
+    // The held copies, in the order `compute_p` accumulates the points.
+    let mut held: Vec<&Point<'dr, D, C>> = Vec::with_capacity(points.inputs.len());
     for child in [&preamble.left, &preamble.right] {
-        for id in RxIndex::all::<P>() {
-            walker.enforce_equal(dr, &child[id])?;
-        }
-        walker.enforce_equal(dr, &child.stashed_ab_a)?;
-        walker.enforce_equal(dr, &child.stashed_ab_b)?;
-        walker.enforce_equal(dr, &child.stashed_registry_xy)?;
-        walker.enforce_equal(dr, &child.stashed_p)?;
+        held.extend(RxIndex::all::<P>().into_iter().map(|id| &child[id]));
+        held.extend([
+            &child.stashed_ab_a,
+            &child.stashed_ab_b,
+            &child.stashed_registry_xy,
+            &child.stashed_p,
+        ]);
     }
-
-    walker.enforce_equal(dr, &s_prime.registry_wx0)?;
-    walker.enforce_equal(dr, &s_prime.registry_wx1)?;
-    walker.enforce_equal(dr, &s_prime.native_application)?;
-    walker.enforce_equal(dr, &preamble.application_stage)?;
-    walker.enforce_equal(dr, &inner_error.registry_wy)?;
-    walker.enforce_equal(dr, &ab.a)?;
-    walker.enforce_equal(dr, &ab.b)?;
-    walker.enforce_equal(dr, &query.registry_xy)?;
-    walker.enforce_equal(dr, &s_prime.randomizer_a)?;
-    walker.enforce_equal(dr, &s_prime.randomizer_b)?;
-    walker.enforce_equal(dr, &f.native_mask)?;
-
+    held.extend([
+        &s_prime.registry_wx0,
+        &s_prime.registry_wx1,
+        &s_prime.native_application,
+        &preamble.application_stage,
+        &inner_error.registry_wy,
+        &ab.a,
+        &ab.b,
+        &query.registry_xy,
+        &s_prime.randomizer_a,
+        &s_prime.randomizer_b,
+        &f.native_mask,
+    ]);
     // The online slots, in slot order: the children's exported polynomials
     // as the left and right slots, then the step's own.
     for child in [&preamble.left, &preamble.right] {
-        for point in child.stashed_online_commitments.iter() {
-            walker.enforce_equal(dr, point)?;
-        }
+        held.extend(child.stashed_online_commitments.iter());
     }
-    for point in preamble.online_commitments.iter() {
-        walker.enforce_equal(dr, point)?;
-    }
+    held.extend(preamble.online_commitments.iter());
+    held.extend(
+        preamble
+            .online_points
+            .iter()
+            .chain(s_prime.online_points.iter())
+            .chain(ab.online_points.iter())
+            .chain(query.online_points.iter()),
+    );
 
-    for point in preamble
-        .online_points
-        .iter()
-        .chain(s_prime.online_points.iter())
-        .chain(ab.online_points.iter())
-        .chain(query.online_points.iter())
-    {
-        walker.enforce_equal(dr, point)?;
+    assert_eq!(
+        held.len(),
+        points.inputs.len(),
+        "a bridge stage holds a copy of every input of the points stage"
+    );
+    for (input, held) in points.inputs.iter().zip(held) {
+        input.enforce_equal(dr, held)?;
     }
-    walker.finish();
 
     // The walk starts from the commitment of f.
     points.initial.enforce_equal(dr, &f.native_f)
