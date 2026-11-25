@@ -309,6 +309,10 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
 
     // Nested endoscaling data
     nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    // What the walks' steps add when their profile pages them, kept for
+    // the fuse to go on with when it traces the other circuits.
+    native_pages: Option<crate::profile::paging::Prover<C::CircuitField, R>>,
+    nested_pages: Option<crate::profile::paging::Prover<C::ScalarField, R>>,
     nested_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_endoscalar_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
@@ -629,6 +633,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             bridge_eval_commitment: None,
             bridge_ab_rx: OnceCell::new(),
             nested_endoscaling_step_rxs: None,
+            native_pages: None,
+            nested_pages: None,
             nested_extension_circuit_rxs: None,
             nested_extension_stage_rxs: None,
             nested_endoscalar_rx: None,
@@ -1153,6 +1159,100 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Vec<sparse::Polynomial<C::ScalarField, R>>
     );
     setter!(set_nested_endoscalar_rx, nested_endoscalar_rx, sparse::Polynomial<C::ScalarField, R>);
+
+    /// Keeps the native pager a paged walk started.
+    pub(crate) fn set_native_pages(
+        &mut self,
+        pages: crate::profile::paging::Prover<C::CircuitField, R>,
+    ) {
+        self.native_pages = Some(pages);
+    }
+
+    /// The native pager a paged walk started, or a new one.
+    pub(crate) fn take_native_pages(
+        &mut self,
+    ) -> crate::profile::paging::Prover<C::CircuitField, R> {
+        self.native_pages
+            .take()
+            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(false))
+    }
+
+    /// Keeps the nested pager a paged walk started.
+    pub(crate) fn set_nested_pages(
+        &mut self,
+        pages: crate::profile::paging::Prover<C::ScalarField, R>,
+    ) {
+        self.nested_pages = Some(pages);
+    }
+
+    /// The nested pager a paged walk started, or a new one.
+    pub(crate) fn take_nested_pages(
+        &mut self,
+    ) -> crate::profile::paging::Prover<C::ScalarField, R> {
+        self.nested_pages
+            .take()
+            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(true))
+    }
+
+    /// The polynomials of the native points stages, in the order a native
+    /// walk's circuit reserves them: the input stages', then the walk
+    /// stage's.
+    pub(crate) fn native_points_stage_rxs(&self) -> Vec<&sparse::Polynomial<C::CircuitField, R>> {
+        self.native_points_input_rxs()
+            .into_iter()
+            .chain([self
+                .native_points_walk_rx
+                .as_ref()
+                .expect("native_points_walk_rx not set")])
+            .collect()
+    }
+
+    /// The polynomials of the native points input stages, in the order a
+    /// native walk's circuit reserves them, before the walk stage's.
+    pub(crate) fn native_points_input_rxs(&self) -> [&sparse::Polynomial<C::CircuitField, R>; 5] {
+        macro_rules! set {
+            ($field:ident) => {
+                self.$field
+                    .as_ref()
+                    .expect(concat!(stringify!($field), " not set"))
+            };
+        }
+        [
+            set!(native_points_binding_rx),
+            set!(native_points_preamble_rx),
+            set!(native_points_registry_wx_rx),
+            set!(native_points_ab_rx),
+            set!(native_points_f_rx),
+        ]
+    }
+
+    /// The polynomials of the nested stages, in the order a nested circuit
+    /// reserves them, once the fuse has committed them all.
+    pub(crate) fn nested_stage_rxs(&self) -> Result<Vec<&sparse::Polynomial<C::ScalarField, R>>> {
+        macro_rules! set {
+            ($field:ident) => {
+                self.$field
+                    .as_deref()
+                    .expect(concat!(stringify!($field), " not set"))
+            };
+        }
+        Ok(alloc::vec![
+            self.nested_endoscalar_rx
+                .as_ref()
+                .expect("nested_endoscalar_rx not set"),
+            set!(bridge_hash_rx),
+            set!(nested_points_rx),
+            set!(bridge_preamble_rx),
+            set!(bridge_s_prime_rx),
+            set!(bridge_inner_error_rx),
+            set!(bridge_outer_error_rx),
+            self.bridge_ab_rx()?,
+            set!(bridge_query_rx),
+            set!(bridge_f_rx),
+            set!(bridge_eval_rx),
+            self.nested_challenges_rx(),
+        ])
+    }
     pub(crate) fn set_nested_points_rx(&mut self, v: sparse::Polynomial<C::ScalarField, R>) {
         assert!(
             self.nested_points_rx.is_none(),

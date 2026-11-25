@@ -834,6 +834,20 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
         ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS + 2 * NumSteps::<P>::len()
     }
 
+    /// After the points input stages, or, for a profile that lays the
+    /// stage beside them
+    /// ([`Pages::native_branches`](crate::profile::Pages::native_branches)),
+    /// from the first gate: no circuit then loads it with them, except in
+    /// pages that load them apart (see [`ragu_circuits::paging`]).
+    fn skip_gates() -> usize {
+        if P::PAGES.native_branches {
+            1
+        } else {
+            <Self::Parent as staging::Stage<C::Base, R>>::skip_gates()
+                + <Self::Parent as staging::StageExt<C::Base, R>>::num_gates()
+        }
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: &mut D,

@@ -138,6 +138,9 @@ name = "online_fp_oracles"
 test = false # Selected by the corruption job and `just ci_corruption`.
 
 [[test]]
+name = "paging"
+
+[[test]]
 name = "pasta_parameters"
 
 [[test]]

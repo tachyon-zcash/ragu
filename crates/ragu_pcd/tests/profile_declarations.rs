@@ -703,8 +703,8 @@ fn aggregator_declares_the_decompression() {
             19 + 1 + nested_stages + batch,
             21,
             21,
-            per_step,
-            per_step,
+            (per_step, 1),
+            (per_step, 1),
         );
         shape.source_polynomials = 2;
         shape
@@ -773,8 +773,8 @@ fn solve_finds_a_fixed_point_for_wider_profiles() {
             nested_extension,
             0,
             0,
-            4,
-            4,
+            (4, 1),
+            (4, 1),
         );
         assert_eq!(
             again, shape,

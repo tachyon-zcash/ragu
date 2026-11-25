@@ -56,7 +56,7 @@ use crate::{
             PointsWitness, pcs,
         },
     },
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle, paging},
     proof::ProofBuilder,
 };
 
@@ -403,12 +403,44 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let num_steps = NumSteps::<C::Profile>::len();
         let mut step_rxs = Vec::with_capacity(num_steps);
+        let (registry, points) = (&self.nested_registry, &witness);
+        // A paged step is traced once for each of its pages that hold
+        // gates. What they read of the walk's stages without loading them
+        // comes off the stages' polynomials; the bridge-hash stage a step
+        // reserves between the two is nothing it reads.
+        if C::Profile::PAGES.nested_endoscaling_step.pages > 1 {
+            let mut pages = builder.take_nested_pages();
+            let gap = sparse::Polynomial::<C::ScalarField, R>::default();
+            let stages = [&endoscalar_rx, &gap, &points_rx];
+            for step in 0..num_steps {
+                let (step_rx, _) = C::Profile::prove_internal(
+                    &mut pages,
+                    paging::Circuit::NestedEndoscalingStep(step as u32),
+                    MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step)),
+                    registry,
+                    nested::InternalCircuitIndex::EndoscalingStep(step as u32)
+                        .circuit_index::<C::Profile>(),
+                    |circuit| {
+                        nested::InternalCircuitIndex::ExtensionCircuit(circuit)
+                            .circuit_index::<C::Profile>()
+                    },
+                    &stages,
+                    || EndoscalingStepWitness {
+                        endoscalar: beta_endo,
+                        points,
+                    },
+                    &mut *rng,
+                )?;
+                step_rxs.push(step_rx);
+            }
+            builder.set_nested_pages(pages);
+        }
         // The steps' traces are independent work for the backend. Each
         // step's blinding factor is drawn first, in step order, so that no
         // job touches the RNG.
-        let blinds: Vec<Blind<C::ScalarField>> =
-            (0..num_steps).map(|_| Blind::random(rng)).collect();
-        let (registry, points) = (&self.nested_registry, &witness);
+        let blinds: Vec<Blind<C::ScalarField>> = (step_rxs.len()..num_steps)
+            .map(|_| Blind::random(rng))
+            .collect();
         for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
             let staged = MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step));
             let step_trace = staged
@@ -474,11 +506,41 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let num_steps = native::NumSteps::<C::Profile>::len();
         let mut step_rxs = Vec::with_capacity(num_steps);
+        let (registry, walk_ref) = (&self.native_registry, &walk);
+        // As for the nested steps: a paged step's pages read what they do
+        // not load of the points stages off the stages' polynomials.
+        if C::Profile::PAGES.endoscaling_step.pages > 1 {
+            let mut pages = builder.take_native_pages();
+            let [binding, preamble, registry_wx, ab, f] = builder.native_points_input_rxs();
+            let stages = [binding, preamble, registry_wx, ab, f, &walk_rx];
+            for step in 0..num_steps {
+                let (step_rx, _) = C::Profile::prove_internal(
+                    &mut pages,
+                    paging::Circuit::EndoscalingStep(step as u32),
+                    native::circuits::endoscaling_step::Circuit::<C, R>::new(step),
+                    registry,
+                    native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                        .circuit_index::<C::Profile>(),
+                    |circuit| {
+                        native::InternalCircuitIndex::ExtensionCircuit(circuit)
+                            .circuit_index::<C::Profile>()
+                    },
+                    &stages,
+                    || native::circuits::endoscaling_step::Witness {
+                        inputs,
+                        walk: walk_ref,
+                    },
+                    &mut *rng,
+                )?;
+                step_rxs.push(step_rx);
+            }
+            builder.set_native_pages(pages);
+        }
         // As for the nested steps: independent work, with each step's
         // blinding factor drawn first, in step order.
-        let blinds: Vec<Blind<C::CircuitField>> =
-            (0..num_steps).map(|_| Blind::random(rng)).collect();
-        let (registry, walk_ref) = (&self.native_registry, &walk);
+        let blinds: Vec<Blind<C::CircuitField>> = (step_rxs.len()..num_steps)
+            .map(|_| Blind::random(rng))
+            .collect();
         for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
             let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
                 .trace(native::circuits::endoscaling_step::Witness {

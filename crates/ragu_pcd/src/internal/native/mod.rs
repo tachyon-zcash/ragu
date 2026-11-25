@@ -968,13 +968,20 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     let extension = crate::profile::native_extension::<C::Profile>();
     let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
     let mut extension_masks = alloc::vec::Vec::with_capacity(extension.masks());
+    // Every circuit goes through the registrar, which registers it whole
+    // or, for a profile that pages it, its last page here and its other
+    // pages and their masks in the extension's slots.
+    use crate::profile::paging;
+    let mut pages = paging::Registrar::new::<C::Profile>(false);
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
             ExtensionCircuit(k) => {
                 use crate::profile::online::stages::{self as extension, Native};
-                let slot = CircuitSlot::new(registry);
-                let (registry, registration) =
+                let (registry, registration) = if pages.is_page(k) {
+                    pages.page(registry, k)?
+                } else {
+                    let slot = CircuitSlot::new(registry);
                     if Some(k) == extension::helper::<C::Profile, Native>() {
                         extension::register_circuit::<_, R, C::Profile, Native>(
                             slot,
@@ -986,25 +993,30 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                             k as usize, slot, params,
                         )?
                     }
-                    .into_parts();
+                    .into_parts()
+                };
                 extension_circuits.push(registration);
                 registry
             }
             ExtensionMask(j) => {
                 use crate::profile::online::stages::{self as extension, Native};
-                let slot = MaskSlot::new(registry);
-                let (registry, registration) =
-                    match extension::mask::<C::Profile, Native>(j as usize)? {
-                        extension::Mask::Online(mask) => {
-                            mask.register::<_, R, C::Profile, Native>(slot)?
+                let (registry, registration) = match pages.mask(registry, j as usize)? {
+                    paging::Slotted::Paged(registry, registration) => (registry, registration),
+                    paging::Slotted::Other(registry, index) => {
+                        let slot = MaskSlot::new(registry);
+                        match extension::mask::<C::Profile, Native>(index)? {
+                            extension::Mask::Online(mask) => {
+                                mask.register::<_, R, C::Profile, Native>(slot)?
+                            }
+                            extension::Mask::User(index) => {
+                                C::Profile::register_native_mask::<C::Base, R, HEADER_SIZE>(
+                                    index, slot, params,
+                                )?
+                            }
                         }
-                        extension::Mask::User(index) => {
-                            C::Profile::register_native_mask::<C::Base, R, HEADER_SIZE>(
-                                index, slot, params,
-                            )?
-                        }
+                        .into_parts()
                     }
-                    .into_parts();
+                };
                 extension_masks.push(registration);
                 registry
             }
@@ -1088,52 +1100,64 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::final_mask(
             )?),
-            BindEndoscalarCircuit => registry
-                .register_internal_circuit(circuits::bind_endoscalar::Circuit::<C, R>::new())?,
-            EndoscalingStep(step) => registry.register_internal_circuit(
+            BindEndoscalarCircuit => C::Profile::register_internal(
+                &mut pages,
+                registry,
+                paging::Circuit::BindEndoscalar,
+                circuits::bind_endoscalar::Circuit::<C, R>::new(),
+            )?,
+            EndoscalingStep(step) => C::Profile::register_internal(
+                &mut pages,
+                registry,
+                paging::Circuit::EndoscalingStep(step),
                 circuits::endoscaling_step::Circuit::<C, R>::new(step as usize),
             )?,
-            Hashes1Circuit => {
-                registry.register_internal_circuit(circuits::hashes_1::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    RevdotParameters<C::Profile>,
-                >::new(params, log2_circuits))?
-            }
-            Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
-                C,
-                R,
-                HEADER_SIZE,
-                RevdotParameters<C::Profile>,
-            >::new(params))?,
-            CollapseCircuit => {
-                registry.register_internal_circuit(circuits::collapse::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    RevdotParameters<C::Profile>,
-                >::new())?
-            }
-            ComputeVCircuit => {
-                registry.register_internal_circuit(circuits::compute_v::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                >::new())?
-            }
+            Hashes1Circuit => C::Profile::register_internal(
+                &mut pages,
+                registry,
+                paging::Circuit::Hashes1,
+                circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, RevdotParameters<C::Profile>>::new(
+                    params,
+                    log2_circuits,
+                ),
+            )?,
+            Hashes2Circuit => C::Profile::register_internal(
+                &mut pages,
+                registry,
+                paging::Circuit::Hashes2,
+                circuits::hashes_2::Circuit::<C, R, HEADER_SIZE, RevdotParameters<C::Profile>>::new(
+                    params,
+                ),
+            )?,
+            CollapseCircuit => C::Profile::register_internal(
+                &mut pages,
+                registry,
+                paging::Circuit::Collapse,
+                circuits::collapse::Circuit::<C, R, HEADER_SIZE, RevdotParameters<C::Profile>>::new(
+                ),
+            )?,
+            ComputeVCircuit => C::Profile::register_internal(
+                &mut pages,
+                registry,
+                paging::Circuit::ComputeV,
+                circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(),
+            )?,
             BindChallengesCircuit(k) => {
                 crate::with_binder!(k, C, R, HEADER_SIZE, params, |circuit| {
-                    registry.register_internal_circuit(circuit)?
+                    C::Profile::register_internal(
+                        &mut pages,
+                        registry,
+                        paging::Circuit::BindChallenges(k),
+                        circuit,
+                    )?
                 })
             }
-            BindBetaCircuit => {
-                registry.register_internal_circuit(circuits::bind_beta::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                >::new(params))?
-            }
+            BindBetaCircuit => C::Profile::register_internal(
+                &mut pages,
+                registry,
+                paging::Circuit::BindBeta,
+                circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(params),
+            )?,
         };
     }
     extension.check_registered("native", &extension_circuits, &extension_masks)?;
