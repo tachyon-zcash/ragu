@@ -718,6 +718,10 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         };
         let slot = &self.slots[position];
         let paged = split(which, circuit, slot.cut)?;
+        // The pages are held to the circuit they were cut from before any
+        // is registered, so nothing that chose the cuts is trusted: not
+        // the planner, and not a cut this process kept from before.
+        paged.check()?;
         self.plans.0[position] = Some(paged.plan());
         let layout = paged.layout();
         let mut masks = Vec::with_capacity(slot.masks.len());
