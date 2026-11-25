@@ -20,10 +20,9 @@
 //! proof's corresponding commitment. The IPA helper lives in the profile's
 //! native online batch (see the decompression module's *The step binding*).
 //!
-//! At setup the aggregator registers the wallet's exact header type for
-//! each accepted output. Suffixes of unregistered polynomial-bearing
-//! outputs are excluded in the decompression circuit. The statement claim
-//! binds the checked suffix to the wallet proof.
+//! At setup the aggregator must register the wallet's own header type at
+//! every suffix the wallet's steps output. The statement claim binds the
+//! suffix to the wallet proof.
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its

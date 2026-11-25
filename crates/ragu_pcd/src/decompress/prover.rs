@@ -167,13 +167,10 @@ where
     /// Finalize the wallet over the aggregator's parameters, whose tables
     /// reach rank `R`. For example, the prefix of `baked_aggregator()` is
     /// the Standard table used by `baked()`. At `finalize_with`, the
-    /// aggregator must share the wallet's parameters. For each imported
-    /// application-defined header, a registered aggregator step must
-    /// declare the same type and suffix. Setup requires this declaration
-    /// for all padding-only application-defined wallet output headers.
-    /// The decompression circuit excludes the suffixes of omitted wallet
-    /// output headers that declare online polynomials. The online meshes
-    /// bind decompression to the wallet's registry evaluations.
+    /// aggregator must share the wallet's parameters and register the
+    /// wallet's own header type at every suffix the wallet's steps output,
+    /// whether or not the header carries online polynomials. The online
+    /// meshes bind decompression to the wallet's registry evaluations.
     ///
     /// # Errors
     ///

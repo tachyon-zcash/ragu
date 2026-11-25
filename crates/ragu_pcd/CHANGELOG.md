@@ -45,8 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Application::decompress_with_polynomials` accepts coefficients for both
   wallet output slots and binds their commitments to the wallet proof. It
   refuses coefficients that do not commit to the wallet proof's commitments.
-  Register the wallet's output header type with the aggregator to enable
-  the handoff for that header.
+  `finalize_with` refuses an aggregator that does not register the
+  wallet's own header type at every suffix the wallet's steps output.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
   profile-specific prover context. The extension API is experimental while
   decompression is integrated. `finalize` checks a profile's declaration

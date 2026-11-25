@@ -20,11 +20,10 @@ aggregator Fuse.
   limits a wallet and aggregator pair to at most 194. On each curve the
   wallet's generators are a prefix of the aggregator's.
 - Registering a step records the header type and suffix of its `Left`,
-  `Right`, and `Output`. For each imported application-defined header, one
-  of the aggregator's registered steps must declare the same type and suffix.
-  Setup requires this declaration for all padding-only application-defined
-  wallet output headers. The decompression circuit excludes the suffixes of
-  omitted wallet output headers that declare online polynomials.
+  `Right`, and `Output`. For every header the wallet's steps output, one of
+  the aggregator's registered steps must declare the same type and suffix,
+  whether or not the header carries online polynomials. Setup refuses an
+  aggregator that misses one.
 - For an output with online polynomial slots, the prover supplies their
   coefficients to `Application::decompress_with_polynomials`.
   `Application::decompress` supplies the padding polynomials for padding-only
@@ -61,11 +60,7 @@ coefficients commit to $\pi$'s two online commitments. If both succeed,
 the decompression step fuses two bootstrap proofs with unit input
 headers. The step encodes the
 wallet proof's output header data and constrains the encoded header's
-type suffix to differ from `Dummy`, zero, and the suffixes of omitted wallet
-output headers that declare online polynomials. Each exclusion adds one
-multiplication gate and two constraints to the decompression step.
-`ApplicationBuilder::finalize_with` rejects a circuit that exceeds its
-rank's gate or constraint budget.
+type suffix to differ from `Dummy` and zero.
 
 Every aggregator proof carries the chunk, statement and binding circuits.
 For the decompression step the prover supplies $\pi$ to these circuits.

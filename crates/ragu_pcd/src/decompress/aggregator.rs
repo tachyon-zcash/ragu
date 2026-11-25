@@ -260,9 +260,9 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     /// application's, so the two must be the same parameters. A
     /// decompressed statement is the wallet's output header, which this
     /// application reads through the header type it registers at the
-    /// statement's suffix. The aggregator registers the same header type
-    /// for each accepted output. Unregistered polynomial-bearing wallet
-    /// outputs are excluded by the decompression step.
+    /// statement's suffix. The aggregator must register the wallet's own
+    /// header type at every suffix the wallet's steps output, whether or
+    /// not the header carries online polynomials.
     fn check_context<'params, Base, R, B>(
         context: &mut Self::Context<'params, Base, R, B>,
         params: &Base::Params,
@@ -279,8 +279,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
                     .into(),
             ));
         }
-        let mut excluded = alloc::vec::Vec::new();
-        for (suffix, &(wallet, carries_polynomial)) in context.wallet().output_headers() {
+        for (suffix, &(wallet, _)) in context.wallet().output_headers() {
             if suffix.get() < u64::from(NUM_INTERNAL_SUFFIXES) {
                 continue;
             }
@@ -295,7 +294,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
                         .into(),
                     ));
                 }
-                None if carries_polynomial => excluded.push(*suffix),
                 None => {
                     return Err(Error::Initialization(
                         alloc::format!(
@@ -307,7 +305,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
                 }
             }
         }
-        context.excluded_suffixes = excluded;
         Ok(())
     }
 

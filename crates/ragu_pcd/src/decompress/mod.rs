@@ -203,8 +203,8 @@
 //!
 //! The application can supply both polynomials when decompressing a
 //! wallet proof. The output retains the wallet commitments and its
-//! openings are checked by the usual PCS batch. Output suffixes of
-//! unregistered wallet headers are excluded at setup.
+//! openings are checked by the usual PCS batch. Setup refuses an
+//! aggregator that does not register every wallet output header.
 //!
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
 //! [`Decompress`]: crate::step::internal::decompress

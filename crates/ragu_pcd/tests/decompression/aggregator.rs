@@ -37,8 +37,7 @@ use crate::{
     },
     header::{Dummy, Header, Suffix},
     profile::{
-        Aggregator, CircuitSlot, Decompression, MaskSlot, Profile, Profiled, ProverContext, Shape,
-        Standard,
+        Aggregator, CircuitSlot, Decompression, MaskSlot, Profile, Profiled, Shape, Standard,
     },
     step::{Encoded, Index, Step, internal::decompress::Decompress},
 };
@@ -994,18 +993,34 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for PadCarrying {
     }
 }
 
+/// An aggregator must register every header its wallet outputs, padding
+/// or not. Registering both, it decompresses either output.
 #[test]
 fn decompression_accepts_a_padded_output_from_a_wallet_with_online_polynomials() {
     let pasta = crate::pasta::baked_aggregator();
     let mut rng = StdRng::seed_from_u64(42);
-    let wallet = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-        .register(CarryingLeaf)
-        .unwrap()
-        .register(PadCarrying)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let wallet = || {
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+            .register(CarryingLeaf)
+            .unwrap()
+            .register(PadCarrying)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap()
+    };
 
+    // The wallet outputs `Carrying` and `Value`; an aggregator that
+    // registers `Value` alone is refused.
+    let missing = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(pasta, Decompression::new(wallet(), &mut rng).unwrap());
+    assert!(
+        matches!(missing, Err(Error::Initialization(ref reason)) if reason.to_string().contains("registers no header")),
+        "an unregistered header that carries online polynomials"
+    );
+
+    let wallet = wallet();
     let (carrying, _) = wallet
         .seed(&mut rng, CarryingLeaf, (Fp::from(42), [Fp::ONE; 2]))
         .unwrap();
@@ -1030,37 +1045,16 @@ fn decompression_accepts_a_padded_output_from_a_wallet_with_online_polynomials()
     );
 
     let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
-        .register(Leaf)
+        .register(CarryingLeaf)
+        .unwrap()
+        .register(PadCarrying)
         .unwrap()
         .finalize_with(pasta, Decompression::new(wallet, &mut rng).unwrap())
         .unwrap();
-    assert!(matches!(
-        app.decompress_with_polynomials(&mut rng, &carrying_proof, padding()),
-        Err(Error::InvalidWitness(ref reason)) if reason.to_string().contains("did not register this wallet output header")
-    ));
-
-    let excluded = app.context().excluded_decompression_suffixes();
-    assert_eq!(excluded, &[Carrying::SUFFIX]);
-    let source = app.context().prepare(&carrying_proof).unwrap();
-    // Exercise the same exclusion list as the registered circuit, below
-    // the decompression API's header check.
-    let rejected = app.fuse_with_source(
-        &mut rng,
-        Decompress::<Carrying>::with_excluded_suffixes(excluded, true),
-        (
-            *carrying_proof.data(),
-            padding(),
-            source.transcript_digest(),
-        ),
-        app.bootstrap_pcd(),
-        app.bootstrap_pcd(),
-        Some(&source),
-    );
-    assert!(
-        matches!(rejected, Err(Error::InvalidWitness(ref reason)) if reason.to_string() == "division by zero"),
-        "the decompression circuit must reject the excluded suffix, got {:?}",
-        rejected.as_ref().err()
-    );
+    let carried = app
+        .decompress_with_polynomials(&mut rng, &carrying_proof, padding())
+        .unwrap();
+    assert!(app.verify_uncompressed(&carried, &mut rng).unwrap());
 
     let decompressed = app.decompress(&mut rng, &padded_proof).unwrap();
     assert_eq!(*decompressed.data(), Fp::from(42));
