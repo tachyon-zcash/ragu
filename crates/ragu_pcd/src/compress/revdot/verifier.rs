@@ -52,16 +52,29 @@ fn verify<C: Affine, R: Rank, B: Backend, Id: Copy + Sync>(
     transcript: &mut impl IpaTranscript<C>,
 ) -> Result<Option<Openings<C>>> {
     let n = R::num_coeffs();
-    if reduction.openings.len() != Derived::ALL.len() {
+    // The batches the claims fold in, each with its fold's messages and
+    // an opening per derived polynomial.
+    let batches = fold::batches(shapes.len(), n);
+    let folds = reduction.folds();
+    if folds.len() != batches.len()
+        || reduction.openings.len() != Derived::ALL.len() * batches.len()
+    {
         return Err(Error::InvalidWitness(
-            "one opening per derived polynomial".into(),
+            "one fold, and one opening per derived polynomial, for each batch of claims".into(),
         ));
     }
 
-    // The fold: its messages, weights and the commitments it derives.
-    let layout = Layout::new(shapes.len());
-    let weights = reduction.fold.replay(transcript)?;
-    let commitments = fold::commitments::<_, B, _>(shapes, &weights, commitment, &reduction.fold);
+    // The folds: their messages, weights and the commitments they derive.
+    let weights = fold::replay(&folds, transcript)?;
+    let mut commitments = Vec::with_capacity(reduction.openings.len());
+    for (batch, fold) in batches.iter().zip(&folds) {
+        commitments.extend(fold::commitments::<_, B, _>(
+            &shapes[batch.clone()],
+            &weights,
+            &commitment,
+            fold,
+        ));
+    }
 
     let rho = transcript.squeeze_challenge()?;
     transcript.write_point(reduction.p)?;
@@ -74,46 +87,52 @@ fn verify<C: Affine, R: Rank, B: Backend, Id: Copy + Sync>(
     transcript.write_scalar(reduction.p_at_inverse_r)?;
     transcript.write_scalar(reduction.q_at_r)?;
 
-    // The folded claims at r: (A, B) from the derived openings and the
-    // public parts, and each layer's (E, W) from its opening, the weights
-    // and the sent epsilon.
-    let opened = |which: Derived| reduction.openings[which as usize];
-    let targets = claim_targets(shapes, targets)?;
-    let (mut a_public, mut b_public, mut target) =
-        (C::Scalar::ZERO, C::Scalar::ZERO, C::Scalar::ZERO);
-
     // Each claim's public parts depend only on r and data fixed before it,
     // so the backend may evaluate them concurrently. Each result keeps its
     // claim's slot, where it meets that claim's weights and target.
+    let targets = claim_targets(shapes, targets)?;
     let public = public(r);
     assert_eq!(
         public.len(),
         shapes.len(),
         "one public evaluation per claim"
     );
-    for (i, (a, b)) in public.into_iter().enumerate() {
-        a_public += weights.a(i) * a;
-        b_public += weights.b(i) * b;
-        target += weights.a(i) * weights.b(i) * targets[i];
+
+    // Each batch's folded claims at r: (A, B) from the derived openings
+    // and the public parts, and each layer's (E, W) from its opening, the
+    // weights and the sent epsilon. A claim's weights are those of its
+    // place in its batch.
+    let mut evaluated = Vec::with_capacity(3 * batches.len());
+    for (index, (batch, messages)) in batches.iter().zip(&folds).enumerate() {
+        let opened =
+            |which: Derived| reduction.openings[Derived::ALL.len() * index + which as usize];
+        let layout = Layout::new(batch.len());
+        let (mut a_public, mut b_public, mut target) =
+            (C::Scalar::ZERO, C::Scalar::ZERO, C::Scalar::ZERO);
+        for (i, claim) in batch.clone().enumerate() {
+            let (a, b) = public[claim];
+            a_public += weights.a(i) * a;
+            b_public += weights.b(i) * b;
+            target += weights.a(i) * weights.b(i) * targets[claim];
+        }
+        evaluated.extend([
+            Evaluated {
+                a: opened(Derived::A) + a_public,
+                b: opened(Derived::B) + opened(Derived::Dilated) + b_public,
+                k: target + messages.inner_epsilon + messages.outer_epsilon,
+            },
+            Evaluated {
+                a: opened(Derived::Inner),
+                b: weights.inner::<R>(&layout).eval(r),
+                k: messages.inner_epsilon,
+            },
+            Evaluated {
+                a: opened(Derived::Outer),
+                b: weights.outer::<R>(&layout).eval(r),
+                k: messages.outer_epsilon,
+            },
+        ]);
     }
-    let messages = &reduction.fold;
-    let evaluated = [
-        Evaluated {
-            a: opened(Derived::A) + a_public,
-            b: opened(Derived::B) + opened(Derived::Dilated) + b_public,
-            k: target + messages.inner_epsilon + messages.outer_epsilon,
-        },
-        Evaluated {
-            a: opened(Derived::Inner),
-            b: weights.inner::<R>(&layout).eval(r),
-            k: messages.inner_epsilon,
-        },
-        Evaluated {
-            a: opened(Derived::Outer),
-            b: weights.outer::<R>(&layout).eval(r),
-            k: messages.outer_epsilon,
-        },
-    ];
 
     // \sum_i \rho^i a_i(r) b_i(r) against the split, and the target p(0)
     // must take.

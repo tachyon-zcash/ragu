@@ -2,7 +2,9 @@
 //!
 //! The [`fold`] first collapses the claims on one curve to three, $(A, B)$
 //! and one $(E, W)$ per layer, committing each layer's error terms before
-//! its challenges. The split then takes those three as $t(X) = \sum_i
+//! its challenges; a proof with more claims than a polynomial holds the
+//! error terms of folds them in batches, to three per batch. The split
+//! then takes the folded claims as $t(X) = \sum_i
 //! \rho^i a_i(X) b_i(X)$, splits it as $t(X) = X^{n-1} p(1/X) + X^n q(X)$,
 //! so that $p(0) = \sum_i \rho^i \operatorname{revdot}(a_i, b_i)$, and
 //! commits to $p$ and $q$. The verifier squeezes $r$ and checks $\sum_i
@@ -57,8 +59,11 @@ pub(crate) struct Openings<C: Affine> {
 /// The prover's messages of the reduction on one curve.
 #[derive(Clone, Debug)]
 pub(crate) struct Reduction<C: Affine> {
-    /// The fold's.
+    /// The fold's, of the first batch of claims.
     pub fold: Fold<C>,
+    /// The folds' of the batches past the first, in a proof whose claims
+    /// fold in more than one (see [`fold::batches`]).
+    pub more: Vec<Fold<C>>,
     /// The commitment to $p$.
     pub p: C,
     /// The commitment to $q$.
@@ -70,6 +75,16 @@ pub(crate) struct Reduction<C: Affine> {
     pub p_at_inverse_r: C::Scalar,
     /// The claimed $q(r)$.
     pub q_at_r: C::Scalar,
+}
+
+impl<C: Affine> Reduction<C> {
+    /// The folds' messages, one per batch of claims, in batch order.
+    pub(crate) fn folds(&self) -> Vec<Fold<C>> {
+        core::iter::once(&self.fold)
+            .chain(&self.more)
+            .cloned()
+            .collect()
+    }
 }
 
 /// The native components of profile `P` in the order the instance lists
@@ -127,10 +142,11 @@ fn openings<C: Affine>(
 ) -> Openings<C> {
     let (p, q) = (commitments.len(), commitments.len() + 1);
     let mut claims = Vec::with_capacity(commitments.len() + 3);
-    for (poly, (derived, &value)) in Derived::ALL.iter().zip(&reduction.openings).enumerate() {
+    // Each batch's derived polynomials, batch by batch.
+    for (poly, &value) in reduction.openings.iter().enumerate() {
         claims.push(OpeningClaim {
             poly,
-            point: derived.point(r, z),
+            point: Derived::ALL[poly % Derived::ALL.len()].point(r, z),
             value,
         });
     }

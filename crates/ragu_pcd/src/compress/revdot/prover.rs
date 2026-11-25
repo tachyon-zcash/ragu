@@ -202,17 +202,19 @@ pub(super) fn errors<'a, F: Field, R: Rank, B: Backend>(
     )
 }
 
-/// What the fold leaves the split: its messages, the three folded claims,
-/// the [`Derived`] polynomials and their commitments.
+/// What the fold leaves the split: each batch's messages, its three folded
+/// claims, its [`Derived`] polynomials and their commitments, batch by
+/// batch.
 type Folded<C, R> = (
-    Fold<C>,
+    Vec<Fold<C>>,
     Vec<Claim<'static, <C as Affine>::Scalar, R>>,
     Vec<sparse::Polynomial<<C as Affine>::Scalar, R>>,
     Vec<C>,
 );
 
 /// The prover's fold on one curve, over `claims` in claim order with their
-/// `shapes`: commits each layer's error terms and squeezes its weights.
+/// `shapes`, batch by batch ([`fold::batches`]): commits each layer's
+/// error terms, every batch's before the layer's weights are squeezed.
 fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
     claims: &[Claim<'_, C::Scalar, R>],
     shapes: &[Shape<Id, C::Scalar>],
@@ -221,37 +223,63 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
     committer: &Committer<'_, C, impl FixedGenerators<C>, B>,
     transcript: &mut impl IpaTranscript<C>,
 ) -> Result<Folded<C, R>> {
-    let layout = Layout::new(claims.len());
+    let batches = fold::batches(claims.len(), R::num_coeffs());
+    let layouts: Vec<Layout> = batches
+        .iter()
+        .map(|batch| Layout::new(batch.len()))
+        .collect();
 
-    // The first layer: the error terms within each group, then the groups
-    // folded.
-    let inner = errors::<_, R, B>(
-        |i| claims[i].0.as_ref(),
-        |j| claims[j].1.as_ref(),
-        layout
-            .inner()
-            .map(|(g, i, j)| (g * fold::GROUP + i, g * fold::GROUP + j)),
-    );
-    let inner_commitment = committer.commit(&inner);
-    transcript.write_point(inner_commitment)?;
-    let (mu, nu) = squeeze_pair(transcript)?;
-    let groups: Vec<(sparse::Polynomial<_, R>, sparse::Polynomial<_, R>)> =
-        B::map(0..layout.groups(), |g| {
-            let members = &claims[layout.members(g)];
-            (
-                fold_powers(members.iter().map(|(a, _)| a.as_ref()), mu),
-                fold_powers(members.iter().map(|(_, b)| b.as_ref()), nu),
+    // The first layer: the error terms within each group of each batch,
+    // then the groups folded.
+    let inner: Vec<sparse::Polynomial<_, R>> = batches
+        .iter()
+        .zip(&layouts)
+        .map(|(batch, layout)| {
+            let claims = &claims[batch.clone()];
+            errors::<_, R, B>(
+                |i| claims[i].0.as_ref(),
+                |j| claims[j].1.as_ref(),
+                layout
+                    .inner()
+                    .map(|(g, i, j)| (g * fold::GROUP + i, g * fold::GROUP + j)),
             )
         })
         .collect();
+    let inner_commitments: Vec<C> = inner.iter().map(|inner| committer.commit(inner)).collect();
+    for &commitment in &inner_commitments {
+        transcript.write_point(commitment)?;
+    }
+    let (mu, nu) = squeeze_pair(transcript)?;
+    type Group<F, R> = (sparse::Polynomial<F, R>, sparse::Polynomial<F, R>);
+    let groups: Vec<Vec<Group<_, R>>> = batches
+        .iter()
+        .zip(&layouts)
+        .map(|(batch, layout)| {
+            let claims = &claims[batch.clone()];
+            B::map(0..layout.groups(), |g| {
+                let members = &claims[layout.members(g)];
+                (
+                    fold_powers(members.iter().map(|(a, _)| a.as_ref()), mu),
+                    fold_powers(members.iter().map(|(_, b)| b.as_ref()), nu),
+                )
+            })
+            .collect()
+        })
+        .collect();
 
-    // The second layer, over the groups.
-    let outer = errors::<_, R, B>(|g| &groups[g].0, |h| &groups[h].1, layout.outer());
-    let outer_commitment = committer.commit(&outer);
-    transcript.write_point(outer_commitment)?;
+    // The second layer, over the groups of each batch.
+    let outer: Vec<sparse::Polynomial<_, R>> = groups
+        .iter()
+        .zip(&layouts)
+        .map(|(groups, layout)| {
+            errors::<_, R, B>(|g| &groups[g].0, |h| &groups[h].1, layout.outer())
+        })
+        .collect();
+    let outer_commitments: Vec<C> = outer.iter().map(|outer| committer.commit(outer)).collect();
+    for &commitment in &outer_commitments {
+        transcript.write_point(commitment)?;
+    }
     let (mu_prime, nu_prime) = squeeze_pair(transcript)?;
-    let a = fold_powers(groups.iter().map(|(a, _)| a), mu_prime);
-    let b = fold_powers(groups.iter().map(|(_, b)| b), nu_prime);
 
     // The weighted error terms, as revdots against the public weights.
     let weights = Weights {
@@ -260,53 +288,72 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy>(
         mu_prime,
         nu_prime,
     };
-    let inner_weights = weights.inner::<R>(&layout);
-    let outer_weights = weights.outer::<R>(&layout);
-    let inner_epsilon = B::sparse_revdot(&inner, &inner_weights);
-    let outer_epsilon = B::sparse_revdot(&outer, &outer_weights);
-    transcript.write_scalar(inner_epsilon)?;
-    transcript.write_scalar(outer_epsilon)?;
-    let messages = Fold {
-        inner: inner_commitment,
-        outer: outer_commitment,
-        inner_epsilon,
-        outer_epsilon,
-    };
-
-    // The derived polynomials. A's committed part adds back the wire
-    // bindings' expected values, which their a subtracted.
-    let mut committed_a = a.clone();
-    for (i, shape) in shapes.iter().enumerate() {
-        if let Kind::Masked(m) = shape.kind {
-            committed_a.add_scaled_assign(&masked[m].expected::<R>(), weights.a(i));
-        }
+    let mut messages = Vec::with_capacity(batches.len());
+    let mut public = Vec::with_capacity(batches.len());
+    for (batch, layout) in layouts.iter().enumerate() {
+        let inner_weights = weights.inner::<R>(layout);
+        let outer_weights = weights.outer::<R>(layout);
+        let inner_epsilon = B::sparse_revdot(&inner[batch], &inner_weights);
+        let outer_epsilon = B::sparse_revdot(&outer[batch], &outer_weights);
+        transcript.write_scalar(inner_epsilon)?;
+        transcript.write_scalar(outer_epsilon)?;
+        messages.push(Fold {
+            inner: inner_commitments[batch],
+            outer: outer_commitments[batch],
+            inner_epsilon,
+            outer_epsilon,
+        });
+        public.push((inner_weights, outer_weights));
     }
-    let of_kind = |kinds: fn(Kind) -> bool| {
-        shapes
-            .iter()
-            .enumerate()
-            .filter(move |(_, shape)| kinds(shape.kind))
-            .map(|(i, _)| i)
-    };
-    let dilated = combine(
-        of_kind(|kind| matches!(kind, Kind::Circuit(_)))
-            .map(|i| (weights.b(i), claims[i].0.as_ref())),
-    );
-    let raw = combine(
-        of_kind(|kind| matches!(kind, Kind::Raw)).map(|i| (weights.b(i), claims[i].1.as_ref())),
-    );
-    let commitments = fold::commitments::<_, B, _>(shapes, &weights, commitment, &messages);
 
-    Ok((
-        messages,
-        vec![
+    // Each batch's folded claims and derived polynomials. A's committed
+    // part adds back the wire bindings' expected values, which their a
+    // subtracted. A claim's weights are those of its place in its batch.
+    let mut folded = Vec::with_capacity(3 * batches.len());
+    let mut derived = Vec::with_capacity(Derived::ALL.len() * batches.len());
+    let mut commitments = Vec::with_capacity(Derived::ALL.len() * batches.len());
+    let batched = batches.iter().zip(groups).zip(inner.into_iter().zip(outer));
+    for (((batch, groups), (inner, outer)), (messages, (inner_weights, outer_weights))) in
+        batched.zip(messages.iter().zip(public))
+    {
+        let (claims, shapes) = (&claims[batch.clone()], &shapes[batch.clone()]);
+        let a = fold_powers(groups.iter().map(|(a, _)| a), mu_prime);
+        let b = fold_powers(groups.iter().map(|(_, b)| b), nu_prime);
+        let mut committed_a = a.clone();
+        for (i, shape) in shapes.iter().enumerate() {
+            if let Kind::Masked(m) = shape.kind {
+                committed_a.add_scaled_assign(&masked[m].expected::<R>(), weights.a(i));
+            }
+        }
+        let of_kind = |kinds: fn(Kind) -> bool| {
+            shapes
+                .iter()
+                .enumerate()
+                .filter(move |(_, shape)| kinds(shape.kind))
+                .map(|(i, _)| i)
+        };
+        let dilated = combine(
+            of_kind(|kind| matches!(kind, Kind::Circuit(_)))
+                .map(|i| (weights.b(i), claims[i].0.as_ref())),
+        );
+        let raw = combine(
+            of_kind(|kind| matches!(kind, Kind::Raw)).map(|i| (weights.b(i), claims[i].1.as_ref())),
+        );
+        commitments.extend(fold::commitments::<_, B, _>(
+            shapes,
+            &weights,
+            &commitment,
+            messages,
+        ));
+        folded.extend([
             (Cow::Owned(a), Cow::Owned(b)),
             (Cow::Owned(inner.clone()), Cow::Owned(inner_weights)),
             (Cow::Owned(outer.clone()), Cow::Owned(outer_weights)),
-        ],
-        vec![committed_a, dilated, raw, inner, outer],
-        commitments,
-    ))
+        ]);
+        derived.extend([committed_a, dilated, raw, inner, outer]);
+    }
+
+    Ok((messages, folded, derived, commitments))
 }
 
 /// The prover's reduction on one curve: `claims` are the $(a_i, b_i)$ in
@@ -322,7 +369,7 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy>(
     transcript: &mut impl IpaTranscript<C>,
 ) -> Result<(Reduction<C>, Witness<C, R>)> {
     let n = R::num_coeffs();
-    let (messages, folded, derived, commitments) =
+    let (mut messages, folded, derived, commitments) =
         fold_claims::<C, R, B, Id>(claims, shapes, masked, commitment, committer, transcript)?;
     let rho = transcript.squeeze_challenge()?;
 
@@ -352,7 +399,9 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy>(
     let r = transcript.squeeze_challenge()?;
     let inverse_r = invert(r)?;
     let mut openings = Vec::with_capacity(derived.len());
-    for (which, poly) in Derived::ALL.iter().zip(&derived) {
+    // Each batch's derived polynomials, batch by batch.
+    for (index, poly) in derived.iter().enumerate() {
+        let which = Derived::ALL[index % Derived::ALL.len()];
         let opened = poly.eval(which.point(r, z));
         transcript.write_scalar(opened)?;
         openings.push(opened);
@@ -364,7 +413,8 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy>(
 
     Ok((
         Reduction {
-            fold: messages,
+            fold: messages.remove(0),
+            more: messages,
             p: p_commitment,
             q: q_commitment,
             openings,

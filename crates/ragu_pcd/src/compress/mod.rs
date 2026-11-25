@@ -14,7 +14,8 @@
 //!   bindings that pin the instance's wires to the stage commitments, to
 //!   three, committing the fold's error terms, and reduces those to
 //!   openings of five polynomials the verifier derives from the instance's
-//!   commitments and the fold's, at a point $r$ or its dilation $rz$;
+//!   commitments and the fold's, at a point $r$ or its dilation $rz$; a
+//!   proof whose claims outgrow one fold takes one per batch of them;
 //! - [`batch`] combines those openings with the registry restriction's, the
 //!   batch polynomial's and the accumulator's into one claim;
 //! - the [`ipa`] proves it.
@@ -112,7 +113,9 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// per batched polynomial and one IPA round per bit of the rank.
     fn well_formed<R: Rank>(&self) -> bool {
         fn side<P: Affine, R: Rank>(messages: &Messages<P>, mesh_polynomials: usize) -> bool {
-            let derived = Derived::ALL.len();
+            // An opening per derived polynomial of each batch the claims
+            // fold in, which the reduction's verifier counts.
+            let derived = Derived::ALL.len() * (1 + messages.reduction.more.len());
             // The batch covers the derived polynomials, the reduction's p
             // and q, and the four the instance opens.
             messages.reduction.openings.len() == derived

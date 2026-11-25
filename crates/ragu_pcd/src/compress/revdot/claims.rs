@@ -272,6 +272,78 @@ impl<P: Profile, Id, F: Field> nested::claims::Processor<P, Id> for Shaper<Id, F
     }
 }
 
+/// Counts the claims a claim list makes.
+struct Counter(usize);
+
+impl<P: Profile, Id> native::claims::Processor<P, Id, CircuitIndex> for Counter {
+    fn raw_claim(&mut self, _: Id, _: Id) {
+        self.0 += 1;
+    }
+
+    fn circuit_claim(&mut self, _: CircuitIndex, _: impl Iterator<Item = Id>) {
+        self.0 += 1;
+    }
+
+    fn internal_circuit_claim(
+        &mut self,
+        _: native::InternalCircuitIndex,
+        _: impl Iterator<Item = Id>,
+    ) {
+        self.0 += 1;
+    }
+
+    fn mask_claim(
+        &mut self,
+        _: native::InternalCircuitIndex,
+        _: impl Iterator<Item = Id>,
+    ) -> Result<()> {
+        self.0 += 1;
+        Ok(())
+    }
+}
+
+impl<P: Profile, Id> nested::claims::Processor<P, Id> for Counter {
+    fn raw_claim(&mut self, _: Id, _: Id) {
+        self.0 += 1;
+    }
+
+    fn internal_circuit_claim(
+        &mut self,
+        _: nested::InternalCircuitIndex,
+        _: impl Iterator<Item = Id>,
+    ) {
+        self.0 += 1;
+    }
+
+    fn mask_claim(
+        &mut self,
+        _: nested::InternalCircuitIndex,
+        _: impl Iterator<Item = Id>,
+    ) -> Result<()> {
+        self.0 += 1;
+        Ok(())
+    }
+}
+
+/// The wire bindings the native claims of a proof end with.
+pub(crate) const NATIVE_BINDINGS: usize = 5;
+
+/// The wire bindings the nested claims of a proof end with.
+pub(crate) const NESTED_BINDINGS: usize = 3;
+
+/// The claims of a proof in profile `P` on each curve, the native then
+/// the nested: the decider's, as [`native_shapes`] and [`nested_shapes`]
+/// list them, then the wire bindings'.
+pub(crate) fn num_claims<P: Profile>() -> (usize, usize) {
+    let mut native = Counter(0);
+    native::claims::build::<P, _, _>(&NativeIds, &mut native)
+        .expect("counting the claims does not fail");
+    let mut nested = Counter(0);
+    nested::claims::build::<P, _, _>(&NestedIds, &mut nested)
+        .expect("counting the claims does not fail");
+    (native.0 + NATIVE_BINDINGS, nested.0 + NESTED_BINDINGS)
+}
+
 /// The wire bindings' shapes, after the decider's claims.
 fn with_masked<Id: Copy, F: Field>(
     mut shapes: Vec<Shape<Id, F>>,

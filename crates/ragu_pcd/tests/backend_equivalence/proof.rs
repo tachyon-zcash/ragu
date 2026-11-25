@@ -618,6 +618,7 @@ fn check_compressed_proofs_match(
     } = native;
     let Reduction {
         fold,
+        more: _,
         p: _,
         q: _,
         openings: _,

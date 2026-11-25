@@ -19,7 +19,10 @@ use alloc::{vec, vec::Vec};
 use ragu_circuits::polynomials::{AggregatorRank, Rank};
 use ragu_core::{Error, Result};
 
-use super::{instance::OPENED, revdot::fold::Derived};
+use super::{
+    instance::OPENED,
+    revdot::fold::{self, Derived},
+};
 use crate::{
     internal::{native, nested},
     ipa::IpaCycle,
@@ -54,9 +57,10 @@ pub(crate) enum Run {
     Commitments,
     /// The scalar field's instance values.
     Scalars,
-    /// The host reduction's inner error commitment.
+    /// The host reduction's inner error commitments, one for each batch
+    /// its claims fold in.
     Inner,
-    /// Its outer error commitment.
+    /// Its outer error commitments, likewise.
     Outer,
     /// Its $p$ and $q$.
     Split,
@@ -66,9 +70,10 @@ pub(crate) enum Run {
     SCommitment,
     /// Its IPA's $j$-th round, $L_j$ then $R_j$.
     Round(usize),
-    /// The nested reduction's two $\varepsilon$.
+    /// The nested reduction's two $\varepsilon$ of each batch its claims
+    /// fold in.
     Epsilons,
-    /// Its derived openings, $p(1/r)$ and $q(r)$.
+    /// Its derived openings, batch by batch, $p(1/r)$ and $q(r)$.
     Openings,
     /// Its batch's values.
     Evaluations,
@@ -98,9 +103,14 @@ pub(crate) const fn num_runs<K: Rank>() -> usize {
 }
 
 impl Run {
-    /// The run's stage shape in a proof of profile `P`: the points, then
-    /// the elements, it holds.
-    pub(crate) fn shape<P: Profile>(self) -> StageShape {
+    /// The run's stage shape in a proof of profile `P` at rank `K`: the
+    /// points, then the elements, it holds. A proof whose claims fold in
+    /// one batch on each curve, as the Standard profile's do, has the
+    /// shapes of a single fold.
+    pub(crate) fn shape<P: Profile, K: Rank>(self) -> StageShape {
+        // The batches the claims fold in: the host reduction's, then the
+        // nested reduction's.
+        let (host, nested) = fold::num_batches::<P>(K::num_coeffs());
         let points = |points| StageShape {
             points,
             elements: 0,
@@ -112,12 +122,13 @@ impl Run {
         match self {
             Run::Commitments => points(native_points_of::<P>()),
             Run::Scalars => elements(NESTED_SCALARS),
-            Run::Inner | Run::Outer | Run::F | Run::SCommitment => points(1),
+            Run::Inner | Run::Outer => points(host),
+            Run::F | Run::SCommitment => points(1),
             Run::Split | Run::Round(_) => points(2),
-            Run::Epsilons => elements(2),
-            Run::Openings => elements(Derived::ALL.len() + 2),
+            Run::Epsilons => elements(2 * nested),
+            Run::Openings => elements(Derived::ALL.len() * nested + 2),
             Run::Evaluations => elements(
-                Derived::ALL.len()
+                Derived::ALL.len() * nested
                     + 2
                     + OPENED
                     + P::NESTED_MESH.map_or(0, |mesh| mesh.polynomial_indices().len()),
@@ -206,7 +217,7 @@ pub(crate) const ONLINE_PREFIX_GATES: usize = 19 + 17 + nested::InternalCircuitI
 /// circuit-field side holds the absorbed point to through the run stage's
 /// commitment.
 pub(crate) fn run_degrees<P: Profile, K: Rank, R: Rank>() -> Vec<Vec<usize>> {
-    let shapes: Vec<StageShape> = runs::<K>().into_iter().map(Run::shape::<P>).collect();
+    let shapes: Vec<StageShape> = runs::<K>().into_iter().map(Run::shape::<P, K>).collect();
     chain_skips(ONLINE_PREFIX_GATES, &shapes)
         .into_iter()
         .zip(shapes)

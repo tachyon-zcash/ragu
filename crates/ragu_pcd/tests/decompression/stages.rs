@@ -62,7 +62,7 @@ fn run_stages_land_where_the_layout_says() {
         assert_eq!(&typed, expected, "run {index}");
         assert_eq!(
             nested_front::<K>(&layout)[index].shape(),
-            runs::<K>()[index].shape::<Standard>(),
+            runs::<K>()[index].shape::<Standard, K>(),
             "run {index}'s shape"
         );
     }

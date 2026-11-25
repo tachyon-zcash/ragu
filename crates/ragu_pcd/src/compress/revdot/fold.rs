@@ -18,6 +18,16 @@
 //! split proves $(E, W, \varepsilon)$ beside $(A, B)$. Both sides use the
 //! fuse's error-term order, group by group and row by row.
 //!
+//! Each layer's error terms are one polynomial's coefficients, which caps
+//! the claims the fold takes at once: a proof with more of them folds in
+//! *batches* ([`batches`]), consecutive runs of its claims, each folded as
+//! above into a pair $(A, B)$ and two $E$ of its own. The batches share
+//! the weights: every batch's first-layer $E$ is committed before $\mu,
+//! \nu$, and every batch's second-layer $E$ before $\mu', \nu'$, so each
+//! batch's identity is still a polynomial in challenges squeezed after its
+//! error terms were fixed. The split proves every batch's three claims
+//! together. A proof whose claims fit one batch folds exactly as above.
+//!
 //! The verifier never sees the error terms. It holds $\[E\]$ and $\varepsilon$
 //! and derives $\[A\]$ from the instance's commitments, as the diagonal's
 //! weights $\mu^i \nu^i$ and the off-diagonal's $\mu^i \nu^j$ are distinct
@@ -48,7 +58,7 @@ use crate::{
 /// The size of a first-layer group, the fuse's.
 pub(crate) const GROUP: usize = 7;
 
-/// The prover's messages of the fold on one curve.
+/// The prover's messages of the fold of one batch of claims on one curve.
 #[derive(Clone, Debug)]
 pub(crate) struct Fold<C: Affine> {
     /// The commitment to the first layer's error terms.
@@ -62,25 +72,43 @@ pub(crate) struct Fold<C: Affine> {
 }
 
 impl<C: Affine> Fold<C> {
-    /// Replays the messages on `transcript` in the prover's order and
-    /// squeezes the weights where the prover did.
+    /// Replays the messages of a fold in one batch on `transcript` in the
+    /// prover's order and squeezes the weights where the prover did.
     pub(crate) fn replay(
         &self,
         transcript: &mut impl IpaTranscript<C>,
     ) -> Result<Weights<C::Scalar>> {
-        transcript.write_point(self.inner)?;
-        let (mu, nu) = squeeze_pair(transcript)?;
-        transcript.write_point(self.outer)?;
-        let (mu_prime, nu_prime) = squeeze_pair(transcript)?;
-        transcript.write_scalar(self.inner_epsilon)?;
-        transcript.write_scalar(self.outer_epsilon)?;
-        Ok(Weights {
-            mu,
-            nu,
-            mu_prime,
-            nu_prime,
-        })
+        replay(core::slice::from_ref(self), transcript)
     }
+}
+
+/// Replays the messages of `folds`, one per batch, on `transcript` in the
+/// prover's order and squeezes the weights where the prover did: every
+/// batch's first-layer commitment, the first layer's weights, every
+/// batch's second-layer commitment, the second layer's weights, then each
+/// batch's two $\varepsilon$.
+pub(crate) fn replay<C: Affine>(
+    folds: &[Fold<C>],
+    transcript: &mut impl IpaTranscript<C>,
+) -> Result<Weights<C::Scalar>> {
+    for fold in folds {
+        transcript.write_point(fold.inner)?;
+    }
+    let (mu, nu) = squeeze_pair(transcript)?;
+    for fold in folds {
+        transcript.write_point(fold.outer)?;
+    }
+    let (mu_prime, nu_prime) = squeeze_pair(transcript)?;
+    for fold in folds {
+        transcript.write_scalar(fold.inner_epsilon)?;
+        transcript.write_scalar(fold.outer_epsilon)?;
+    }
+    Ok(Weights {
+        mu,
+        nu,
+        mu_prime,
+        nu_prime,
+    })
 }
 
 /// One layer's pair of challenges.
@@ -168,6 +196,49 @@ impl Layout {
     pub(crate) fn outer(&self) -> impl Iterator<Item = (usize, usize)> {
         off_diagonal(self.groups())
     }
+
+    /// Whether each layer's error terms are at most the `capacity`
+    /// coefficients of one polynomial.
+    fn fits(&self, capacity: usize) -> bool {
+        self.inner().count() <= capacity && self.outer().count() <= capacity
+    }
+}
+
+/// The batches `claims` claims on one curve fold in, as ranges of them in
+/// claim order: as few as leave each layer's error terms of a batch the
+/// `capacity` coefficients of one polynomial, with the claims shared
+/// evenly between them. Claims that fit one batch fold whole.
+///
+/// # Panics
+///
+/// Panics if a polynomial of `capacity` coefficients does not hold the
+/// error terms of two groups of claims, or if there are too few claims
+/// for two groups: both are fixed by the protocol on each curve.
+pub(crate) fn batches(claims: usize, capacity: usize) -> Vec<core::ops::Range<usize>> {
+    let mut count = 1;
+    while !Layout::new(claims.div_ceil(count)).fits(capacity) {
+        count += 1;
+    }
+    let (size, longer) = (claims / count, claims % count);
+    let mut start = 0;
+    (0..count)
+        .map(|batch| {
+            let batch = start..start + size + usize::from(batch < longer);
+            start = batch.end;
+            batch
+        })
+        .collect()
+}
+
+/// The batches the claims of a proof in profile `P` fold in on each
+/// curve, the native then the nested, in polynomials of `capacity`
+/// coefficients (see [`batches`]).
+pub(crate) fn num_batches<P: crate::profile::Profile>(capacity: usize) -> (usize, usize) {
+    let (native, nested) = super::claims::num_claims::<P>();
+    (
+        batches(native, capacity).len(),
+        batches(nested, capacity).len(),
+    )
 }
 
 /// The pairs $(i, j)$ with $i \ne j$ below `n`, row by row.

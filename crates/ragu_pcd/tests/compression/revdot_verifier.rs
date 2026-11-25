@@ -63,6 +63,7 @@ fn run(
             inner_epsilon: Fp::ZERO,
             outer_epsilon: Fp::ZERO,
         },
+        more: Vec::new(),
         p: point,
         q: point,
         openings: vec![Fp::ZERO; Derived::ALL.len()],

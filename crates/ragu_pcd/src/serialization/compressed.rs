@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_primitives::vec::{ConstLen, Len};
+use ragu_primitives::vec::Len;
 use udon::{curve::Affine, field::Field};
 
 use crate::{
@@ -26,8 +26,8 @@ use crate::{
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     serialization::{
-        Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, Point, Reader,
-        Rounds, Scalar, SizedSequence, field_len,
+        Array, Decode, DefaultEncoding, Dimension, Dimensions, Encode, Error, FixedSequence, Point,
+        Reader, Rounds, Scalar, SizedSequence, field_len,
     },
 };
 
@@ -82,18 +82,6 @@ codec!([P: Affine] Fold<P> {
     inner_epsilon => Scalar,
     outer_epsilon => Scalar,
 });
-codec!([P: Affine] Reduction<P> {
-    fold => DefaultEncoding,
-    p => Point,
-    q => Point,
-    openings => FixedSequence<Scalar, ConstLen<{Derived::ALL.len()}>>,
-    p_at_inverse_r => Scalar,
-    q_at_r => Scalar,
-});
-codec!([P: Affine] Batch<P> {
-    f => Point,
-    evaluations => FixedSequence<Scalar, ConstLen<{Derived::ALL.len() + 2 + OPENED}>>,
-});
 struct RoundPair;
 impl<P: Affine> Encode<RoundPair> for (P, P) {
     fn encode(&self, out: &mut Vec<u8>, dims: Dimensions) -> Result<(), Error<'static>> {
@@ -116,11 +104,6 @@ codec!([P: Affine] IpaProof<P> {
     s_commitment => Point,
     rounds => SizedSequence<RoundPair, Rounds>,
     c => Scalar,
-});
-codec!([P: Affine] Messages<P> {
-    reduction => DefaultEncoding,
-    batch => DefaultEncoding,
-    opening => DefaultEncoding,
 });
 codec!([C: ProfiledCycle] Instance<C> {
     circuit_id => DefaultEncoding,
@@ -153,12 +136,39 @@ codec!([C: ProfiledCycle] Instance<C> {
     nested_a_at_u => Scalar,
     nested_b_at_u => Scalar,
 });
+struct MeshReduction<P, S>(PhantomData<(P, S)>);
 struct MeshBatch<P, S>(PhantomData<(P, S)>);
 struct MeshMessages<P, S>(PhantomData<(P, S)>);
+
+/// The batches the claims of a proof in profile `P` fold in on side `S`,
+/// at the payload's rank (see
+/// [`fold::batches`](crate::compress::revdot::fold::batches)): one for a
+/// proof whose claims fit a polynomial's coefficients.
+fn batches<P: Profile, S: crate::profile::online::stages::Side>(dims: Dimensions) -> usize {
+    let (native, nested) = crate::compress::revdot::fold::num_batches::<P>(1 << dims.rank);
+    if S::NATIVE { native } else { nested }
+}
+
+/// The folds of a reduction past its first: one per batch past the first.
+struct MoreFolds<P, S>(PhantomData<(P, S)>);
+impl<P: Profile, S: crate::profile::online::stages::Side> Dimension for MoreFolds<P, S> {
+    fn of(dims: Dimensions) -> usize {
+        batches::<P, S>(dims) - 1
+    }
+}
+
+/// A reduction's openings: one per derived polynomial of each batch.
+struct DerivedOpenings<P, S>(PhantomData<(P, S)>);
+impl<P: Profile, S: crate::profile::online::stages::Side> Dimension for DerivedOpenings<P, S> {
+    fn of(dims: Dimensions) -> usize {
+        Derived::ALL.len() * batches::<P, S>(dims)
+    }
+}
+
 struct BatchValues<P, S>(PhantomData<(P, S)>);
-impl<P: Profile, S: crate::profile::online::stages::Side> Len for BatchValues<P, S> {
-    fn len() -> usize {
-        Derived::ALL.len()
+impl<P: Profile, S: crate::profile::online::stages::Side> Dimension for BatchValues<P, S> {
+    fn of(dims: Dimensions) -> usize {
+        Derived::ALL.len() * batches::<P, S>(dims)
             + 2
             + OPENED
             + S::mesh::<P>().map_or(0, |mesh| mesh.polynomial_indices().len())
@@ -184,12 +194,21 @@ macro_rules! profile_codec {
         }
     }
 }
+profile_codec!(Reduction<C>, MeshReduction<P, S> {
+    fold => DefaultEncoding,
+    more => SizedSequence<DefaultEncoding, MoreFolds<P, S>>,
+    p => Point,
+    q => Point,
+    openings => SizedSequence<Scalar, DerivedOpenings<P, S>>,
+    p_at_inverse_r => Scalar,
+    q_at_r => Scalar,
+});
 profile_codec!(Batch<C>, MeshBatch<P, S> {
     f => Point,
-    evaluations => FixedSequence<Scalar, BatchValues<P, S>>,
+    evaluations => SizedSequence<Scalar, BatchValues<P, S>>,
 });
 profile_codec!(Messages<C>, MeshMessages<P, S> {
-    reduction => DefaultEncoding,
+    reduction => MeshReduction<P, S>,
     batch => MeshBatch<P, S>,
     opening => DefaultEncoding,
 });

@@ -991,12 +991,14 @@ fn encode_messages<P: Affine>(messages: &Messages<P>, out: &mut Writer) {
     } = messages;
     let Reduction {
         fold,
+        more,
         p,
         q,
         openings,
         p_at_inverse_r,
         q_at_r,
     } = reduction;
+    assert!(more.is_empty(), "a fixture's claims fold in one batch");
     let Fold {
         inner,
         outer,
@@ -1142,6 +1144,7 @@ fn decode_messages<P: Affine>(cursor: &mut Cursor<'_>) -> Option<Messages<P>> {
     };
     let reduction = Reduction {
         fold,
+        more: Vec::new(),
         p: cursor.point()?,
         q: cursor.point()?,
         openings: cursor.fields()?,
@@ -1926,6 +1929,7 @@ fn random_messages<P: Affine>(shape: &Messages<P>, tape: &mut Tape) -> Messages<
                 inner_epsilon: tape.field(),
                 outer_epsilon: tape.field(),
             },
+            more: Vec::new(),
             p: tape.point(),
             q: tape.point(),
             openings: tape.fields(shape.reduction.openings.len()),
