@@ -81,6 +81,54 @@ impl Profile for Twin {
         B: SelectableBackend;
 }
 
+/// The standard profile's circuits with both walks cut into segments of
+/// eight steps: no extension of its own, and a proof that carries the
+/// walks' own polynomials as its extensions' stages. The nested walk's are
+/// a polynomial of the nested points stage per further segment and the
+/// boundaries stage's; the native walk's are its bits stage's, a
+/// polynomial of the segment stage per segment and the boundaries stage's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Segmented;
+
+impl Profile for Segmented {
+    const NAME: &'static str = "segmented";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NATIVE_STEPS_PER_SEGMENT: usize = 8;
+    const NESTED_STEPS_PER_SEGMENT: usize = 8;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
+/// The standard profile's circuits with both folds' verification cut into
+/// chunks: no extension of its own, and a proof that carries, on each side,
+/// the chunk circuits' polynomials, the second layer's circuit's and the
+/// targets stage's as its extension's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Chunked;
+
+impl Profile for Chunked {
+    const NAME: &'static str = "chunked";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const CHUNKING: Chunking = Chunking {
+        native_fold: 3,
+        nested_fold: 3,
+    };
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
 /// Two native circuits over two stages, each under its last stage's
 /// final mask, and one nested circuit over one stage under one final
 /// mask, declared but without hooks.

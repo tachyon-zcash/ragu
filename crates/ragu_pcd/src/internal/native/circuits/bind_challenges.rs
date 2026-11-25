@@ -176,6 +176,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
         let builder = builder.skip_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        // The stages of an opening program run in chunks: nothing for a
+        // program `compute_v` runs whole.
+        let builder = builder
+            .skip_stage::<super::super::stages::open::CarryStage<C, R, HEADER_SIZE>>()?
+            .skip_stage::<super::super::stages::open::BandStage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
         let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();

@@ -909,6 +909,27 @@ impl<'dr, D: Driver<'dr>> Basis<'dr, D> {
     }
 }
 
+/// The interpolation weights of a layer's challenge `r` over `m` nodes, as
+/// [`EvaluationFolder`] computes them: node $i$'s is $\ell_i(r)$.
+///
+/// A circuit that folds a part of a layer's evaluations reads the layer's
+/// weights instead of holding an [`EvaluationFolder`] over all of them.
+///
+/// # Errors
+///
+/// Propagates the driver's errors.
+///
+/// # Panics
+///
+/// Panics if `m` is zero.
+pub(crate) fn basis_weights<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    r: &Element<'dr, D>,
+    m: usize,
+) -> Result<Vec<Element<'dr, D>>> {
+    Ok(Basis::new(dr, r, m)?.weights)
+}
+
 /// Cached interpolation context shared by all groups of a folding layer.
 pub struct ClaimFolder<'dr, D: Driver<'dr>> {
     challenge: Element<'dr, D>,

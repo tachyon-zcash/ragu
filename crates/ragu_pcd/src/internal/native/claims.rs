@@ -213,7 +213,7 @@ where
 
             // collapse: Collapse + Preamble + InnerError + OuterError,
             // and PointsBinding when extension targets use child stage points.
-            CollapseCircuit => {
+            CollapseCircuit if !super::is_fold_chunked::<P>() => {
                 let bound = crate::profile::native_extension::<P>().binding.is_some()
                     || !P::NESTED_ONLINE.is_empty();
                 for ((((pc, pb), pre), em), en) in source
@@ -233,8 +233,29 @@ where
                 }
             }
 
+            // collapse, for a fold verified in chunks: Collapse + Preamble +
+            // the targets stage + OuterError, and PointsBinding as above.
+            // The circuit ends before InnerError.
+            CollapseCircuit => {
+                let bound = crate::profile::native_extension::<P>().binding.is_some()
+                    || !P::NESTED_ONLINE.is_empty();
+                let mut loaded = alloc::vec![Collapse];
+                if bound {
+                    loaded.push(PointsBinding);
+                }
+                loaded.extend([Preamble, super::fold_targets_rx::<P>(), OuterError]);
+                for rxs in per_proof(source, loaded) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
             // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
             // when it exports the nested online input-stage commitment.
+            ComputeVCircuit if super::is_opening_chunked::<P>() => {
+                for rxs in per_proof(source, super::open::base_claim::<P>()) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
             ComputeVCircuit => {
                 for ((((cv, pb), pre), q), e) in source
                     .rx(Rx(ComputeV))
@@ -276,43 +297,65 @@ where
             }
 
             // bind_endoscalar: BindEndoscalar + every points input stage +
-            // PointsWalk
+            // PointsWalk, and for a walk of several segments the bits stage
+            // and the segment the walk ends in
             BindEndoscalarCircuit => {
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in [BindEndoscalar]
-                    .into_iter()
-                    .chain(POINTS_INPUT_STAGES)
-                    .chain([PointsWalk])
-                {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
+                let walk = super::segments::<P>();
+                let mut loaded = alloc::vec![BindEndoscalar];
+                if walk.is_split() {
+                    loaded.extend([
+                        super::walk_bits_rx::<P>(),
+                        super::segment_rx::<P>(walk.count() - 1),
+                    ]);
                 }
-                for rxs in per_proof {
+                loaded.extend(POINTS_INPUT_STAGES);
+                loaded.push(PointsWalk);
+                for rxs in per_proof(source, loaded) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
             // endoscaling step k: its rx + every points input stage +
-            // PointsWalk (k(y) = 1)
+            // PointsWalk, or, for a walk of several segments, its rx + the
+            // bits stage + its own segment (k(y) = 1)
             EndoscalingStep(step) => {
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in [RxIndex::EndoscalingStep(step)]
-                    .into_iter()
-                    .chain(POINTS_INPUT_STAGES)
-                    .chain([PointsWalk])
-                {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
+                let walk = super::segments::<P>();
+                let mut loaded = alloc::vec![RxIndex::EndoscalingStep(step)];
+                if walk.is_split() {
+                    loaded.extend([
+                        super::walk_bits_rx::<P>(),
+                        super::segment_rx::<P>(walk.locate(step as usize).0),
+                    ]);
+                } else {
+                    loaded.extend(POINTS_INPUT_STAGES);
+                    loaded.push(PointsWalk);
                 }
-                for rxs in per_proof {
+                for rxs in per_proof(source, loaded) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // A circuit of the fuse's own among the extension's: its rx and
+            // the fuse's stages it reads. Its k(y) is the unified instance's
+            // (see `ky_values`).
+            ExtensionCircuit(k) if super::builtin_circuit::<P>(k as usize).is_some() => {
+                let own = RxIndex::ExtensionCircuit(k);
+                let loaded = match super::builtin_circuit::<P>(k as usize).expect("checked above") {
+                    // A first-layer chunk of the fold: Preamble + the
+                    // targets stage + OuterError + InnerError.
+                    super::BuiltinCircuit::FoldInner(_) => alloc::vec![
+                        own,
+                        Preamble,
+                        super::fold_targets_rx::<P>(),
+                        OuterError,
+                        InnerError,
+                    ],
+                    // The fold's second layer: Preamble + OuterError.
+                    super::BuiltinCircuit::FoldOuter => alloc::vec![own, Preamble, OuterError],
+                    // A chunk of the opening program.
+                    super::BuiltinCircuit::Open(chunk) => super::open::chunk_claim::<P>(chunk),
+                };
+                for rxs in per_proof(source, loaded) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -392,13 +435,34 @@ where
                 processor.bonding_claim(id, source.rx(Rx(PointsWalk)))?;
             }
 
-            // Final stage bonding claims
-            InnerErrorFinalStaged => {
+            // Final stage bonding claims. A fold verified in chunks has
+            // its first-layer chunks end under the inner error stage, and
+            // `collapse` and the second layer's circuit under the outer
+            // error stage, with the hash circuits.
+            InnerErrorFinalStaged if !super::is_fold_chunked::<P>() => {
                 processor.bonding_claim(id, source.rx(Rx(Collapse)))?;
             }
-            OuterErrorFinalStaged => {
+            InnerErrorFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    (0..super::fold_chunks::<P>()).flat_map(|chunk| {
+                        source.rx(Rx(RxIndex::ExtensionCircuit(super::fold_inner::<P>(chunk))))
+                    }),
+                )?;
+            }
+            OuterErrorFinalStaged if !super::is_fold_chunked::<P>() => {
                 processor
                     .bonding_claim(id, source.rx(Rx(Hashes1)).chain(source.rx(Rx(Hashes2))))?;
+            }
+            OuterErrorFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    source
+                        .rx(Rx(Hashes1))
+                        .chain(source.rx(Rx(Hashes2)))
+                        .chain(source.rx(Rx(Collapse)))
+                        .chain(source.rx(Rx(RxIndex::ExtensionCircuit(super::fold_outer::<P>())))),
+                )?;
             }
             PreambleFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(BindBeta)))?;
@@ -419,7 +483,7 @@ where
                     processor.bonding_claim(id, once(own))?;
                 }
             }
-            EvalFinalStaged => {
+            EvalFinalStaged if !super::is_opening_chunked::<P>() => {
                 processor.bonding_claim(
                     id,
                     source.rx(Rx(ComputeV)).chain(
@@ -427,19 +491,94 @@ where
                     ),
                 )?;
             }
+            // With the opening program run in chunks, the circuit in
+            // `compute_v`'s place ends on the band stage with the chunks.
+            EvalFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    (0..NUM_BINDERS as u32).flat_map(|k| source.rx(Rx(BindChallenges(k)))),
+                )?;
+            }
+            OpeningFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    super::open::final_claim::<P>()
+                        .into_iter()
+                        .flat_map(|rx| source.rx(Rx(rx))),
+                )?;
+            }
+            // The loading of a band of the opening program, folded across
+            // proofs: each proof's group sums the band's polynomial and the
+            // two stages it copies.
+            OpeningLoading(band) => {
+                processor.grouped_bonding_claim(
+                    id,
+                    per_proof(source, super::open::loading_claim::<P>(band as usize))
+                        .into_iter()
+                        .map(Vec::into_iter),
+                )?;
+            }
+            // The walk stage's final mask: over bind_endoscalar and the
+            // steps of a walk of one segment. The steps of a walk of several
+            // end under their segment stage's instead.
             PointsWalkFinalStaged => {
+                let steps = if super::segments::<P>().is_split() {
+                    0
+                } else {
+                    NumSteps::<P>::len() as u32
+                };
                 processor.bonding_claim(
                     id,
                     source.rx(Rx(BindEndoscalar)).chain(
-                        (0..NumSteps::<P>::len() as u32)
-                            .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
+                        (0..steps).flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
                     ),
+                )?;
+            }
+            WalkSegmentFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    (0..NumSteps::<P>::len() as u32)
+                        .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
+                )?;
+            }
+
+            // The loading of a segment of a walk of several segments,
+            // folded across proofs: each proof's group sums the stages the
+            // bonding reads, the segment's polynomial among them.
+            WalkLoading(segment) => {
+                let mut loaded = alloc::vec![
+                    PointsBinding,
+                    super::segment_rx::<P>(segment as usize),
+                    super::boundaries_rx::<P>(),
+                ];
+                loaded.extend(&POINTS_INPUT_STAGES[1..]);
+                processor.grouped_bonding_claim(
+                    id,
+                    per_proof(source, loaded).into_iter().map(Vec::into_iter),
                 )?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Each proof's polynomials at `indices`, in that order: one list per proof
+/// of the source.
+fn per_proof<S>(source: &S, indices: impl IntoIterator<Item = RxIndex>) -> Vec<Vec<S::Rx>>
+where
+    S: Source<RxComponent = RxComponent>,
+{
+    let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+    for index in indices {
+        for (i, rx) in source.rx(RxComponent::Rx(index)).enumerate() {
+            if per_proof.len() <= i {
+                per_proof.push(Vec::new());
+            }
+            per_proof[i].push(rx);
+        }
+    }
+    per_proof
 }
 
 /// Trait for providing $k(y)$ values for claim verification.
@@ -548,8 +687,12 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 "an online helper takes one target per proof"
             );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
+            // A circuit of the fuse's own takes the unified instance.
+            let unified: Vec<S::Ky> = source.unified_ky().collect();
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {
-                if helper == Some(circuit) {
+                if super::builtin_circuit::<P>(circuit as usize).is_some() {
+                    unified.clone()
+                } else if helper == Some(circuit) {
                     helper_ky.clone()
                 } else if extension.statement == Some(circuit) {
                     statement.clone()

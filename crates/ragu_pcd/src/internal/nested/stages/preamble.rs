@@ -25,7 +25,7 @@ use crate::{
             self, NUM_BINDERS, RxIndex,
             online::{self, NUM_ONLINE_FP_POLYS},
         },
-        nested::{PointsStage, online as online_fq, unified},
+        nested::{online as online_fq, unified},
     },
     profile::{
         Profile, ProfiledCycle,
@@ -51,7 +51,8 @@ pub fn num_points<P: Profile>() -> usize {
 /// introduction of child circuit commitments into the nested transcript.
 /// The remaining `stashed_*` fields are copies of values the child's nested
 /// unified instance exports, placed here so that loading can enforce them
-/// against [`PointsStage`] and so that this step can compute the child's
+/// against [`PointsStage`](crate::internal::nested::PointsStage) and so that
+/// this step can compute the child's
 /// expected instance claim value $k(y_n)$ from them. The collapse circuit binds
 /// the copies to the child's instance circuits: it folds the child's
 /// instance-circuit claims with that expected value, outside the base case.
@@ -567,7 +568,9 @@ pub struct Stage<C: Affine, R, P> {
 }
 
 impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
-    type Parent = PointsStage<C, P>;
+    // The boundaries stage follows the points stage and holds nothing for
+    // a walk of one segment, where this stage so follows the points stage.
+    type Parent = super::targets::Stage<C, P>;
     type Witness<'source> = &'source Witness<C, P>;
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 

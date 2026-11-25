@@ -26,15 +26,17 @@ use ragu_circuits::{
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{
-    extract_endoscalar, lift_endoscalar,
-    vec::{ConstLen, Len},
+    Uendo, extract_endoscalar, lift_endoscalar,
+    vec::{ConstLen, FixedVec, Len},
 };
-use udon::field::Field;
+use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 pub mod circuits {
     pub mod collapse;
     pub mod common;
     pub mod compute_v;
+    pub mod fold_inner;
+    pub mod fold_outer;
     pub mod loading;
 }
 
@@ -125,6 +127,18 @@ impl<P: Profile> Len for NumExtensionStages<P> {
     }
 }
 
+/// Length type for the stages the profile and the online batch declare in
+/// the nested extension: the extension's stages but the ones a nested walk
+/// of several segments adds after them (see [`num_walk_stages`]), which no
+/// binding names.
+pub struct NumDeclaredStages<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumDeclaredStages<P> {
+    fn len() -> usize {
+        walk_stage_offset::<P>()
+    }
+}
+
 /// Length type for the nested rx polynomials, [`RxIndex::num`].
 pub struct NumRx<P: Profile>(PhantomData<P>);
 
@@ -143,24 +157,376 @@ impl<P: Profile> Len for NumInternal<P> {
     }
 }
 
-/// The nested points stage, over the native batch's commitments, for host
-/// curve `C` in profile `P`.
-pub type PointsStage<C, P> =
-    endoscalar::PointsStage<C, NumPoints<P>, Endoscalings<P>, stages::bridge_hash::Stage<C>>;
+/// How the nested walk of profile `P` is cut into segments: one, the whole
+/// walk, unless the profile sets
+/// [`NESTED_STEPS_PER_SEGMENT`](Profile::NESTED_STEPS_PER_SEGMENT) below
+/// the walk's steps.
+pub struct Walk<P: Profile>(PhantomData<P>);
 
-/// The nested points stage's witness.
-pub type PointsWitness<C, P> = endoscalar::PointsWitness<C, NumPoints<P>, Endoscalings<P>>;
+impl<P: Profile> Walk<P> {
+    /// The segments, evaluated once per profile.
+    pub const SEGMENTS: endoscalar::Segments = endoscalar::Segments::new(
+        NumPoints::<P>::LEN,
+        P::NESTED_ENDOSCALINGS_PER_STEP,
+        P::NESTED_STEPS_PER_SEGMENT,
+    );
+}
+
+/// The segments of profile `P`'s nested walk (see [`Walk`]).
+pub const fn segments<P: Profile>() -> endoscalar::Segments {
+    Walk::<P>::SEGMENTS
+}
+
+/// The stage polynomials a nested walk of `segments` segments adds to a
+/// proof beyond the points stage's first: one more of the points stage per
+/// further segment, then the boundaries stage's
+/// ([`stages::boundaries`]). None for a walk of one segment.
+///
+/// A proof carries them as the last stages of its nested extension (see
+/// `profile::nested_extension`), so the native walk folds their commitments
+/// with the extension's.
+pub const fn num_walk_stages(segments: usize) -> usize {
+    if segments > 1 { segments } else { 0 }
+}
+
+/// The rx polynomial of segment `segment` of profile `P`'s nested walk: the
+/// points stage's own for the first segment, and for each further one a
+/// stage of the nested extension, after the stages the profile and the
+/// online batch declare.
+///
+/// # Panics
+///
+/// Panics if the walk has no such segment.
+pub fn segment_rx<P: Profile>(segment: usize) -> RxIndex {
+    assert!(segment < segments::<P>().count(), "no such segment");
+    match segment {
+        0 => RxIndex::PointsStage,
+        segment => RxIndex::ExtensionStage((walk_stage_offset::<P>() + segment - 1) as u32),
+    }
+}
+
+/// The rx polynomial of the boundaries stage of profile `P`'s nested walk,
+/// for a walk of several segments.
+///
+/// # Panics
+///
+/// Panics if the walk is one segment, which has no boundary.
+pub fn boundaries_rx<P: Profile>() -> RxIndex {
+    let walk = segments::<P>();
+    assert!(walk.is_split(), "a walk of one segment has no boundary");
+    RxIndex::ExtensionStage((walk_stage_offset::<P>() + walk.count() - 1) as u32)
+}
+
+/// The polynomials a nested fold cut into `chunks` first-layer chunk
+/// circuits adds to a proof: the chunk circuits', the second layer's
+/// circuit's and the targets stage's. None for a fold `collapse` verifies
+/// whole.
+pub const fn num_fold_polynomials(chunks: usize) -> usize {
+    if chunks > 0 { chunks + 2 } else { 0 }
+}
+
+/// The circuits that verify the first layer of profile `P`'s nested fold:
+/// none when `collapse` verifies the fold whole (see
+/// [`Chunking`](crate::profile::Chunking)).
+pub fn fold_chunks<P: Profile>() -> usize {
+    P::CHUNKING.nested_fold
+}
+
+/// Whether profile `P` cuts the nested fold's verification into chunks.
+pub fn is_fold_chunked<P: Profile>() -> bool {
+    fold_chunks::<P>() > 0
+}
+
+/// The groups of profile `P`'s nested fold that first-layer chunk `chunk`
+/// verifies: the chunks share the groups evenly, in order.
+///
+/// # Panics
+///
+/// Panics if the fold has no such chunk.
+pub fn fold_groups<P: Profile>(chunk: usize) -> core::ops::Range<usize> {
+    let chunks = fold_chunks::<P>();
+    assert!(chunk < chunks, "no such fold chunk");
+    let groups = NumFoldGroups::<P>::len();
+    chunk * groups / chunks..(chunk + 1) * groups / chunks
+}
+
+/// A stage of the fuse that a proof carries among its nested extension's
+/// stages, after the ones the profile and the online batch declare, in the
+/// order of [`builtin_stage`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinStage {
+    /// The points stage of a further segment of a walk of several
+    /// segments, by segment: the first segment's is the points stage's own
+    /// polynomial.
+    WalkSegment(usize),
+    /// The boundaries stage of a walk of several segments.
+    WalkBoundaries,
+    /// The targets stage of a fold verified in chunks.
+    FoldTargets,
+}
+
+/// The stages the fuse adds to profile `P`'s nested extension: those of a
+/// walk of several segments, then the targets stage of a fold verified in
+/// chunks.
+pub fn num_builtin_stages<P: Profile>() -> usize {
+    num_walk_stages(segments::<P>().count()) + is_fold_chunked::<P>() as usize
+}
+
+/// The fuse's stage at index `stage` of profile `P`'s nested extension's
+/// stages, or `None` for a stage the profile or the online batch declares.
+///
+/// # Panics
+///
+/// Panics if the extension has no such stage.
+pub fn builtin_stage<P: Profile>(stage: usize) -> Option<BuiltinStage> {
+    let index = stage.checked_sub(walk_stage_offset::<P>())?;
+    let walk = num_walk_stages(segments::<P>().count());
+    if index < walk {
+        return Some(if index + 1 == walk {
+            BuiltinStage::WalkBoundaries
+        } else {
+            BuiltinStage::WalkSegment(index + 1)
+        });
+    }
+    assert!(
+        index - walk < is_fold_chunked::<P>() as usize,
+        "no such extension stage"
+    );
+    Some(BuiltinStage::FoldTargets)
+}
+
+/// The rx polynomial of the targets stage of profile `P`'s nested fold,
+/// for a fold verified in chunks.
+///
+/// # Panics
+///
+/// Panics if `collapse` verifies the fold whole.
+pub fn fold_targets_rx<P: Profile>() -> RxIndex {
+    assert!(
+        is_fold_chunked::<P>(),
+        "a fold verified whole has no targets stage"
+    );
+    RxIndex::ExtensionStage(
+        (walk_stage_offset::<P>() + num_walk_stages(segments::<P>().count())) as u32,
+    )
+}
+
+/// A circuit of the fuse that a proof carries among its nested extension's
+/// circuits, after the ones the profile and the online batch declare, in
+/// the order of [`builtin_circuit`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinCircuit {
+    /// A first-layer chunk of a fold verified in chunks.
+    FoldInner(usize),
+    /// The second layer's circuit of a fold verified in chunks.
+    FoldOuter,
+}
+
+/// The circuits the fuse adds to profile `P`'s nested extension: the
+/// chunks of a fold verified in chunks and its second layer's circuit.
+pub fn num_builtin_circuits<P: Profile>() -> usize {
+    match fold_chunks::<P>() {
+        0 => 0,
+        chunks => chunks + 1,
+    }
+}
+
+/// The index, among the nested extension's circuits, of the first circuit
+/// the fuse adds: the circuits the profile and the online batch declare
+/// come before.
+pub(crate) fn builtin_circuit_offset<P: Profile>() -> usize {
+    crate::profile::online::stages::layout::<P, crate::profile::online::stages::Nested>()
+        .circuits
+        .len()
+}
+
+/// The fuse's circuit at index `circuit` of profile `P`'s nested
+/// extension's circuits, or `None` for a circuit the profile or the online
+/// batch declares.
+///
+/// # Panics
+///
+/// Panics if the extension has no such circuit.
+pub fn builtin_circuit<P: Profile>(circuit: usize) -> Option<BuiltinCircuit> {
+    let index = circuit.checked_sub(builtin_circuit_offset::<P>())?;
+    let chunks = fold_chunks::<P>();
+    assert!(
+        index < num_builtin_circuits::<P>(),
+        "no such extension circuit"
+    );
+    Some(if index < chunks {
+        BuiltinCircuit::FoldInner(index)
+    } else {
+        BuiltinCircuit::FoldOuter
+    })
+}
+
+/// First-layer chunk `chunk` of profile `P`'s nested fold, among the
+/// nested extension's circuits: the index of its circuit and of its rx
+/// polynomial.
+///
+/// # Panics
+///
+/// Panics if the fold has no such chunk.
+pub fn fold_inner<P: Profile>(chunk: usize) -> u32 {
+    assert!(chunk < fold_chunks::<P>(), "no such fold chunk");
+    (builtin_circuit_offset::<P>() + chunk) as u32
+}
+
+/// The second layer's circuit of profile `P`'s nested fold, for a fold
+/// verified in chunks, among the nested extension's circuits: the index of
+/// its circuit and of its rx polynomial.
+///
+/// # Panics
+///
+/// Panics if `collapse` verifies the fold whole.
+pub fn fold_outer<P: Profile>() -> u32 {
+    assert!(
+        is_fold_chunked::<P>(),
+        "a fold verified whole has no second-layer circuit"
+    );
+    (builtin_circuit_offset::<P>() + fold_chunks::<P>()) as u32
+}
+
+/// The index, among the nested extension's stages, of the first stage the
+/// nested walk adds: the stages the profile and the online batch declare
+/// come before.
+pub(crate) fn walk_stage_offset<P: Profile>() -> usize {
+    crate::profile::online::stages::layout::<P, crate::profile::online::stages::Nested>().stages
+}
+
+/// Length type for the points the nested points stage holds in profile
+/// `P`: every point of a walk of one segment, and otherwise one segment's,
+/// its initial point and the inputs of its steps.
+pub struct SegmentPoints<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for SegmentPoints<P> {
+    fn len() -> usize {
+        segments::<P>().stage_points()
+    }
+}
+
+/// Length type for the points the boundaries stage holds in profile `P`:
+/// one per segment of the nested walk but the last.
+pub struct NumBoundaries<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumBoundaries<P> {
+    fn len() -> usize {
+        segments::<P>().count() - 1
+    }
+}
+
+/// The nested points stage, over the native batch's commitments, for host
+/// curve `C` in profile `P`: the whole walk's points, or one segment's (see
+/// [`Walk`]).
+pub type PointsStage<C, P> =
+    endoscalar::PointsStage<C, SegmentPoints<P>, Endoscalings<P>, stages::bridge_hash::Stage<C>>;
+
+/// The nested points stage's witness: one segment's points.
+pub type PointsWitness<C, P> = endoscalar::PointsWitness<C, SegmentPoints<P>, Endoscalings<P>>;
 
 /// The nested points stage's output gadget.
-pub type Points<'dr, D, C, P> = endoscalar::Points<'dr, D, C, NumPoints<P>, Endoscalings<P>>;
+pub type Points<'dr, D, C, P> = endoscalar::Points<'dr, D, C, SegmentPoints<P>, Endoscalings<P>>;
 
 /// A nested endoscaling step.
-pub type EndoscalingStep<C, R, P> =
-    endoscalar::EndoscalingStep<C, R, NumPoints<P>, Endoscalings<P>, stages::bridge_hash::Stage<C>>;
+pub type EndoscalingStep<C, R, P> = endoscalar::EndoscalingStep<
+    C,
+    R,
+    SegmentPoints<P>,
+    Endoscalings<P>,
+    stages::bridge_hash::Stage<C>,
+>;
 
 /// A nested endoscaling step's witness.
 pub type EndoscalingStepWitness<'source, C, P> =
-    endoscalar::EndoscalingStepWitness<'source, C, NumPoints<P>, Endoscalings<P>>;
+    endoscalar::EndoscalingStepWitness<'source, C, SegmentPoints<P>, Endoscalings<P>>;
+
+/// The circuit of step `step` of profile `P`'s nested walk: a step over the
+/// whole walk's points, or, for a walk of several segments, the step of
+/// its segment, over that segment's points (see
+/// [`EndoscalingStep::in_segment`](endoscalar::EndoscalingStep::in_segment)).
+///
+/// # Panics
+///
+/// Panics if `step` is not a step of the walk.
+pub fn endoscaling_step<C: Affine, R: Rank, P: Profile>(step: usize) -> EndoscalingStep<C, R, P> {
+    let walk = segments::<P>();
+    assert!(step < walk.steps(), "step {step} is past the walk");
+    if !walk.is_split() {
+        return EndoscalingStep::<C, R, P>::new(step);
+    }
+    let (segment, local) = walk.locate(step);
+    EndoscalingStep::<C, R, P>::in_segment(local, walk.inputs_of(segment).len())
+}
+
+/// The witnesses of profile `P`'s nested walk: the points stage's witness
+/// for each segment, and the boundaries stage's.
+pub struct WalkWitness<C: Affine, P: Profile> {
+    /// Each segment's points, in walk order: one for a walk of one segment.
+    pub segments: Vec<PointsWitness<C, P>>,
+    /// The last interstitial of every segment but the last, which the next
+    /// segment starts from.
+    pub boundaries: FixedVec<C, NumBoundaries<P>>,
+}
+
+impl<C: Affine, P: Profile> WalkWitness<C, P> {
+    /// Walks `points`, the initial point first, under `endoscalar`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `points` are not the walk's [`NumPoints`].
+    pub fn new(endoscalar: Uendo, points: &[C]) -> Self {
+        let walk = segments::<P>();
+        assert_eq!(
+            points.len(),
+            NumPoints::<P>::len(),
+            "the walk is over the nested batch's points"
+        );
+        if !walk.is_split() {
+            return WalkWitness {
+                segments: alloc::vec![PointsWitness::<C, P>::new(endoscalar, points)],
+                boundaries: FixedVec::from_fn(|_| unreachable!("one segment has no boundary")),
+            };
+        }
+        let inputs = &points[1..];
+        let mut initial = points[0];
+        let mut segments = Vec::with_capacity(walk.count());
+        for segment in 0..walk.count() {
+            let witness = PointsWitness::<C, P>::segment(
+                endoscalar,
+                initial,
+                &inputs[walk.inputs_of(segment)],
+            );
+            initial = witness.interstitials[walk.steps_of(segment) - 1];
+            segments.push(witness);
+        }
+        let boundaries = FixedVec::from_fn(|segment| {
+            segments[segment].interstitials[walk.steps_per_segment() - 1]
+        });
+        WalkWitness {
+            segments,
+            boundaries,
+        }
+    }
+
+    /// The witness of the segment the walk ends in, whose polynomial the
+    /// instance circuits load.
+    pub fn last(&self) -> &PointsWitness<C, P> {
+        self.segments
+            .last()
+            .expect("a walk has at least one segment")
+    }
+
+    /// The witness of the segment walk step `step` belongs to.
+    pub fn of_step(&self, step: usize) -> &PointsWitness<C, P> {
+        &self.segments[segments::<P>().locate(step).0]
+    }
+
+    /// The walk's result: the interstitial of its last step.
+    pub fn result(&self) -> C {
+        self.last().interstitials[segments::<P>().last_local_step()]
+    }
+}
 
 /// The number of circuits whose public input is the nested [`unified`]
 /// instance: collapse and compute-v.
@@ -188,11 +554,12 @@ pub const FOLD_GROUP_SIZE: usize = 9;
 
 /// The nested revdot claims of profile `P` the fuse folds: two children's
 /// raw claims, each internal circuit's claim per child, and each bonding's
-/// claim across both.
+/// claim across both, the loading circuit of every further segment of the
+/// walk among them.
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(true);
     let circuits = 2 + NumSteps::<P>::len() + extension.circuits;
-    let bondings = 15 + extension.bondings;
+    let bondings = 15 + extension.bondings + segments::<P>().count() - 1;
     2 + 2 * circuits + bondings
 }
 
@@ -350,12 +717,18 @@ pub enum InternalCircuitIndex {
     /// Final staged mask of the circuits whose last stage is the challenge
     /// stage.
     ChallengeFinalStaged,
-    /// Loading circuit over all nested stages.
+    /// Loading circuit over all nested stages: of the walk's first segment,
+    /// or of the whole walk when it is one segment.
     Loading,
     /// A bonding of the profile's nested extension, a stage's mask or a
     /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
-    /// order.
+    /// order. For a nested walk of several segments, the masks of the
+    /// stages that hold its further segments and its boundaries follow the
+    /// masks of the stages the profile and the online batch declare.
     ExtensionBonding(u32),
+    /// The loading circuit of a further segment of a nested walk of several
+    /// segments, by segment, from one (see [`Walk`]).
+    LoadingSegment(u32),
 }
 
 impl InternalCircuitIndex {
@@ -416,12 +789,15 @@ impl InternalCircuitIndex {
         NumSteps::<P>::len()
             + NUM_FIXED_INTERNAL
             + crate::profile::nested_extension::<P>().internal()
+            + segments::<P>().count()
+            - 1
     }
 
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
-    /// profile's extension circuits after the instance circuits and its
-    /// bondings last.
+    /// profile's extension circuits after the instance circuits, its
+    /// bondings after the fuse's, and the loading circuits of the walk's
+    /// further segments last.
     /// The index tests compare this order with [`Self::circuit_index`].
     pub fn all<P: Profile>() -> Vec<Self> {
         let num_steps = NumSteps::<P>::len();
@@ -441,6 +817,7 @@ impl InternalCircuitIndex {
             }
         }
         all.extend((0..extension.bondings() as u32).map(Self::ExtensionBonding));
+        all.extend((1..segments::<P>().count() as u32).map(Self::LoadingSegment));
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
@@ -475,6 +852,14 @@ impl InternalCircuitIndex {
             ChallengeFinalStaged => bonding + 13,
             Loading => bonding + 14,
             ExtensionBonding(i) => bonding + 15 + super::checked_index(i, extension.bondings),
+            // Segment zero's loading circuit is `Loading`.
+            LoadingSegment(i) => {
+                assert!(i > 0, "the first segment's loading circuit is `Loading`");
+                bonding
+                    + 15
+                    + extension.bondings
+                    + super::checked_index(i - 1, segments::<P>().count() - 1)
+            }
         };
         CircuitIndex::new(pos)
     }
@@ -489,7 +874,7 @@ impl InternalCircuitIndex {
             EndoscalarStage | PointsStage | PointsFinalStaged | BridgePreamble | BridgeHash
             | BridgeSPrime | BridgeInnerError | BridgeOuterError | BridgeAB | BridgeQuery
             | BridgeF | BridgeEval | ChallengeStage | ChallengeFinalStaged | Loading
-            | ExtensionBonding(_) => true,
+            | ExtensionBonding(_) | LoadingSegment(_) => true,
         }
     }
 }
@@ -684,6 +1069,7 @@ pub mod unified;
 
 pub mod stages {
     pub mod ab;
+    pub mod boundaries;
     pub mod bridge_hash;
     pub mod challenges;
     pub mod eval;
@@ -693,6 +1079,7 @@ pub mod stages {
     pub mod preamble;
     pub mod query;
     pub mod s_prime;
+    pub mod targets;
 }
 
 /// Registers internal nested circuits into the provided registry.
@@ -717,10 +1104,13 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
         use InternalCircuitIndex::*;
         registry = match id {
             EndoscalingStep(step) => {
-                let step_circuit =
-                    self::EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step as usize);
+                let step_circuit = endoscaling_step::<C::HostCurve, R, C::Profile>(step as usize);
                 let staged = MultiStage::new(step_circuit);
                 registry.register_internal_circuit(staged)?
+            }
+            Collapse if is_fold_chunked::<C::Profile>() => {
+                let circuit = circuits::collapse::Targets::<C::HostCurve, R, C::Profile>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
             }
             Collapse => {
                 let circuit = circuits::collapse::Circuit::<C::HostCurve, R, C::Profile>::new();
@@ -787,6 +1177,32 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R, C::Profile>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
+            LoadingSegment(segment) => {
+                let circuit = circuits::loading::Circuit::<C::HostCurve, R, C::Profile>::segment(
+                    segment as usize,
+                );
+                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
+            }
+            ExtensionCircuit(k) if builtin_circuit::<C::Profile>(k as usize).is_some() => {
+                // A circuit of the fuse's own: it outputs the nested
+                // unified instance, as the instance circuits do, and loads
+                // no stage of the extension.
+                extension_circuits.push(crate::profile::Registration::Circuit);
+                match builtin_circuit::<C::Profile>(k as usize).expect("checked above") {
+                    BuiltinCircuit::FoldInner(chunk) => {
+                        let circuit =
+                            circuits::fold_inner::Circuit::<C::HostCurve, R, C::Profile>::new(
+                                chunk,
+                            );
+                        registry.register_internal_circuit(MultiStage::new(circuit))?
+                    }
+                    BuiltinCircuit::FoldOuter => {
+                        let circuit =
+                            circuits::fold_outer::Circuit::<C::HostCurve, R, C::Profile>::new();
+                        registry.register_internal_circuit(MultiStage::new(circuit))?
+                    }
+                }
+            }
             ExtensionCircuit(k) => {
                 use crate::profile::online::stages::{self as extension, Nested};
                 let slot = CircuitSlot::new(registry);
@@ -807,8 +1223,27 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             ExtensionBonding(j) => {
                 use crate::profile::online::stages::{self as extension, Nested};
                 let slot = BondingSlot::new(registry);
-                let (registry, registration) =
-                    match extension::bonding::<C::Profile, Nested>(j as usize)? {
+                // The fuse's own stages follow the stages the profile and
+                // the online batch declare, so their masks sit between
+                // those stages' masks and the final masks (see
+                // `builtin_stage`).
+                let declared = walk_stage_offset::<C::Profile>();
+                let builtin = num_builtin_stages::<C::Profile>();
+                let j = j as usize;
+                let registered = if (declared..declared + builtin).contains(&j) {
+                    match builtin_stage::<C::Profile>(j).expect("a stage the fuse adds") {
+                        BuiltinStage::WalkSegment(_) => {
+                            slot.register_mask::<self::PointsStage<C::HostCurve, C::Profile>>()?
+                        }
+                        BuiltinStage::WalkBoundaries => slot
+                            .register_mask::<stages::boundaries::Stage<C::HostCurve, C::Profile>>(
+                            )?,
+                        BuiltinStage::FoldTargets => slot
+                            .register_mask::<stages::targets::Stage<C::HostCurve, C::Profile>>()?,
+                    }
+                } else {
+                    let index = if j < declared { j } else { j - builtin };
+                    match extension::bonding::<C::Profile, Nested>(index)? {
                         extension::Bonding::Online(bonding) => {
                             bonding.register::<_, R, C::Profile, Nested>(slot)?
                         }
@@ -816,7 +1251,8 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                             C::Profile::register_nested_bonding::<C::Base, R>(index, slot, params)?
                         }
                     }
-                    .into_parts();
+                };
+                let (registry, registration) = registered.into_parts();
                 extension_bondings.push(registration);
                 registry
             }
@@ -855,5 +1291,105 @@ mod index_positions {
         check::<Standard>();
         check::<crate::profile::testing::Wider>();
         check::<crate::profile::Aggregator<4>>();
+        // A nested walk of several segments: its further segments' and its
+        // boundaries stage's polynomials are the extension's stages, and a
+        // loading circuit per further segment comes last.
+        check::<crate::profile::testing::Segmented>();
+        // A fold verified in chunks: its circuits and its targets stage
+        // are the extension's last.
+        check::<crate::profile::testing::Chunked>();
+    }
+
+    /// A fold verified in chunks names its circuits and its stage as the
+    /// last of the nested extension's, and its chunks share the fold's
+    /// groups in order, each taking some.
+    #[test]
+    fn a_chunked_fold_names_its_polynomials() {
+        type P = crate::profile::testing::Chunked;
+        let chunks = fold_chunks::<P>();
+        assert!(is_fold_chunked::<P>() && chunks > 1);
+        assert_eq!(num_builtin_circuits::<P>(), chunks + 1);
+        assert_eq!(num_builtin_stages::<P>(), 1);
+        assert_eq!(num_fold_polynomials(chunks), chunks + 2);
+
+        let circuits = NumExtensionCircuits::<P>::len();
+        assert_eq!(circuits, builtin_circuit_offset::<P>() + chunks + 1);
+        for chunk in 0..chunks {
+            assert_eq!(
+                builtin_circuit::<P>(fold_inner::<P>(chunk) as usize),
+                Some(BuiltinCircuit::FoldInner(chunk))
+            );
+        }
+        assert_eq!(fold_outer::<P>() as usize, circuits - 1);
+        assert_eq!(
+            builtin_circuit::<P>(circuits - 1),
+            Some(BuiltinCircuit::FoldOuter)
+        );
+        let stages = NumExtensionStages::<P>::len();
+        assert_eq!(
+            fold_targets_rx::<P>(),
+            RxIndex::ExtensionStage(stages as u32 - 1)
+        );
+        assert_eq!(
+            builtin_stage::<P>(stages - 1),
+            Some(BuiltinStage::FoldTargets)
+        );
+
+        // The chunks' groups partition the fold's, in order.
+        let groups = NumFoldGroups::<P>::len();
+        let mut next = 0;
+        for chunk in 0..chunks {
+            let share = fold_groups::<P>(chunk);
+            assert_eq!(share.start, next);
+            assert!(!share.is_empty());
+            next = share.end;
+        }
+        assert_eq!(next, groups);
+
+        // A fold `collapse` verifies whole adds none of them.
+        assert!(!is_fold_chunked::<Standard>());
+        assert_eq!(num_builtin_circuits::<Standard>(), 0);
+        assert_eq!(num_builtin_stages::<Standard>(), 0);
+
+        // A walk of several segments keeps its stages before the fold's:
+        // its further segments, then its boundaries stage.
+        type S = crate::profile::testing::Segmented;
+        let stages = NumExtensionStages::<S>::len();
+        assert_eq!(
+            builtin_stage::<S>(stages - 1),
+            Some(BuiltinStage::WalkBoundaries)
+        );
+        assert_eq!(
+            builtin_stage::<S>(walk_stage_offset::<S>()),
+            Some(BuiltinStage::WalkSegment(1))
+        );
+    }
+
+    /// A walk of several segments names each segment's polynomial once, the
+    /// boundaries stage's after them, and gives every step its segment's.
+    #[test]
+    fn a_segmented_walk_names_its_polynomials() {
+        type P = crate::profile::testing::Segmented;
+        let walk = segments::<P>();
+        assert!(walk.is_split());
+        let all = RxIndex::all::<P>();
+        let mut named: Vec<RxIndex> = (0..walk.count()).map(segment_rx::<P>).collect();
+        named.push(boundaries_rx::<P>());
+        for (i, id) in named.iter().enumerate() {
+            assert!(all.contains(id), "{id:?} is one of the proof's polynomials");
+            assert!(!named[..i].contains(id), "{id:?} is named once");
+        }
+        let loadings = InternalCircuitIndex::all::<P>()
+            .into_iter()
+            .filter(|id| matches!(id, InternalCircuitIndex::LoadingSegment(_)))
+            .count();
+        assert_eq!(loadings, walk.count() - 1);
+        // Every step is a step of its own segment, within the stage.
+        for step in 0..walk.steps() {
+            let (segment, local) = walk.locate(step);
+            assert!(segment < walk.count() && local < walk.steps_of(segment));
+            let _ =
+                endoscaling_step::<ragu_core::pasta::EqAffine, crate::internal::tests::R, P>(step);
+        }
     }
 }

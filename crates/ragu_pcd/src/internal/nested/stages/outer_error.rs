@@ -45,6 +45,11 @@ pub struct Witness<C: Affine, P: Profile> {
     pub error_terms: FixedVec<C::Base, NumErrorTerms<NumGroups<P>>>,
     /// The layer-1 folded claim values, one per group.
     pub collapsed: FixedVec<C::Base, NumGroups<P>>,
+    /// The targets `collapse` computes, in the
+    /// [`targets`](super::targets) stage's order: that stage's witness,
+    /// computed with the values above. Empty for a fold `collapse` verifies
+    /// whole.
+    pub targets: alloc::vec::Vec<C::Base>,
 }
 
 /// Prover-internal output gadget for this bridge stage.

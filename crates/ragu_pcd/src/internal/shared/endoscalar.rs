@@ -79,6 +79,22 @@ pub(crate) const fn num_steps(endoscalings: usize, num_points: usize) -> usize {
     if steps > 1 { steps } else { 1 }
 }
 
+/// The segments a walk of `steps` steps is cut into at `per_segment` steps
+/// per segment, at most: [`Segments::count`], from the walk's steps.
+///
+/// # Panics
+///
+/// Panics if `steps` or `per_segment` is zero.
+pub(crate) const fn segment_count(steps: usize, per_segment: usize) -> usize {
+    assert!(steps > 0);
+    assert!(per_segment > 0);
+    if per_segment < steps {
+        steps.div_ceil(per_segment)
+    } else {
+        1
+    }
+}
+
 /// Number of steps (= interstitials) for a walk over `N` points at `E`
 /// endoscalings per step.
 pub struct NumStepsLen<N: Len, E: Len>(core::marker::PhantomData<(N, E)>);
@@ -86,6 +102,121 @@ pub struct NumStepsLen<N: Len, E: Len>(core::marker::PhantomData<(N, E)>);
 impl<N: Len, E: Len> Len for NumStepsLen<N, E> {
     fn len() -> usize {
         num_steps(E::len(), N::len())
+    }
+}
+
+/// How a walk is cut into segments.
+///
+/// A step loads the points stage, which costs it a gate per point the stage
+/// holds, so a walk held in one stage polynomial bounds its own length by
+/// the rank's gate budget. A longer walk is cut into segments of at most
+/// `per_segment` steps: the points stage then holds one segment's points,
+/// and a proof carries one polynomial of that stage per segment. Each
+/// segment is a walk of its own, whose initial point is the previous
+/// segment's last interstitial, so a step loads its own segment alone,
+/// whatever the walk's length.
+///
+/// A walk of at most `per_segment` steps is one segment: the walk itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Segments {
+    /// The walk's inputs: its points but the initial one.
+    inputs: usize,
+    /// The endoscalings a step performs.
+    endoscalings: usize,
+    /// The steps a segment holds, at most.
+    per_segment: usize,
+}
+
+impl Segments {
+    /// The segments of a walk over `num_points` points at `endoscalings`
+    /// per step, each of at most `per_segment` steps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_points`, `endoscalings` or `per_segment` is zero.
+    pub const fn new(num_points: usize, endoscalings: usize, per_segment: usize) -> Self {
+        assert!(num_points > 0);
+        assert!(endoscalings > 0);
+        assert!(per_segment > 0);
+        Segments {
+            inputs: num_points - 1,
+            endoscalings,
+            per_segment,
+        }
+    }
+
+    /// The walk's steps.
+    pub const fn steps(&self) -> usize {
+        num_steps(self.endoscalings, self.inputs + 1)
+    }
+
+    /// The steps of every segment but possibly the last, which holds the
+    /// walk's remaining ones.
+    pub const fn steps_per_segment(&self) -> usize {
+        let steps = self.steps();
+        if self.per_segment < steps {
+            self.per_segment
+        } else {
+            steps
+        }
+    }
+
+    /// The number of segments.
+    pub const fn count(&self) -> usize {
+        segment_count(self.steps(), self.per_segment)
+    }
+
+    /// Whether the walk has more than one segment.
+    pub const fn is_split(&self) -> bool {
+        self.count() > 1
+    }
+
+    /// The points the points stage holds: a segment's initial point and the
+    /// inputs of a full segment's steps, or every point of a walk that is
+    /// one segment.
+    pub const fn stage_points(&self) -> usize {
+        if self.is_split() {
+            self.steps_per_segment() * self.endoscalings + 1
+        } else {
+            self.inputs + 1
+        }
+    }
+
+    /// The segment that walk step `step` belongs to and the step's index
+    /// within it.
+    pub const fn locate(&self, step: usize) -> (usize, usize) {
+        let per_segment = self.steps_per_segment();
+        (step / per_segment, step % per_segment)
+    }
+
+    /// The steps of segment `segment`.
+    pub const fn steps_of(&self, segment: usize) -> usize {
+        let per_segment = self.steps_per_segment();
+        let remaining = self.steps() - segment * per_segment;
+        if remaining < per_segment {
+            remaining
+        } else {
+            per_segment
+        }
+    }
+
+    /// The walk's inputs that segment `segment` holds, as a range of the
+    /// walk's inputs.
+    pub const fn inputs_of(&self, segment: usize) -> core::ops::Range<usize> {
+        let capacity = self.steps_per_segment() * self.endoscalings;
+        let start = segment * capacity;
+        let end = if start + capacity < self.inputs {
+            start + capacity
+        } else {
+            self.inputs
+        };
+        start..end
+    }
+
+    /// The index, within the last segment, of the walk's last step, whose
+    /// interstitial is the walk's result.
+    pub const fn last_local_step(&self) -> usize {
+        (self.steps() - 1) % self.steps_per_segment()
     }
 }
 
@@ -146,7 +277,6 @@ impl<F: Field, R: Rank> Stage<F, R> for NoGap {
 }
 
 /// Witness for the points stage: initial, inputs, and interstitials.
-#[derive(Clone)]
 pub struct PointsWitness<C: Affine, N: Len, E: Len> {
     /// Initial accumulator (base case for step 0).
     pub initial: C,
@@ -154,6 +284,17 @@ pub struct PointsWitness<C: Affine, N: Len, E: Len> {
     pub inputs: FixedVec<C, InputsLen<N>>,
     /// Interstitial outputs, one per step.
     pub interstitials: FixedVec<C, NumStepsLen<N, E>>,
+}
+
+// Not derived: the length types are markers and need not be `Clone`.
+impl<C: Affine, N: Len, E: Len> Clone for PointsWitness<C, N, E> {
+    fn clone(&self) -> Self {
+        Self {
+            initial: self.initial,
+            inputs: self.inputs.clone(),
+            interstitials: self.interstitials.clone(),
+        }
+    }
 }
 
 impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
@@ -200,6 +341,50 @@ impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
         Self {
             initial,
             inputs,
+            interstitials,
+        }
+    }
+
+    /// Creates the witness of one segment of a longer walk (see
+    /// [`Segments`]): `initial`, the point the segment starts from, then
+    /// `inputs`, the walk's inputs the segment holds, at most the stage's.
+    ///
+    /// The segment a walk ends in may hold fewer inputs than the stage and
+    /// take fewer steps. Its remaining input slots repeat `initial` and its
+    /// remaining interstitials the segment's result; no step reads either.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `inputs` is empty or holds more than the stage's inputs.
+    pub fn segment(endoscalar: Uendo, initial: C, inputs: &[C]) -> Self {
+        let num_steps = NumStepsLen::<N, E>::len();
+        assert!(
+            !inputs.is_empty() && inputs.len() <= InputsLen::<N>::len(),
+            "a segment holds between one input and the stage's {}",
+            InputsLen::<N>::len()
+        );
+
+        let endoscalar: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
+
+        let mut interstitials = vec::Vec::with_capacity(num_steps);
+        let mut acc = initial.to_projective();
+        for chunk in inputs.chunks(E::len()) {
+            for input in chunk {
+                acc = acc * endoscalar + input.to_projective();
+            }
+            interstitials.push(acc);
+        }
+        interstitials.resize(num_steps, acc);
+
+        let interstitials = {
+            let mut tmp = vec![C::identity(); interstitials.len()];
+            C::batch_to_affine(&interstitials, &mut tmp);
+            FixedVec::new(tmp).expect("correct length")
+        };
+
+        Self {
+            initial,
+            inputs: FixedVec::from_fn(|i| inputs.get(i).copied().unwrap_or(initial)),
             interstitials,
         }
     }
@@ -271,8 +456,20 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>> Stage<C::Base, R>
 ///   `inputs[N*E..(N+1)*E]` (clamped to bounds)
 ///
 /// The circuit constrains that `interstitials[step]` equals the Horner result.
+///
+/// A step of one segment of a longer walk ([`in_segment`](Self::in_segment))
+/// walks the segment as a walk of its own, over the stage's initial point
+/// and the inputs the segment holds, and also holds the points it reads and
+/// writes to the curve: the circuit that re-emits a whole walk's contracts
+/// loads one polynomial of the points stage, so it cannot hold every
+/// segment's points to it.
 pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len, G = NoGap> {
     step: usize,
+    /// The stage's inputs the walk covers: all of them, or the ones the
+    /// segment a walk ends in holds.
+    inputs: usize,
+    /// Whether the step holds its own points to the curve.
+    on_curve: bool,
     _marker: core::marker::PhantomData<(C, R, N, E, G)>,
 }
 
@@ -280,6 +477,8 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G> Clone for EndoscalingStep<C, R, N, E
     fn clone(&self) -> Self {
         Self {
             step: self.step,
+            inputs: self.inputs,
+            on_curve: self.on_curve,
             _marker: core::marker::PhantomData,
         }
     }
@@ -299,13 +498,45 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
         );
         Self {
             step,
+            inputs: InputsLen::<N>::len(),
+            on_curve: false,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    /// Creates step `step` of a segment of a longer walk (see [`Segments`])
+    /// that holds `inputs` of the walk's inputs: a walk over the stage's
+    /// initial point and its first `inputs` inputs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stage holds fewer than `inputs` inputs, or if `step` is
+    /// not a step of a walk over that many.
+    pub fn in_segment(step: usize, inputs: usize) -> Self {
+        assert!(
+            inputs <= InputsLen::<N>::len(),
+            "a segment of {} inputs exceeds the stage's {}",
+            inputs,
+            InputsLen::<N>::len()
+        );
+        let num_steps = num_steps(E::len(), inputs + 1);
+        assert!(
+            step < num_steps,
+            "step {} exceeds the segment's steps (num_steps = {})",
+            step,
+            num_steps
+        );
+        Self {
+            step,
+            inputs,
+            on_curve: true,
             _marker: core::marker::PhantomData,
         }
     }
 
     /// Range of input indices to iterate over in the Horner loop.
     fn input_range(&self) -> core::ops::Range<usize> {
-        input_range(E::len(), self.step, InputsLen::<N>::len())
+        input_range(E::len(), self.step, self.inputs)
     }
 }
 
@@ -364,6 +595,19 @@ where
 
         let input_range = self.input_range();
 
+        // A segment's step holds its own points to the curve: the point the
+        // segment starts from, each input it adds, and its output, which
+        // the next step starts from.
+        if self.on_curve {
+            if self.step == 0 {
+                points.initial.enforce_consistent(dr)?;
+            }
+            for idx in input_range.clone() {
+                points.inputs[idx].enforce_consistent(dr)?;
+            }
+            points.interstitials[self.step].enforce_consistent(dr)?;
+        }
+
         // Horner's rule: scale and add each input. With only the initial
         // point, the empty loop leaves it to be constrained to the output.
         let acc = NonzeroBank::scope(dr, |dr, bank| {
@@ -413,7 +657,7 @@ mod tests {
 
     use super::{
         EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, InputsLen, NumStepsLen,
-        PointsStage, PointsWitness,
+        PointsStage, PointsWitness, Segments,
     };
     use crate::{
         internal::{nested, tests::assert_stage_values},
@@ -814,6 +1058,142 @@ mod tests {
         check::<11>();
         check::<13>();
         check::<14>();
+    }
+
+    #[test]
+    fn test_segments() {
+        // A walk that fits one segment is the walk itself.
+        let whole = Segments::new(11, 4, usize::MAX);
+        assert_eq!(whole.steps(), 3);
+        assert_eq!(whole.steps_per_segment(), 3);
+        assert_eq!(whole.count(), 1);
+        assert!(!whole.is_split());
+        assert_eq!(whole.stage_points(), 11);
+        assert_eq!(whole.inputs_of(0), 0..10);
+        assert_eq!(whole.steps_of(0), 3);
+        assert_eq!(whole.locate(2), (0, 2));
+        assert_eq!(whole.last_local_step(), 2);
+        // As is one whose steps are exactly a segment's.
+        assert!(!Segments::new(11, 4, 3).is_split());
+
+        // 22 inputs at four per step are six steps: three segments of two
+        // steps, the last holding the remaining six inputs.
+        let split = Segments::new(23, 4, 2);
+        assert_eq!(split.steps(), 6);
+        assert_eq!(split.steps_per_segment(), 2);
+        assert_eq!(split.count(), 3);
+        assert!(split.is_split());
+        assert_eq!(split.stage_points(), 9);
+        assert_eq!(split.inputs_of(0), 0..8);
+        assert_eq!(split.inputs_of(1), 8..16);
+        assert_eq!(split.inputs_of(2), 16..22);
+        assert_eq!(split.steps_of(2), 2);
+        assert_eq!(split.locate(0), (0, 0));
+        assert_eq!(split.locate(3), (1, 1));
+        assert_eq!(split.locate(5), (2, 1));
+        assert_eq!(split.last_local_step(), 1);
+
+        // A last segment of one step over one input.
+        let ragged = Segments::new(18, 4, 2);
+        assert_eq!(ragged.steps(), 5);
+        assert_eq!(ragged.count(), 3);
+        assert_eq!(ragged.steps_of(2), 1);
+        assert_eq!(ragged.inputs_of(2), 16..17);
+        assert_eq!(ragged.last_local_step(), 0);
+
+        // A single point is one step over no input.
+        let single = Segments::new(1, 4, 2);
+        assert_eq!(single.steps(), 1);
+        assert_eq!(single.count(), 1);
+        assert_eq!(single.stage_points(), 1);
+        assert_eq!(single.inputs_of(0), 0..0);
+    }
+
+    /// A walk cut into segments reaches the whole walk's result, each
+    /// segment a walk of its own from the previous segment's last
+    /// interstitial, and every step's claim holds over its own segment's
+    /// polynomial and over no other's.
+    #[test]
+    fn test_segmented_walk() -> Result<()> {
+        const NUM_POINTS: usize = 23;
+        const SEGMENT_POINTS: usize = 9;
+        type Segment = ConstLen<SEGMENT_POINTS>;
+
+        let walk = Segments::new(NUM_POINTS, E::len(), 2);
+        assert_eq!(walk.stage_points(), SEGMENT_POINTS);
+
+        let endoscalar = Uendo::random(|| rand::rng().random());
+        let points: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
+            (Ep::generator()
+                * <Ep as Projective>::Scalar::random(|bytes| rand::rng().fill_bytes(bytes)))
+            .to_affine()
+        });
+        let expected = compute_horner_native(endoscalar, &points);
+
+        let mut initial = points[0];
+        let mut segments = Vec::new();
+        for segment in 0..walk.count() {
+            let witness = PointsWitness::<EpAffine, Segment, E>::segment(
+                endoscalar,
+                initial,
+                &points[1..][walk.inputs_of(segment)],
+            );
+            initial = witness.interstitials[walk.steps_of(segment) - 1];
+            segments.push(witness);
+        }
+        assert_eq!(initial, expected);
+        assert_eq!(
+            segments[walk.count() - 1].interstitials[walk.last_local_step()],
+            expected
+        );
+
+        let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
+        for step in 0..walk.steps() {
+            let (segment, local) = walk.locate(step);
+            let circuit = EndoscalingStep::<EpAffine, R, Segment, E>::in_segment(
+                local,
+                walk.inputs_of(segment).len(),
+            );
+            let mut builder = TestRegistryBuilder::new();
+            let staged_h = builder.register_circuit(MultiStage::new(circuit.clone()))?;
+            let pts_mask_h = builder.register_bonding(PointsStage::<EpAffine, Segment, E>::mask()?);
+            let final_mask_h =
+                builder.register_bonding(PointsStage::<EpAffine, Segment, E>::final_mask()?);
+            let registry = builder.finalize()?;
+
+            let staged = MultiStage::new(circuit);
+            let segment_rx = |segment: usize| {
+                <PointsStage<EpAffine, Segment, E> as StageExt<Fp, R>>::rx(
+                    Fp::ZERO,
+                    &segments[segment],
+                )
+            };
+            let points_rx = segment_rx(segment)?;
+            let final_trace = staged
+                .trace(EndoscalingStepWitness {
+                    endoscalar,
+                    points: &segments[segment],
+                })?
+                .into_output();
+            let final_rx = registry.assemble(&final_trace, staged_h, Fp::ZERO)?;
+
+            let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+            assert_eq!(points_rx.revdot(&registry.y(pts_mask_h, y)), Fp::ZERO);
+            assert_eq!(final_rx.revdot(&registry.y(final_mask_h, y)), Fp::ZERO);
+
+            let claim = |points_rx: &polynomials::sparse::Polynomial<Fp, R>| {
+                let mut lhs = final_rx.clone();
+                lhs.add_assign(&endoscalar_rx);
+                lhs.add_assign(points_rx);
+                lhs.revdot(&registry.y(staged_h, y))
+            };
+            let ky = staged.ky((), y)?;
+            assert_eq!(claim(&points_rx), ky);
+            let other_rx = segment_rx((segment + 1) % walk.count())?;
+            assert_ne!(claim(&other_rx), ky);
+        }
+
+        Ok(())
     }
 
     #[test]

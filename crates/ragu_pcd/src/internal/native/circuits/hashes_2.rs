@@ -157,6 +157,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
             .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
             )?;
         let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        // The targets stage of a fold verified in chunks, which the hash
+        // circuits do not read: nothing for a fold verified whole.
+        let builder =
+            builder.skip_stage::<super::super::stages::targets::Stage<C, R, HEADER_SIZE, FP>>()?;
         let (outer_error, builder) =
             builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();

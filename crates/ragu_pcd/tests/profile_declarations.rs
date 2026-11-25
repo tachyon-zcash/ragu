@@ -707,12 +707,106 @@ fn solve_finds_a_fixed_point_for_wider_profiles() {
             0,
             4,
             4,
+            usize::MAX,
+            usize::MAX,
         );
         assert_eq!(
             again, shape,
             "({native_extension}, {nested_extension}) is not fixed"
         );
     }
+}
+
+/// A nested walk cut into segments carries a polynomial of the points stage
+/// per further segment and the boundaries stage's, as the last stages of
+/// the nested extension, and the shape counts them: each is a point the
+/// native walk folds. A walk of one segment adds nothing.
+#[test]
+fn a_segmented_walk_adds_its_stages_to_the_shape() {
+    use crate::profile::testing::Segmented;
+
+    let standard = nested::segments::<Standard>();
+    assert_eq!(standard.count(), 1);
+    assert_eq!(nested::num_walk_stages(standard.count()), 0);
+    assert_eq!(
+        crate::profile::nested_extension::<Standard>(),
+        Extension::EMPTY
+    );
+
+    assert!(Segmented::check().is_ok());
+    let walk = nested::segments::<Segmented>();
+    let shape = Shape::of::<Segmented>();
+    assert_eq!(walk.steps(), shape.nested_steps);
+    assert_eq!(walk.steps_per_segment(), 8);
+    assert_eq!(walk.count(), shape.nested_steps.div_ceil(8));
+    assert!(walk.is_split());
+
+    // The profile declares nothing: the extension is the walk's stages.
+    let extension = crate::profile::nested_extension::<Segmented>();
+    assert!(extension.circuits.is_empty() && extension.final_masks.is_empty());
+    assert_eq!(extension.stages, walk.count());
+    assert_eq!(
+        shape.nested_rx,
+        nested::NUM_FIXED_RX + shape.nested_steps + walk.count()
+    );
+    assert_eq!(nested::RxIndex::all::<Segmented>().len(), shape.nested_rx);
+    assert_eq!(
+        nested::segment_rx::<Segmented>(0),
+        nested::RxIndex::PointsStage
+    );
+    assert_eq!(
+        nested::segment_rx::<Segmented>(1),
+        nested::RxIndex::ExtensionStage(0)
+    );
+    assert_eq!(
+        nested::boundaries_rx::<Segmented>(),
+        nested::RxIndex::ExtensionStage(walk.count() as u32 - 1)
+    );
+
+    // The native walk is cut too: its bits stage, a segment stage
+    // polynomial per segment and its boundaries stage are the native
+    // extension's stages, and a walk of one segment adds none.
+    assert_eq!(native::segments::<Standard>().count(), 1);
+    assert_eq!(native::num_walk_stages(1), 0);
+    assert_eq!(native::num_walk_bondings(1), 0);
+    assert_eq!(
+        crate::profile::native_extension::<Standard>(),
+        Extension::EMPTY
+    );
+    let native_walk = native::segments::<Segmented>();
+    assert_eq!(native_walk.steps(), shape.native_steps);
+    assert_eq!(native_walk.steps_per_segment(), 8);
+    assert_eq!(native_walk.count(), shape.native_steps.div_ceil(8));
+    assert!(native_walk.is_split());
+    let native_extension = crate::profile::native_extension::<Segmented>();
+    assert!(native_extension.circuits.is_empty() && native_extension.final_masks.is_empty());
+    assert_eq!(native_extension.stages, native_walk.count() + 2);
+    assert_eq!(
+        shape.native_rx,
+        native::NUM_FIXED_RX + shape.native_steps + native_walk.count() + 2
+    );
+    assert_eq!(native::RxIndex::all::<Segmented>().len(), shape.native_rx);
+    assert_eq!(
+        native::walk_bits_rx::<Segmented>(),
+        native::RxIndex::ExtensionStage(0)
+    );
+    assert_eq!(
+        native::segment_rx::<Segmented>(0),
+        native::RxIndex::ExtensionStage(1)
+    );
+    assert_eq!(
+        native::boundaries_rx::<Segmented>(),
+        native::RxIndex::ExtensionStage(native_walk.count() as u32 + 1)
+    );
+
+    // Each walk's polynomials are points of the other, so the shape is
+    // wider than the standard profile's, and is a fixed point.
+    assert!(shape.native_points > Shape::of::<Standard>().native_points);
+    assert!(shape.nested_points > Shape::of::<Standard>().nested_points);
+    assert_eq!(
+        Shape::with_native_steps(shape.native_steps, 0, 0, 0, 0, 4, 4, 8, 8),
+        shape
+    );
 }
 
 #[test]

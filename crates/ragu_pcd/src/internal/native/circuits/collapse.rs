@@ -84,13 +84,17 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Standard, vec::FixedVec};
+use ragu_primitives::{
+    Boolean, Element, GadgetExt as _,
+    allocator::{Allocator, Standard},
+    vec::FixedVec,
+};
 
 use super::super::{
     claims::{TwoProofKySource, ky_values},
     stages::{
         inner_error as native_inner_error, outer_error as native_outer_error,
-        preamble as native_preamble,
+        preamble as native_preamble, targets as native_targets,
     },
     unified::{self, OutputBuilder},
 };
@@ -183,6 +187,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
         };
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        // The targets stage of a fold verified in chunks: nothing here.
+        let builder = builder.skip_stage::<native_targets::Stage<C, R, HEADER_SIZE, FP>>()?;
         let (outer_error, builder) =
             builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let (inner_error, builder) =
@@ -201,144 +207,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
-        // Compute the step's own application k(y) over values fixed by
-        // BridgeSPrime before y. The unified bridge-hash commitment must
-        // equal the preamble's copy. The parent binds that unified point to
-        // the BridgeHash stage it folds, or the terminal verifier does at
-        // the root. The y challenge is
-        // derived in hashes_1 and read here, since hashes_1 owns coverage.
-        let y = unified_output.y.read(dr, allocator)?;
-        let zeta = unified_output.w.read(dr, allocator)?;
-        let bridge_hash = unified_output.bridge_hash_commitment.read(dr, allocator)?;
-        let mut bridge_hash_coordinates = Vec::with_capacity(2);
-        bridge_hash.write(dr, &mut bridge_hash_coordinates)?;
-        for (staged, unified) in preamble
-            .bridge_hash_commitment
-            .iter()
-            .zip(&bridge_hash_coordinates)
-        {
-            staged.enforce_equal(dr, unified)?;
-        }
-        let application_ky = preamble.application_ky(dr, &y, &zeta, &bridge_hash)?;
-
-        // The compute_v bridge k(y) values: the children's unified
-        // instances followed by what each child's compute_v exported for
-        // the profile's online batches.
-        let (left_online, right_online) = if C::Profile::NESTED_ONLINE.is_empty() {
-            (&[][..], &[][..])
-        } else {
-            let binding = binding.as_ref().expect("online stage targets load binding");
-            (&binding.left.extension[..3], &binding.right.extension[..3])
-        };
-        let left_compute_v_ky =
-            preamble
-                .left
-                .compute_v_bridge_ky(dr, &y, left_online, &outer_error.left.unified)?;
-        let right_compute_v_ky =
-            preamble
-                .right
-                .compute_v_bridge_ky(dr, &y, right_online, &outer_error.right.unified)?;
-        left_compute_v_ky.enforce_equal(dr, &outer_error.left.compute_v_bridge)?;
-        right_compute_v_ky.enforce_equal(dr, &outer_error.right.compute_v_bridge)?;
-
-        // The base case leaves the folded c free below, so pin it to the
-        // bootstrap step with the unit output header and padding output
-        // slots here.
-        let is_base_case = preamble.is_base_case(dr, allocator)?;
-        preamble.enforce_base_case_is_bootstrap::<C::Profile>(
+        let (y, application_ky, is_base_case) = head(
             dr,
             allocator,
-            &is_base_case,
-            &zeta,
+            &mut unified_output,
+            binding.as_ref(),
+            &preamble,
+            &outer_error,
         )?;
 
         // Get layer 1 folding challenges from the unified instance.
         let mu = unified_output.mu.read(dr, allocator)?;
         let fold_products = revdot::ClaimFolder::new(&mu);
 
-        // Assemble k(y) values from multiple sources. The ordering must match
-        // claims's iteration order for correct folding correspondence.
-        // Sources include:
-        // - Child c values from preamble (the children's final revdot claims)
-        // - The step's own application k(y), computed above
-        // - Unified k(y) evaluations from outer_error
-        // The statement circuit's k(y) values come straight from the
-        // preamble, as the application ones are above, and the
-        // binding circuit's from the children's nested extension stage
-        // commitments the binding stage walks. Reuse the same y wire for
-        // these targets: each unified slot may be read only once.
-        let (left_statement, right_statement) = if extension.statement.is_some() {
-            (
-                preamble.left.statement_ky::<C::Profile>(dr, &y)?,
-                preamble.right.statement_ky::<C::Profile>(dr, &y)?,
-            )
-        } else {
-            (None, None)
-        };
-        let (left_binding, right_binding) = match (&extension.binding, &binding) {
-            (Some(_), Some(binding)) => {
-                // The children's nested extension stages the binding
-                // names, then the online Fq commitments they exported.
-                let bound = |child: &super::super::stages::points::ChildBinding<
-                    'dr,
-                    D,
-                    C::NestedCurve,
-                    C::Profile,
-                >| {
-                    ky::native_bound::<C::Profile, _>(
-                        |index| match index {
-                            crate::internal::nested::RxIndex::ExtensionStage(j) => {
-                                child.extension[j as usize].clone()
-                            }
-                            _ => unreachable!("a binding names extension stages"),
-                        },
-                        |i| child.online_fq[i].clone(),
-                    )
-                };
-                (
-                    ky::binding_ky(dr, &y, &bound(&binding.left), &[])?,
-                    ky::binding_ky(dr, &y, &bound(&binding.right), &[])?,
-                )
-            }
-            _ => (None, None),
-        };
-        // The children's `bind_endoscalar` claims take the same exported
-        // commitments after the unified instance, so the point a child's
-        // binding circuit exposes is the one its walk took from its
-        // preamble stage, then the actual nested online walk points. A
-        // profile that exports neither keeps the unified k(y) for them.
-        let (left_online_fq, right_online_fq) = match &binding {
-            Some(binding) => (&binding.left.online_fq[..], &binding.right.online_fq[..]),
-            None => (&[][..], &[][..]),
-        };
-        let left_bind_endoscalar =
-            preamble
-                .left
-                .bind_endoscalar_ky(dr, &y, &outer_error.left.unified, left_online_fq)?;
-        let right_bind_endoscalar = preamble.right.bind_endoscalar_ky(
+        let ky = source(
             dr,
             &y,
-            &outer_error.right.unified,
-            right_online_fq,
-        )?;
-        let left_online_helper = preamble.left.online_helper_ky(dr, &y)?;
-        let right_online_helper = preamble.right.online_helper_ky(dr, &y)?;
-        let ky = TwoProofKySource::new(
-            dr,
-            preamble.left.unified.c.clone(),
-            preamble.right.unified.c.clone(),
             application_ky,
-            &outer_error.left,
-            &outer_error.right,
-            left_statement,
-            right_statement,
-            left_binding,
-            right_binding,
-            left_bind_endoscalar,
-            right_bind_endoscalar,
-            left_online_helper,
-            right_online_helper,
-        );
+            binding.as_ref(),
+            &preamble,
+            &outer_error,
+        )?;
         // The grid holds the claims' targets with the fold randomizer's: the
         // target the inner error stage witnessed at the last node of each
         // group, and zeros in the last group, whose claim holds for any
@@ -390,6 +279,345 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
                 &witnessed_c,
                 &computed_c,
             )?;
+        }
+
+        let (output, aux) = unified_output.finish(dr, allocator)?;
+        Ok(WithAux::new(output, aux))
+    }
+}
+
+/// The binding stage's gadget.
+type Binding<'dr, D, C> = super::super::stages::points::Binding<
+    'dr,
+    D,
+    <C as Cycle>::NestedCurve,
+    <C as ProfiledCycle>::Profile,
+>;
+
+/// The checks `collapse` makes before the fold's challenges are read: the
+/// step's own application $k(y)$, the children's `compute_v` targets
+/// against the [`outer_error`] stage's, and the base case's pin. Returns
+/// $y$, the application target and whether the step takes the base case.
+///
+/// [`outer_error`]: super::super::stages::outer_error
+#[allow(clippy::type_complexity)]
+fn head<'dr, D, C, const HEADER_SIZE: usize, FP, A>(
+    dr: &mut D,
+    allocator: &mut A,
+    unified_output: &mut OutputBuilder<'dr, D, A, C>,
+    binding: Option<&Binding<'dr, D, C>>,
+    preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+    outer_error: &native_outer_error::Output<'dr, D, FP, C::CircuitPoseidon>,
+) -> Result<(Element<'dr, D>, Element<'dr, D>, Boolean<'dr, D>)>
+where
+    D: Driver<'dr, F = C::CircuitField>,
+    C: ProfiledCycle,
+    FP: revdot::Parameters,
+    A: Allocator<'dr, D>,
+{
+    // Compute the step's own application k(y) over values fixed by
+    // BridgeSPrime before y. The unified bridge-hash commitment must
+    // equal the preamble's copy. The parent binds that unified point to
+    // the BridgeHash stage it folds, or the terminal verifier does at
+    // the root. The y challenge is
+    // derived in hashes_1 and read here, since hashes_1 owns coverage.
+    let y = unified_output.y.read(dr, allocator)?;
+    let zeta = unified_output.w.read(dr, allocator)?;
+    let bridge_hash = unified_output.bridge_hash_commitment.read(dr, allocator)?;
+    let mut bridge_hash_coordinates = Vec::with_capacity(2);
+    bridge_hash.write(dr, &mut bridge_hash_coordinates)?;
+    for (staged, unified) in preamble
+        .bridge_hash_commitment
+        .iter()
+        .zip(&bridge_hash_coordinates)
+    {
+        staged.enforce_equal(dr, unified)?;
+    }
+    let application_ky = preamble.application_ky(dr, &y, &zeta, &bridge_hash)?;
+
+    // The compute_v bridge k(y) values: the children's unified
+    // instances followed by what each child's compute_v exported for
+    // the profile's online batches.
+    let (left_online, right_online) = if C::Profile::NESTED_ONLINE.is_empty() {
+        (&[][..], &[][..])
+    } else {
+        let binding = binding.as_ref().expect("online stage targets load binding");
+        (&binding.left.extension[..3], &binding.right.extension[..3])
+    };
+    let left_compute_v_ky =
+        preamble
+            .left
+            .compute_v_bridge_ky(dr, &y, left_online, &outer_error.left.unified)?;
+    let right_compute_v_ky =
+        preamble
+            .right
+            .compute_v_bridge_ky(dr, &y, right_online, &outer_error.right.unified)?;
+    left_compute_v_ky.enforce_equal(dr, &outer_error.left.compute_v_bridge)?;
+    right_compute_v_ky.enforce_equal(dr, &outer_error.right.compute_v_bridge)?;
+
+    // The base case leaves the folded c free below, so pin it to the
+    // bootstrap step with the unit output header and padding output
+    // slots here.
+    let is_base_case = preamble.is_base_case(dr, allocator)?;
+    preamble.enforce_base_case_is_bootstrap::<C::Profile>(dr, allocator, &is_base_case, &zeta)?;
+
+    Ok((y, application_ky, is_base_case))
+}
+
+/// The fold's targets that are not constants: the children's $c$ values
+/// from the preamble, the step's own application target, the unified
+/// targets the [`outer_error`] stage holds, and the targets of the
+/// children's statement, binding, `bind_endoscalar` and online helper
+/// circuits, computed here.
+///
+/// [`outer_error`]: super::super::stages::outer_error
+fn source<'dr, D, C, const HEADER_SIZE: usize, FP>(
+    dr: &mut D,
+    y: &Element<'dr, D>,
+    application_ky: Element<'dr, D>,
+    binding: Option<&Binding<'dr, D, C>>,
+    preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+    outer_error: &native_outer_error::Output<'dr, D, FP, C::CircuitPoseidon>,
+) -> Result<TwoProofKySource<'dr, D>>
+where
+    D: Driver<'dr, F = C::CircuitField>,
+    C: ProfiledCycle,
+    FP: revdot::Parameters,
+{
+    let extension = crate::profile::native_extension::<C::Profile>();
+    // Assemble k(y) values from multiple sources. The ordering must match
+    // claims's iteration order for correct folding correspondence.
+    // Sources include:
+    // - Child c values from preamble (the children's final revdot claims)
+    // - The step's own application k(y), computed above
+    // - Unified k(y) evaluations from outer_error
+    // The statement circuit's k(y) values come straight from the
+    // preamble, as the application ones are above, and the
+    // binding circuit's from the children's nested extension stage
+    // commitments the binding stage walks. Reuse the same y wire for
+    // these targets: each unified slot may be read only once.
+    let (left_statement, right_statement) = if extension.statement.is_some() {
+        (
+            preamble.left.statement_ky::<C::Profile>(dr, y)?,
+            preamble.right.statement_ky::<C::Profile>(dr, y)?,
+        )
+    } else {
+        (None, None)
+    };
+    let (left_binding, right_binding) = match (&extension.binding, &binding) {
+        (Some(_), Some(binding)) => {
+            // The children's nested extension stages the binding
+            // names, then the online Fq commitments they exported.
+            let bound = |child: &super::super::stages::points::ChildBinding<
+                'dr,
+                D,
+                C::NestedCurve,
+                C::Profile,
+            >| {
+                ky::native_bound::<C::Profile, _>(
+                    |index| match index {
+                        crate::internal::nested::RxIndex::ExtensionStage(j) => {
+                            child.extension[j as usize].clone()
+                        }
+                        _ => unreachable!("a binding names extension stages"),
+                    },
+                    |i| child.online_fq[i].clone(),
+                )
+            };
+            (
+                ky::binding_ky(dr, y, &bound(&binding.left), &[])?,
+                ky::binding_ky(dr, y, &bound(&binding.right), &[])?,
+            )
+        }
+        _ => (None, None),
+    };
+    // The children's `bind_endoscalar` claims take the same exported
+    // commitments after the unified instance, so the point a child's
+    // binding circuit exposes is the one its walk took from its
+    // preamble stage, then the actual nested online walk points. A
+    // profile that exports neither keeps the unified k(y) for them.
+    let (left_online_fq, right_online_fq) = match &binding {
+        Some(binding) => (&binding.left.online_fq[..], &binding.right.online_fq[..]),
+        None => (&[][..], &[][..]),
+    };
+    let left_bind_endoscalar =
+        preamble
+            .left
+            .bind_endoscalar_ky(dr, y, &outer_error.left.unified, left_online_fq)?;
+    let right_bind_endoscalar =
+        preamble
+            .right
+            .bind_endoscalar_ky(dr, y, &outer_error.right.unified, right_online_fq)?;
+    let left_online_helper = preamble.left.online_helper_ky(dr, y)?;
+    let right_online_helper = preamble.right.online_helper_ky(dr, y)?;
+    let ky = TwoProofKySource::new(
+        dr,
+        preamble.left.unified.c.clone(),
+        preamble.right.unified.c.clone(),
+        application_ky,
+        &outer_error.left,
+        &outer_error.right,
+        left_statement,
+        right_statement,
+        left_binding,
+        right_binding,
+        left_bind_endoscalar,
+        right_bind_endoscalar,
+        left_online_helper,
+        right_online_helper,
+    );
+    Ok(ky)
+}
+
+/// The left and the right child's target of one circuit, which a profile
+/// has for both children or for neither.
+fn pair<T: Clone>(left: &Option<T>, right: &Option<T>) -> Option<[T; 2]> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some([left.clone(), right.clone()]),
+        (None, None) => None,
+        _ => unreachable!("a profile's circuit has a target for each child"),
+    }
+}
+
+/// The circuit a profile whose fold is verified in chunks registers in
+/// `collapse`'s place (see [`Chunking`](crate::profile::Chunking)).
+///
+/// It makes every check `collapse` makes before the fold and computes the
+/// same targets, and then, instead of folding them, enforces each target it
+/// computed equal to the value the [`targets`] stage holds, where the
+/// [`fold_inner`](super::fold_inner) circuits read it. The two layers are
+/// those circuits' and [`fold_outer`](super::fold_outer)'s.
+///
+/// ## Staging
+///
+/// The circuit ends at [`outer_error`], whose final mask it shares with the
+/// hash circuits, after the binding stage (as `collapse` loads it), the
+/// preamble and the [`targets`] stage.
+///
+/// [`targets`]: super::super::stages::targets
+/// [`outer_error`]: super::super::stages::outer_error
+pub struct Targets<C: Cycle, R, const HEADER_SIZE: usize, FP: revdot::Parameters> {
+    _marker: PhantomData<(C, R, FP)>,
+}
+
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
+    Targets<C, R, HEADER_SIZE, FP>
+{
+    /// Creates the multi-stage circuit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the profile's `collapse` verifies the fold whole.
+    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
+        assert!(
+            super::super::is_fold_chunked::<C::Profile>(),
+            "a fold verified whole is `collapse`'s"
+        );
+        MultiStage::new(Targets {
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Targets<C, R, HEADER_SIZE, FP>
+{
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
+
+    type Instance<'source> = &'source unified::Instance<C>;
+    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
+    type Output = unified::InternalOutputKind<C>;
+    type Aux<'source> = unified::Instance<C>;
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
+        _: &mut D,
+        _: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>>
+    where
+        Self: 'dr,
+    {
+        unreachable!("instance for internal circuits is not invoked")
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
+        builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+    where
+        Self: 'dr,
+    {
+        type BindingStage<C, P> = super::super::stages::points::BindingStage<C, P>;
+        // The binding stage is loaded under the condition `collapse` loads
+        // it under.
+        let extension = crate::profile::native_extension::<C::Profile>();
+        let (binding, builder) =
+            if extension.binding.is_some() || !C::Profile::NESTED_ONLINE.is_empty() {
+                let (binding, builder) =
+                    builder.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
+                (Some(binding), builder)
+            } else {
+                (
+                    None,
+                    builder.skip_stage::<BindingStage<C::NestedCurve, C::Profile>>()?,
+                )
+            };
+        let (preamble, builder) =
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (staged, builder) =
+            builder.add_stage::<native_targets::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let (outer_error, builder) =
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let dr = builder.finish();
+        let binding = match binding {
+            Some(binding) => Some(binding.unenforced(dr, witness.as_ref().map(|w| w.binding))?),
+            None => None,
+        };
+        let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
+        let staged = staged.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
+        let outer_error =
+            outer_error.enforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
+
+        let allocator = &mut Standard::new();
+        let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
+
+        let (y, application_ky, _) = head(
+            dr,
+            allocator,
+            &mut unified_output,
+            binding.as_ref(),
+            &preamble,
+            &outer_error,
+        )?;
+        let ky = source(
+            dr,
+            &y,
+            application_ky,
+            binding.as_ref(),
+            &preamble,
+            &outer_error,
+        )?;
+
+        // The targets this circuit computed are the ones the chunks fold.
+        let computed = native_targets::Targets {
+            application: ky.application.clone(),
+            bind_endoscalar: [
+                ky.left_bind_endoscalar.clone(),
+                ky.right_bind_endoscalar.clone(),
+            ],
+            statement: pair(&ky.left_statement, &ky.right_statement),
+            binding: pair(&ky.left_binding, &ky.right_binding),
+            online_helper: pair(&ky.left_online_helper, &ky.right_online_helper),
+        }
+        .into_values();
+        assert_eq!(
+            computed.len(),
+            staged.len(),
+            "the targets stage holds every target the circuit computes"
+        );
+        for (computed, staged) in computed.iter().zip(staged.iter()) {
+            computed.enforce_equal(dr, staged)?;
         }
 
         let (output, aux) = unified_output.finish(dr, allocator)?;

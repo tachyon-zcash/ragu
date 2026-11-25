@@ -122,27 +122,33 @@ where
     for id in InternalCircuitIndex::all::<P>() {
         use InternalCircuitIndex::*;
         match id {
+            // A step's trace sits beside the endoscalar stage and the
+            // points of its own segment of the walk: the points stage's
+            // one polynomial for a walk of one segment.
             EndoscalingStep(step) => {
+                let segment = super::segments::<P>().locate(step as usize).0;
                 for ((step_rx, endo_rx), pts_rx) in source
                     .rx(Rx(RxIndex::EndoscalingStep(step)))
                     .zip(source.rx(Rx(RxIndex::EndoscalarStage)))
-                    .zip(source.rx(Rx(RxIndex::PointsStage)))
+                    .zip(source.rx(Rx(super::segment_rx::<P>(segment))))
                 {
                     processor.internal_circuit_claim(id, [step_rx, endo_rx, pts_rx].into_iter());
                 }
             }
             // The instance circuits: each one's rx and every stage it
-            // reserves, which is every nested stage.
+            // loads, which is every nested stage but the boundaries stage,
+            // with the points of the walk's last segment, where the
+            // walk's result is.
             Collapse | ComputeV => {
                 let own = RxIndex::INSTANCE[InternalCircuitIndex::INSTANCE
                     .iter()
                     .position(|&circuit| circuit == id)
                     .expect("an instance circuit")];
-                let loaded = [
+                let mut loaded = alloc::vec![
                     own,
                     RxIndex::EndoscalarStage,
                     RxIndex::BridgeHash,
-                    RxIndex::PointsStage,
+                    super::segment_rx::<P>(super::segments::<P>().count() - 1),
                     RxIndex::BridgePreamble,
                     RxIndex::BridgeSPrime,
                     RxIndex::BridgeInnerError,
@@ -153,16 +159,39 @@ where
                     RxIndex::BridgeEval,
                     RxIndex::ChallengeStage,
                 ];
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in loaded {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
+                // For a fold verified in chunks, the circuit registered in
+                // `collapse`'s place holds the fold's targets to their
+                // stage.
+                if id == Collapse && super::is_fold_chunked::<P>() {
+                    loaded.push(super::fold_targets_rx::<P>());
                 }
-                for rxs in per_proof {
+                for rxs in per_proof(source, loaded) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+            // A circuit of the fuse's own among the extension's: its rx and
+            // the fuse's stages it reads. Its k(y) is the nested unified
+            // instance's (see `ky_values`).
+            ExtensionCircuit(k) if super::builtin_circuit::<P>(k as usize).is_some() => {
+                let own = RxIndex::ExtensionCircuit(k);
+                let loaded = match super::builtin_circuit::<P>(k as usize).expect("checked above") {
+                    // A first-layer chunk of the fold: the preamble, the
+                    // targets stage, both error stages and the challenges.
+                    super::BuiltinCircuit::FoldInner(_) => alloc::vec![
+                        own,
+                        RxIndex::BridgePreamble,
+                        super::fold_targets_rx::<P>(),
+                        RxIndex::BridgeInnerError,
+                        RxIndex::BridgeOuterError,
+                        RxIndex::ChallengeStage,
+                    ],
+                    // The fold's second layer: the outer error stage and
+                    // the challenges.
+                    super::BuiltinCircuit::FoldOuter => {
+                        alloc::vec![own, RxIndex::BridgeOuterError, RxIndex::ChallengeStage]
+                    }
+                };
+                for rxs in per_proof(source, loaded) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -245,28 +274,85 @@ where
             ChallengeStage => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::ChallengeStage)))?;
             }
+            // The instance circuits end on the challenge stage, and so do
+            // the circuits of a fold verified in chunks.
             ChallengeFinalStaged => {
-                let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
+                let offset = super::builtin_circuit_offset::<P>();
+                let fold = (0..super::num_builtin_circuits::<P>())
+                    .map(|circuit| RxIndex::ExtensionCircuit((offset + circuit) as u32));
+                let final_rxs = RxIndex::INSTANCE
+                    .iter()
+                    .copied()
+                    .chain(fold)
+                    .flat_map(|own| source.rx(Rx(own)));
                 processor.bonding_claim(id, final_rxs)?;
             }
-            Loading => {
-                let groups = source
-                    .rx(Rx(RxIndex::PointsStage))
-                    .zip(source.rx(Rx(RxIndex::BridgePreamble)))
-                    .zip(source.rx(Rx(RxIndex::BridgeSPrime)))
-                    .zip(source.rx(Rx(RxIndex::BridgeInnerError)))
-                    .zip(source.rx(Rx(RxIndex::BridgeAB)))
-                    .zip(source.rx(Rx(RxIndex::BridgeQuery)))
-                    .zip(source.rx(Rx(RxIndex::BridgeF)))
-                    .map(|((((((ps, bp), bs), bi), ba), bq), bf)| {
-                        [ps, bp, bs, bi, ba, bq, bf].into_iter()
-                    });
-                processor.grouped_bonding_claim(id, groups)?;
+            Loading => loading_claim::<P, S, Pr>(source, processor, id, 0)?,
+            LoadingSegment(segment) => {
+                loading_claim::<P, S, Pr>(source, processor, id, segment as usize)?
             }
         }
     }
 
     Ok(())
+}
+
+/// Each proof's polynomials at `indices`, in that order: one list per proof
+/// of the source.
+fn per_proof<S>(source: &S, indices: impl IntoIterator<Item = RxIndex>) -> Vec<Vec<S::Rx>>
+where
+    S: Source<RxComponent = RxComponent>,
+{
+    let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+    for index in indices {
+        for (i, rx) in source.rx(RxComponent::Rx(index)).enumerate() {
+            if per_proof.len() <= i {
+                per_proof.push(Vec::new());
+            }
+            per_proof[i].push(rx);
+        }
+    }
+    per_proof
+}
+
+/// The loading claim of segment `segment` of the walk, folded across
+/// proofs: each proof's group sums the segment's points, the boundaries
+/// stage for a walk of several segments, and the bridge stages the loading
+/// circuit reads.
+fn loading_claim<P: Profile, S, Pr>(
+    source: &S,
+    processor: &mut Pr,
+    id: InternalCircuitIndex,
+    segment: usize,
+) -> Result<()>
+where
+    S: Source<RxComponent = RxComponent>,
+    Pr: Processor<P, S::Rx>,
+{
+    use RxComponent::Rx;
+
+    let mut loaded = alloc::vec![super::segment_rx::<P>(segment)];
+    if super::segments::<P>().is_split() {
+        loaded.push(super::boundaries_rx::<P>());
+    }
+    loaded.extend([
+        RxIndex::BridgePreamble,
+        RxIndex::BridgeSPrime,
+        RxIndex::BridgeInnerError,
+        RxIndex::BridgeAB,
+        RxIndex::BridgeQuery,
+        RxIndex::BridgeF,
+    ]);
+    let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+    for index in loaded {
+        for (i, rx) in source.rx(Rx(index)).enumerate() {
+            if per_proof.len() <= i {
+                per_proof.push(Vec::new());
+            }
+            per_proof[i].push(rx);
+        }
+    }
+    processor.grouped_bonding_claim(id, per_proof.into_iter().map(Vec::into_iter))
 }
 
 /// Trait for providing $k(y)$ values for nested claim verification.
@@ -346,8 +432,12 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 "an online batch takes one helper target per proof"
             );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
+            // A circuit of the fuse's own takes the nested unified instance.
+            let unified: Vec<S::Ky> = source.unified_ky().collect();
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {
-                if bound == Some(circuit) {
+                if super::builtin_circuit::<P>(circuit as usize).is_some() {
+                    unified.clone()
+                } else if bound == Some(circuit) {
                     binding.clone()
                 } else if helper == Some(circuit) {
                     helper_ky.clone()

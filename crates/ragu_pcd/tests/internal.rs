@@ -1634,12 +1634,39 @@ macro_rules! fuse_gates {
                     $H,
                     RevdotParameters<$P>,
                 >::new(pasta)),
+                Native::CollapseCircuit if native::is_fold_chunked::<$P>() => {
+                    gates(&native::circuits::collapse::Targets::<
+                        $C,
+                        $R,
+                        $H,
+                        RevdotParameters<$P>,
+                    >::new())
+                }
                 Native::CollapseCircuit => gates(&native::circuits::collapse::Circuit::<
                     $C,
                     $R,
                     $H,
                     RevdotParameters<$P>,
                 >::new()),
+                Native::ExtensionCircuit(k) => match native::builtin_circuit::<$P>(k as usize) {
+                    Some(native::BuiltinCircuit::FoldInner(chunk)) => {
+                        gates(&native::circuits::fold_inner::Circuit::<
+                            $C,
+                            $R,
+                            $H,
+                            RevdotParameters<$P>,
+                        >::new(chunk))
+                    }
+                    Some(native::BuiltinCircuit::FoldOuter) => {
+                        gates(&native::circuits::fold_outer::Circuit::<
+                            $C,
+                            $R,
+                            $H,
+                            RevdotParameters<$P>,
+                        >::new())
+                    }
+                    None => continue,
+                },
                 Native::ComputeVCircuit => {
                     gates(&native::circuits::compute_v::Circuit::<$C, $R, $H>::new())
                 }
@@ -1652,9 +1679,17 @@ macro_rules! fuse_gates {
                 Native::BindEndoscalarCircuit => {
                     gates(&native::circuits::bind_endoscalar::Circuit::<$C, $R>::new())
                 }
-                Native::EndoscalingStep(step) => gates(
-                    &native::circuits::endoscaling_step::Circuit::<$C, $R>::new(step as usize),
-                ),
+                Native::EndoscalingStep(step) => {
+                    if native::segments::<$P>().is_split() {
+                        gates(&native::circuits::segment_step::Circuit::<$C, $R>::new(
+                            step as usize,
+                        ))
+                    } else {
+                        gates(&native::circuits::endoscaling_step::Circuit::<$C, $R>::new(
+                            step as usize,
+                        ))
+                    }
+                }
                 _ => continue,
             };
             native_gates.push((alloc::format!("{variant:?}"), gates));
@@ -1664,13 +1699,37 @@ macro_rules! fuse_gates {
         for variant in Nested::all::<$P>() {
             let gates = match variant {
                 Nested::EndoscalingStep(step) => gates(&MultiStage::new(
-                    nested::EndoscalingStep::<Host, $R, $P>::new(step as usize),
+                    nested::endoscaling_step::<Host, $R, $P>(step as usize),
                 )),
+                Nested::Collapse if nested::is_fold_chunked::<$P>() => {
+                    gates(&MultiStage::new(nested::circuits::collapse::Targets::<
+                        Host,
+                        $R,
+                        $P,
+                    >::new()))
+                }
                 Nested::Collapse => gates(&MultiStage::new(nested::circuits::collapse::Circuit::<
                     Host,
                     $R,
                     $P,
                 >::new())),
+                Nested::ExtensionCircuit(k) => match nested::builtin_circuit::<$P>(k as usize) {
+                    Some(nested::BuiltinCircuit::FoldInner(chunk)) => {
+                        gates(&MultiStage::new(nested::circuits::fold_inner::Circuit::<
+                            Host,
+                            $R,
+                            $P,
+                        >::new(chunk)))
+                    }
+                    Some(nested::BuiltinCircuit::FoldOuter) => {
+                        gates(&MultiStage::new(nested::circuits::fold_outer::Circuit::<
+                            Host,
+                            $R,
+                            $P,
+                        >::new()))
+                    }
+                    None => continue,
+                },
                 Nested::ComputeV => {
                     gates(&MultiStage::new(nested::circuits::compute_v::Circuit::<
                         Host,
@@ -1754,4 +1813,184 @@ fn test_aggregator_fuse_fits_the_budget() {
         ));
     }
     assert!(over.is_empty(), "over the budget: {over:?}");
+}
+
+/// A profile with `XN` native and `XQ` nested extension circuits that load
+/// no stage, at `E` endoscalings per step of either walk and at most `T`
+/// steps per segment of the nested walk and `TN` of the native walk: the
+/// fuse's circuits at a chosen width. It registers nothing for the
+/// extension, so it sizes the fuse's own circuits and finalizes no
+/// application.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Widened<
+    const XN: usize,
+    const XQ: usize,
+    const E: usize,
+    const T: usize = { usize::MAX },
+    const TN: usize = { usize::MAX },
+>;
+
+impl<const XN: usize, const XQ: usize, const E: usize, const T: usize, const TN: usize>
+    crate::profile::Profile for Widened<XN, XQ, E, T, TN>
+{
+    const NAME: &'static str = "widened";
+    const NATIVE_EXTENSION: usize = XN;
+    const NESTED_EXTENSION: usize = XQ;
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = E;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = E;
+    const NATIVE_STEPS_PER_SEGMENT: usize = TN;
+    const NESTED_STEPS_PER_SEGMENT: usize = T;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: crate::ipa::IpaCycle
+            + crate::profile::ProfiledCycle<Profile = crate::profile::Standard>,
+        R: Rank,
+        B: crate::SelectableBackend;
+
+    fn native_extension() -> crate::profile::Extension {
+        crate::profile::Extension {
+            circuits: alloc::vec![alloc::vec::Vec::new(); XN],
+            ..crate::profile::Extension::EMPTY
+        }
+    }
+
+    fn nested_extension() -> crate::profile::Extension {
+        crate::profile::Extension {
+            circuits: alloc::vec![alloc::vec::Vec::new(); XQ],
+            ..crate::profile::Extension::EMPTY
+        }
+    }
+}
+
+/// Helper test to print the fuse's circuits at several widths against the
+/// wallet rank's budget, for sizing a profile that carries more
+/// polynomials than the standard one: each width's shape, then every
+/// circuit's gates but the endoscaling steps', and the largest step's. The
+/// circuits are traced at the aggregator rank, where no stage chain
+/// overflows; a circuit's gates do not depend on the rank it is traced at.
+/// Run with: `cargo test -p ragu_pcd --release print_fuse_gates_by_width -- --ignored --nocapture`
+#[test]
+#[ignore = "prints the fuse's gates at several widths; run on demand"]
+fn print_fuse_gates_by_width() {
+    use ragu_circuits::polynomials::AggregatorRank;
+
+    use crate::profile::{Profiled, Shape};
+
+    macro_rules! at_width {
+        ($xn:literal, $xq:literal) => {{
+            type P = Widened<$xn, $xq, 4>;
+            type C = Profiled<Pasta, P>;
+            std::println!(
+                "{} native and {} nested extension polynomials: {:?}",
+                $xn,
+                $xq,
+                Shape::of::<P>()
+            );
+            let (native, nested) = fuse_gates!(C, AggregatorRank, 4, P);
+            let over = report_fuse_gates("native", &native, R::blind_gate()).len()
+                + report_fuse_gates("nested", &nested, R::blind_gate()).len();
+            std::println!("  {over} circuits over the wallet rank's budget");
+        }};
+    }
+    at_width!(0, 0);
+    at_width!(40, 30);
+    at_width!(100, 70);
+}
+
+/// The largest endoscaling step among `gates`.
+fn largest_step(gates: &[(alloc::string::String, usize)]) -> usize {
+    gates
+        .iter()
+        .filter(|(name, _)| name.starts_with("EndoscalingStep"))
+        .map(|&(_, gates)| gates)
+        .max()
+        .expect("a walk has at least one step")
+}
+
+/// Every fuse circuit of the segmented test profile, the standard
+/// profile's with both walks cut into segments, fits the wallet rank's
+/// budget at a small header, and its steps take fewer gates than the
+/// standard profile's: a step loads its own segment's points and not the
+/// walk's.
+#[test]
+fn test_segmented_walk_fits_the_budget() {
+    use crate::profile::{Profiled, Standard, testing::Segmented};
+
+    let budget = R::blind_gate();
+    type C = Profiled<Pasta, Segmented>;
+    assert!(native::segments::<Segmented>().is_split());
+    assert!(nested::segments::<Segmented>().is_split());
+    let (native, nested) = fuse_gates!(C, R, 4, Segmented);
+    let mut over = report_fuse_gates("segmented, native", &native, budget);
+    over.extend(report_fuse_gates("segmented, nested", &nested, budget));
+    assert!(over.is_empty(), "over the budget: {over:?}");
+
+    let (standard_native, standard_nested) = fuse_gates!(Pasta, R, 4, Standard);
+    assert!(largest_step(&nested) < largest_step(&standard_nested));
+    assert!(largest_step(&native) < largest_step(&standard_native));
+}
+
+/// Every fuse circuit of the chunked test profile, the standard profile's
+/// with both folds verified in chunks, fits the wallet rank's budget at a
+/// small header, and the circuits registered in `collapse`'s place take
+/// fewer gates than `collapse`: the fold's layers are the chunks'.
+#[test]
+fn test_chunked_fold_fits_the_budget() {
+    use crate::profile::{Profiled, Standard, testing::Chunked};
+
+    let budget = R::blind_gate();
+    type C = Profiled<Pasta, Chunked>;
+    assert!(native::is_fold_chunked::<Chunked>());
+    assert!(nested::is_fold_chunked::<Chunked>());
+    let (native, nested) = fuse_gates!(C, R, 4, Chunked);
+    let mut over = report_fuse_gates("chunked, native", &native, budget);
+    over.extend(report_fuse_gates("chunked, nested", &nested, budget));
+    assert!(over.is_empty(), "over the budget: {over:?}");
+
+    let gates_of = |gates: &[(alloc::string::String, usize)], name: &str| {
+        gates
+            .iter()
+            .find(|(circuit, _)| circuit == name)
+            .map(|&(_, gates)| gates)
+            .expect("the circuit is among the fuse's")
+    };
+    let (standard_native, standard_nested) = fuse_gates!(Pasta, R, 4, Standard);
+    assert!(gates_of(&native, "CollapseCircuit") < gates_of(&standard_native, "CollapseCircuit"));
+    assert!(gates_of(&nested, "Collapse") < gates_of(&standard_nested, "Collapse"));
+}
+
+/// Cutting a walk into segments keeps its steps within the wallet rank's
+/// budget at a width where a step over the whole walk exceeds it: the
+/// step's gates no longer grow with the walk.
+#[test]
+fn test_segmented_walk_steps_fit_at_any_width() {
+    use ragu_circuits::polynomials::AggregatorRank;
+
+    use crate::profile::Profiled;
+
+    type Whole = Widened<100, 70, 4>;
+    type Split = Widened<100, 70, 4, 24, 16>;
+    let budget = R::blind_gate();
+    assert!(nested::segments::<Split>().count() > 1);
+    assert!(native::segments::<Split>().count() > 1);
+
+    // Traced at the aggregator rank, where the whole walk's stage chain
+    // fits: a circuit's gates do not depend on the rank it is traced at.
+    let (whole_native, whole_nested) =
+        fuse_gates!(Profiled<Pasta, Whole>, AggregatorRank, 4, Whole);
+    let (split_native, split_nested) =
+        fuse_gates!(Profiled<Pasta, Split>, AggregatorRank, 4, Split);
+    for (side, whole, split) in [
+        ("native", &whole_native, &split_native),
+        ("nested", &whole_nested, &split_nested),
+    ] {
+        assert!(largest_step(whole) > budget, "{side}");
+        assert!(
+            largest_step(split) <= budget,
+            "a {side} segment's step takes {} gates of {budget}",
+            largest_step(split)
+        );
+    }
 }

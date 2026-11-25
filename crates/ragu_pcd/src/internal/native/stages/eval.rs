@@ -47,7 +47,11 @@ use udon::field::Field;
 use crate::{
     Proof,
     internal::{
-        native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS, online},
+        Side,
+        native::{
+            RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS, online,
+            open::EvalValue,
+        },
         nested,
     },
     profile::{
@@ -390,6 +394,68 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     pub evaluations: Evaluations<'dr, D, C::Profile>,
     #[ragu(gadget)]
     pub partials: FixedVec<Point<'dr, D, C::NestedCurve>, PartialsLen>,
+}
+
+impl<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> Output<'dr, D, C> {
+    /// The stage's value that `key` names.
+    pub fn value(&self, key: EvalValue) -> &Element<'dr, D> {
+        let evaluations = &self.evaluations;
+        let child = |side| match side {
+            Side::Left => &evaluations.left,
+            Side::Right => &evaluations.right,
+        };
+        match key {
+            EvalValue::Rx(side, id) => child(side).rx.get(id),
+            EvalValue::A(side) => &child(side).a_poly,
+            EvalValue::B(side) => &child(side).b_poly,
+            EvalValue::RegistryXy(side) => &child(side).registry_xy_poly,
+            EvalValue::P(side) => &child(side).p_poly,
+            EvalValue::RegistryWx0 => &evaluations.registry_wx0,
+            EvalValue::RegistryWx1 => &evaluations.registry_wx1,
+            EvalValue::Application => &evaluations.application,
+            EvalValue::ApplicationStage => &evaluations.application_stage,
+            EvalValue::RegistryWy => &evaluations.registry_wy,
+            EvalValue::OwnA => &evaluations.a_poly,
+            EvalValue::OwnB => &evaluations.b_poly,
+            EvalValue::OwnRegistryXy => &evaluations.registry_xy,
+            EvalValue::RandomizerA => &evaluations.randomizer_a,
+            EvalValue::RandomizerB => &evaluations.randomizer_b,
+            EvalValue::Mask => &evaluations.mask,
+            EvalValue::Online(i) => &evaluations.online[i],
+            EvalValue::OnlineStage(i) => &self.online_stage[i],
+        }
+    }
+}
+
+impl<C: ProfiledCycle> Witness<C> {
+    /// The stage's value that `key` names: the witness of
+    /// [`Output::value`].
+    pub fn value(&self, key: EvalValue) -> C::CircuitField {
+        let child = |side| match side {
+            Side::Left => &self.left,
+            Side::Right => &self.right,
+        };
+        match key {
+            EvalValue::Rx(side, id) => *child(side).rx.get(id),
+            EvalValue::A(side) => child(side).a_poly,
+            EvalValue::B(side) => child(side).b_poly,
+            EvalValue::RegistryXy(side) => child(side).registry_xy_poly,
+            EvalValue::P(side) => child(side).p_poly,
+            EvalValue::RegistryWx0 => self.current.registry_wx0,
+            EvalValue::RegistryWx1 => self.current.registry_wx1,
+            EvalValue::Application => self.current.application,
+            EvalValue::ApplicationStage => self.current.application_stage,
+            EvalValue::RegistryWy => self.current.registry_wy,
+            EvalValue::OwnA => self.current.a_poly,
+            EvalValue::OwnB => self.current.b_poly,
+            EvalValue::OwnRegistryXy => self.current.registry_xy,
+            EvalValue::RandomizerA => self.current.randomizer_a,
+            EvalValue::RandomizerB => self.current.randomizer_b,
+            EvalValue::Mask => self.current.mask,
+            EvalValue::Online(i) => self.current.online[i],
+            EvalValue::OnlineStage(i) => self.online_stage[i],
+        }
+    }
 }
 
 /// The eval stage of the fuse witness.

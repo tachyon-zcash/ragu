@@ -515,6 +515,76 @@ fn aggregator_rank_circuits_pack_the_chunks() {
     circuits_pack_the_chunks::<AggregatorRank>();
 }
 
+/// Reports both sides' schedules for chunk circuits at rank `R` with
+/// `H`-element headers: the circuits by kind, the chunks' estimated gates,
+/// the sizes of the stages every circuit loads before its chunks, and the
+/// largest circuit's estimate against the fill. A schedule packs whatever
+/// the rank, so a rank whose stages leave a chunk no room shows as
+/// circuits over the fill rather than as an error.
+fn report_schedules<R: Rank, const H: usize>() {
+    let schedules = [
+        ("native", native_schedule::<Pasta, WalletRank, R, H>()),
+        ("nested", nested_schedule::<Pasta, WalletRank, R, H>()),
+    ];
+    for (name, schedule) in schedules {
+        let schedule = match schedule {
+            Ok(schedule) => schedule,
+            Err(error) => {
+                std::println!("rank {}, header size {H}, {name}: {error:?}", R::RANK);
+                continue;
+            }
+        };
+        let fill = Limits::at::<R>().fill;
+        let count = |last: Last| schedule.circuits.iter().filter(|c| c.last == last).count();
+        let estimate = |circuit: &super::CircuitPlan| {
+            let chunks: usize = circuit
+                .chunks
+                .iter()
+                .map(|&chunk| super::gates(&schedule.chunks[chunk]))
+                .sum();
+            schedule.stage_gates(circuit.last) + chunks
+        };
+        let work: usize = schedule.chunks.iter().map(super::gates).sum();
+        let largest = schedule.circuits.iter().map(estimate).max().unwrap_or(0);
+        let over = schedule
+            .circuits
+            .iter()
+            .filter(|&circuit| estimate(circuit) > fill)
+            .count();
+        std::println!(
+            "rank {}, header size {H}, {name}: {} circuits ({} transcript, {} digits) over {} \
+             chunks of {work} gates; work stage {} elements and {} points, {} states, {} lifts, \
+             {} digits; stages {} gates ({} with the transcript stage, {} with the digits \
+             stage); fill {fill}, largest circuit {largest}, {over} over the fill",
+            R::RANK,
+            schedule.circuits.len(),
+            count(Last::Transcript),
+            count(Last::Digits),
+            schedule.chunks.len(),
+            schedule.elements,
+            schedule.points,
+            schedule.states,
+            schedule.layout.lifts,
+            schedule.layout.digits,
+            schedule.stage_gates(Last::Work),
+            schedule.stage_gates(Last::Transcript),
+            schedule.stage_gates(Last::Digits),
+        );
+    }
+}
+
+/// Helper test to print the schedules at the wallet rank beside the
+/// aggregator rank's, for sizing chunk circuits at the wallet rank.
+/// Run with: `cargo test -p ragu_pcd --release print_schedules_by_rank -- --ignored --nocapture`
+#[test]
+#[ignore = "prints the schedules' sizes at two ranks; run on demand"]
+fn print_schedules_by_rank() {
+    report_schedules::<AggregatorRank, 4>();
+    report_schedules::<AggregatorRank, 195>();
+    report_schedules::<WalletRank, 4>();
+    report_schedules::<WalletRank, 195>();
+}
+
 /// Each side's schedule is built once and kept under `std`: the hooks and
 /// the prover share one, equal to a fresh build, and the sizes the stages'
 /// lengths read are a fresh sizes build's. Without `std` each request

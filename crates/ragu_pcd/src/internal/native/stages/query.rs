@@ -35,8 +35,12 @@ use udon::field::Field;
 
 use crate::{
     Proof,
-    internal::native::{
-        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
+    internal::{
+        Side,
+        native::{
+            InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
+            open::QueryValue,
+        },
     },
     profile::{
         Profile, ProfiledCycle,
@@ -323,6 +327,59 @@ pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
     pub right: ChildEvaluations<'dr, D, P>,
 }
 
+impl<'dr, D: Driver<'dr>, P: Profile> Output<'dr, D, P> {
+    /// The stage's value that `key` names.
+    pub fn value(&self, key: QueryValue) -> &Element<'dr, D> {
+        let child = |side| match side {
+            Side::Left => &self.left,
+            Side::Right => &self.right,
+        };
+        match key {
+            QueryValue::Fixed(id) => self.fixed_registry.get(id),
+            QueryValue::Rx(side, id) => child(side).rx.get(id),
+            QueryValue::AAtXz(side) => &child(side).a_poly_at_xz,
+            QueryValue::BAtX(side) => &child(side).b_poly_at_x,
+            QueryValue::ChildRegistryXyAtW(side) => &child(side).child_registry_xy_at_current_w,
+            QueryValue::RegistryWyAtChildX(side) => &child(side).current_registry_wy_at_child_x,
+            QueryValue::RegistryWxy => &self.registry_wxy,
+            QueryValue::RegistryXyAtCircuitId => &self.registry_xy_at_circuit_id,
+            QueryValue::ApplicationAtXz => &self.application_at_xz,
+            QueryValue::ApplicationStageAtXz => &self.application_stage_at_xz,
+            QueryValue::RandomizerAAtXz => &self.randomizer_a_at_xz,
+            QueryValue::RandomizerBAtX => &self.randomizer_b_at_x,
+            QueryValue::OnlineStage(i) => &self.online_stage[i],
+            QueryValue::OnlineAuxiliary(i) => &self.online_auxiliaries[i],
+        }
+    }
+}
+
+impl<C: ProfiledCycle> Witness<C> {
+    /// The stage's value that `key` names: the witness of
+    /// [`Output::value`].
+    pub fn value(&self, key: QueryValue) -> C::CircuitField {
+        let child = |side| match side {
+            Side::Left => &self.left,
+            Side::Right => &self.right,
+        };
+        match key {
+            QueryValue::Fixed(id) => *self.fixed_registry.get(id),
+            QueryValue::Rx(side, id) => *child(side).rx.get(id),
+            QueryValue::AAtXz(side) => child(side).a_poly_at_xz,
+            QueryValue::BAtX(side) => child(side).b_poly_at_x,
+            QueryValue::ChildRegistryXyAtW(side) => child(side).child_registry_xy_at_current_w,
+            QueryValue::RegistryWyAtChildX(side) => child(side).current_registry_wy_at_child_x,
+            QueryValue::RegistryWxy => self.registry_wxy,
+            QueryValue::RegistryXyAtCircuitId => self.registry_xy_at_circuit_id,
+            QueryValue::ApplicationAtXz => self.application_at_xz,
+            QueryValue::ApplicationStageAtXz => self.application_stage_at_xz,
+            QueryValue::RandomizerAAtXz => self.randomizer_a_at_xz,
+            QueryValue::RandomizerBAtX => self.randomizer_b_at_x,
+            QueryValue::OnlineStage(i) => self.online_stage[i],
+            QueryValue::OnlineAuxiliary(i) => self.online_auxiliaries[i],
+        }
+    }
+}
+
 /// The query stage of the fuse witness.
 #[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
@@ -332,7 +389,9 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    // The stages of an opening program run in chunks hold nothing for a
+    // program `compute_v` runs whole, whose chain is the preamble's.
+    type Parent = super::open::BandStage<C, R, HEADER_SIZE>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C::Profile>];
 

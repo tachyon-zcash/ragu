@@ -757,3 +757,85 @@ fn standard_cannot_substitute_for_an_extended_profile() -> Result<()> {
 fn extended_profile_cannot_substitute_for_standard() -> Result<()> {
     check_different_shapes::<Proving, Standard>()
 }
+
+/// A profile whose walks are cut into segments proves at the wallet rank
+/// as the standard profile does: two seeds, their merge and its
+/// rerandomization each verify, uncompressed and compressed.
+#[test]
+fn a_segmented_walk_proves_and_verifies() -> Result<()> {
+    use crate::profile::testing::Segmented;
+
+    assert!(
+        crate::internal::nested::segments::<Segmented>().is_split(),
+        "the profile's nested walk is cut into segments"
+    );
+    assert!(
+        crate::internal::native::segments::<Segmented>().is_split(),
+        "the profile's native walk is cut into segments"
+    );
+    let app = application::<Segmented, WalletRank>((None, None), None)?;
+    let mut rng = StdRng::seed_from_u64(0x5e6_0013);
+
+    let (left, ()) = app.seed(&mut rng, Seed { expected: None }, Fp::from(3))?;
+    let (right, ()) = app.seed(&mut rng, Seed { expected: None }, Fp::from(4))?;
+    check_both_verifiers(&app, &left, true, &mut rng)?;
+
+    let (sum, ()) = app.fuse(&mut rng, Sum, (), left, right)?;
+    assert_eq!(*sum.data(), Fp::from(7));
+    check_both_verifiers(&app, &sum, true, &mut rng)?;
+
+    let rerandomized = app.rerandomize(sum, &mut rng)?;
+    check_both_verifiers(&app, &rerandomized, true, &mut rng)
+}
+
+/// A profile whose folds are verified in chunks proves at the wallet rank
+/// as the standard profile does: two seeds, their merge and its
+/// rerandomization each verify, uncompressed and compressed.
+#[test]
+fn a_chunked_fold_proves_and_verifies() -> Result<()> {
+    use crate::profile::testing::Chunked;
+
+    assert!(
+        crate::internal::native::is_fold_chunked::<Chunked>(),
+        "the profile's native fold is verified in chunks"
+    );
+    assert!(
+        crate::internal::nested::is_fold_chunked::<Chunked>(),
+        "the profile's nested fold is verified in chunks"
+    );
+    let app = application::<Chunked, WalletRank>((None, None), None)?;
+    let mut rng = StdRng::seed_from_u64(0xc4_0013);
+
+    let (left, ()) = app.seed(&mut rng, Seed { expected: None }, Fp::from(3))?;
+    let (right, ()) = app.seed(&mut rng, Seed { expected: None }, Fp::from(4))?;
+    check_both_verifiers(&app, &left, true, &mut rng)?;
+
+    let (sum, ()) = app.fuse(&mut rng, Sum, (), left, right)?;
+    assert_eq!(*sum.data(), Fp::from(7));
+    check_both_verifiers(&app, &sum, true, &mut rng)?;
+
+    let rerandomized = app.rerandomize(sum, &mut rng)?;
+    check_both_verifiers(&app, &rerandomized, true, &mut rng)
+}
+
+/// The standard profile and one that differs from it only in verifying the
+/// folds in chunks are different proof systems: neither accepts the
+/// other's proofs.
+#[test]
+fn a_chunked_profile_cannot_substitute_for_standard() -> Result<()> {
+    use crate::profile::testing::Chunked;
+
+    check_different_shapes::<Chunked, Standard>()?;
+    check_different_shapes::<Standard, Chunked>()
+}
+
+/// The standard profile and one that differs from it only in cutting the
+/// walks into segments are different proof systems: neither accepts the
+/// other's proofs.
+#[test]
+fn a_segmented_profile_cannot_substitute_for_standard() -> Result<()> {
+    use crate::profile::testing::Segmented;
+
+    check_different_shapes::<Segmented, Standard>()?;
+    check_different_shapes::<Standard, Segmented>()
+}

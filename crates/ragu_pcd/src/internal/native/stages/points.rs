@@ -48,6 +48,34 @@
 //! $A_n$, $B_n$ and `registry_xy` points for the next parent and the decider.
 //! Every points stage's curve membership is enforced once, by `bind_endoscalar`.
 //!
+//! # A walk of several segments
+//!
+//! A step reserves every stage on its chain, a gate per point they hold, so
+//! a walk whose steps read the points where they were committed is bounded
+//! by the rank's gate budget. A profile whose walk is longer cuts it into
+//! segments ([`Walk`](super::super::Walk)), and three more stages sit
+//! between [`BindingStage`] and [`PreambleStage`], each committed after
+//! $\beta$ and each holding nothing for a walk of one segment:
+//!
+//! - [`BitsStage`] holds the endoscalar's bits, which [`WalkStage`] then
+//!   does not.
+//! - [`SegmentStage`] holds one segment as a walk of its own: the point it
+//!   starts from, copies of the inputs it folds and its steps' outputs. A
+//!   proof carries a polynomial of it per segment, and a step reserves the
+//!   chain up to it and reads its own segment's alone.
+//! - [`BoundariesStage`] holds the output every segment but the last hands
+//!   to the next.
+//!
+//! The copies are held to the stages that committed the points by a
+//! [`walk_loading`](super::super::circuits::walk_loading) bonding per
+//! segment, which reserves the whole chain: it enforces each input the
+//! segment holds equal to its source, the segment's initial point equal to
+//! $F_n$ or to the boundary before it, and its last output equal to its own
+//! boundary. A step reads no stage in which every point is on the curve by
+//! `bind_endoscalar`'s check, so it holds the points it reads and writes to
+//! the curve itself, and `bind_endoscalar` holds only the points the walk
+//! does not fold.
+//!
 //! [`nested_p_commitment`]: super::super::unified::Output::nested_p_commitment
 
 use alloc::vec::Vec;
@@ -67,8 +95,8 @@ use ragu_primitives::{
 };
 use udon::curve::EndomorphismAffine as Affine;
 
-use super::super::NumPoints;
 pub use super::super::NumSteps;
+use super::super::{Endoscalings, NumPoints, Split, segments};
 use crate::{
     internal::{
         Side,
@@ -103,9 +131,11 @@ pub type BridgesLen = ConstLen<{ nested::RxIndex::BRIDGES.len() }>;
 /// The points of [`BindingStage`] per child in profile `P`: its bridge and
 /// challenge commitments and its four persistent polynomial commitments,
 /// tied to its unified instance, and its nested extension stages, tied to
-/// its binding circuit.
+/// its binding circuit. The stages a nested walk of several segments adds
+/// to that extension are not among them: no binding names one, so they are
+/// walked from [`PreambleStage`] with the rest.
 pub fn num_child_bindings<P: Profile>() -> usize {
-    nested::RxIndex::BRIDGES.len() + 5 + nested::NumExtensionStages::<P>::len()
+    nested::RxIndex::BRIDGES.len() + 5 + nested::NumDeclaredStages::<P>::len()
 }
 
 /// The child points of [`PreambleStage`] in profile `P`: each child's points in
@@ -220,13 +250,19 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
         {
             return InputSource::Bridge(side, i);
         }
-        if let nested::RxIndex::ExtensionStage(j) = id {
+        // The extension's declared stages; the nested walk's own follow
+        // them and are walked from the preamble stage.
+        let declared = nested::NumDeclaredStages::<P>::len();
+        let declared_stage = |id: nested::RxIndex| matches!(id, nested::RxIndex::ExtensionStage(j) if (j as usize) < declared);
+        if let nested::RxIndex::ExtensionStage(j) = id
+            && declared_stage(id)
+        {
             return InputSource::Extension(side, j as usize);
         }
         let bound = |id: nested::RxIndex| {
             id == nested::RxIndex::ChallengeStage
                 || nested::RxIndex::BRIDGES.contains(&id)
-                || matches!(id, nested::RxIndex::ExtensionStage(_))
+                || declared_stage(id)
         };
         let offset = all[..k].iter().filter(|&&id| !bound(id)).count();
         let base = match side {
@@ -274,8 +310,9 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
     pub b: C,
     pub registry_xy: C,
     pub p: C,
-    /// The child's nested extension stage commitments, by stage.
-    pub extension: FixedVec<C, nested::NumExtensionStages<P>>,
+    /// The child's nested extension stage commitments, by stage: the
+    /// stages the extension declares.
+    pub extension: FixedVec<C, nested::NumDeclaredStages<P>>,
     /// The commitments of the child's own online Fq polynomials it
     /// exported, tied to its `bind_endoscalar` and binding circuits. The
     /// walk does not fold them: the child's own walk did.
@@ -334,32 +371,183 @@ pub struct FWitness<C: Affine, P: Profile> {
     pub mask: C,
 }
 
-/// Witness of [`WalkStage`]: the endoscalar and the walk's outputs, one per
-/// step.
+/// Length type that is one for a native walk of one segment in profile `P`
+/// and zero for a walk of several.
+pub struct Whole<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for Whole<P> {
+    fn len() -> usize {
+        !segments::<P>().is_split() as usize
+    }
+}
+
+/// Length type for the interstitials [`WalkStage`] holds in profile `P`:
+/// one per step of a walk of one segment, and none of a walk of several,
+/// whose segments hold them.
+pub struct WalkSteps<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for WalkSteps<P> {
+    fn len() -> usize {
+        if segments::<P>().is_split() {
+            0
+        } else {
+            NumSteps::<P>::len()
+        }
+    }
+}
+
+/// Length type for the points a segment of profile `P`'s walk is a walk
+/// over: its initial point and the inputs of a full segment's steps.
+pub struct SegmentPoints<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for SegmentPoints<P> {
+    fn len() -> usize {
+        segments::<P>().stage_points()
+    }
+}
+
+/// Length type for the inputs [`SegmentStage`] holds copies of in profile
+/// `P`: those of a full segment's steps, and none for a walk of one
+/// segment.
+pub struct SegmentInputs<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for SegmentInputs<P> {
+    fn len() -> usize {
+        let walk = segments::<P>();
+        if walk.is_split() {
+            walk.steps_per_segment() * P::NATIVE_ENDOSCALINGS_PER_STEP
+        } else {
+            0
+        }
+    }
+}
+
+/// Length type for the interstitials [`SegmentStage`] holds in profile `P`:
+/// one per step of a full segment, and none for a walk of one segment.
+pub struct SegmentSteps<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for SegmentSteps<P> {
+    fn len() -> usize {
+        let walk = segments::<P>();
+        if walk.is_split() {
+            walk.steps_per_segment()
+        } else {
+            0
+        }
+    }
+}
+
+/// Length type for the points [`BoundariesStage`] holds in profile `P`: one
+/// per segment of the walk but the last.
+pub struct NumBoundaries<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumBoundaries<P> {
+    fn len() -> usize {
+        segments::<P>().count() - 1
+    }
+}
+
+/// Witness of [`SegmentStage`]: one segment of a walk of several, as a walk
+/// of its own.
+pub type SegmentWitness<C, P> = PointsWitness<C, SegmentPoints<P>, Endoscalings<P>>;
+
+/// Witness of the stages committed after $\beta$: the endoscalar and the
+/// walk's outputs.
+///
+/// A walk of one segment has an interstitial per step, which [`WalkStage`]
+/// holds beside the endoscalar's bits. A walk of several has the witness of
+/// [`SegmentStage`] for each segment and the points [`BoundariesStage`]
+/// holds, and its bits are [`BitsStage`]'s.
 #[derive(Clone)]
 pub struct WalkWitness<C: Affine, P: Profile> {
     pub endoscalar: Uendo,
-    pub interstitials: FixedVec<C, NumSteps<P>>,
+    /// The walk's outputs, one per step, for a walk of one segment.
+    pub interstitials: FixedVec<C, WalkSteps<P>>,
+    /// Each segment's points, in walk order, for a walk of several
+    /// segments.
+    pub segments: Vec<SegmentWitness<C, P>>,
+    /// The last interstitial of every segment but the last, which the next
+    /// segment starts from.
+    pub boundaries: FixedVec<C, NumBoundaries<P>>,
+    /// The walk's result.
+    p: C,
 }
 
 impl<C: Affine, P: Profile> WalkWitness<C, P> {
-    /// The walk's outputs under `endoscalar`, from a simulated walk.
-    pub fn new(
-        endoscalar: Uendo,
-        walk: PointsWitness<C, NumPoints<P>, super::super::Endoscalings<P>>,
-    ) -> Self {
+    /// Walks `points`, the initial $F_n$ first, under `endoscalar`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `points` are not the walk's [`NumPoints`].
+    pub fn new(endoscalar: Uendo, points: &[C]) -> Self {
+        let walk = segments::<P>();
+        assert_eq!(
+            points.len(),
+            NumPoints::<P>::len(),
+            "the walk is over the nested batch's points"
+        );
+        if !walk.is_split() {
+            let whole = PointsWitness::<C, NumPoints<P>, Endoscalings<P>>::new(endoscalar, points);
+            return Self {
+                endoscalar,
+                p: *whole
+                    .interstitials
+                    .last()
+                    .expect("every walk has at least one interstitial"),
+                interstitials: FixedVec::from_fn(|step| whole.interstitials[step]),
+                segments: Vec::new(),
+                boundaries: FixedVec::from_fn(|_| unreachable!("one segment has no boundary")),
+            };
+        }
+        let inputs = &points[1..];
+        let mut initial = points[0];
+        let mut witnesses = Vec::with_capacity(walk.count());
+        for segment in 0..walk.count() {
+            let witness = SegmentWitness::<C, P>::segment(
+                endoscalar,
+                initial,
+                &inputs[walk.inputs_of(segment)],
+            );
+            initial = witness.interstitials[walk.steps_of(segment) - 1];
+            witnesses.push(witness);
+        }
         Self {
             endoscalar,
-            interstitials: walk.interstitials,
+            p: initial,
+            interstitials: FixedVec::from_fn(|_| {
+                unreachable!("the segments hold a split walk's interstitials")
+            }),
+            boundaries: FixedVec::from_fn(|segment| {
+                witnesses[segment].interstitials[walk.steps_per_segment() - 1]
+            }),
+            segments: witnesses,
         }
     }
 
-    /// The walk's last interstitial: $P_n$.
+    /// The walk's result: $P_n$.
     pub fn p(&self) -> C {
-        *self
-            .interstitials
+        self.p
+    }
+
+    /// The witness of the segment that step `step` of a walk of several
+    /// segments belongs to.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the walk is one segment or `step` is not a step of it.
+    pub fn segment_of(&self, step: usize) -> &SegmentWitness<C, P> {
+        &self.segments[segments::<P>().locate(step).0]
+    }
+
+    /// The witness of the segment a walk of several segments ends in.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the walk is one segment.
+    pub fn last_segment(&self) -> &SegmentWitness<C, P> {
+        self.segments
             .last()
-            .expect("every walk has at least one interstitial")
+            .expect("a walk of several segments has a last one")
     }
 }
 
@@ -545,9 +733,10 @@ pub struct ChildBinding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>
     pub registry_xy: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub p: Point<'dr, D, C>,
-    /// The child's nested extension stage commitments, by stage.
+    /// The child's nested extension stage commitments, by stage: the
+    /// stages the extension declares.
     #[ragu(gadget)]
-    pub extension: FixedVec<Point<'dr, D, C>, nested::NumExtensionStages<P>>,
+    pub extension: FixedVec<Point<'dr, D, C>, nested::NumDeclaredStages<P>>,
     /// The commitments of the child's own online Fq polynomials it
     /// exported.
     #[ragu(gadget)]
@@ -641,22 +830,42 @@ pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub mask: Point<'dr, D, C>,
 }
 
-/// Output gadget of [`WalkStage`].
+/// Output gadget of [`WalkStage`]: the endoscalar and an interstitial per
+/// step for a walk of one segment, and nothing for a walk of several.
 #[derive(Gadget)]
 pub struct Walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
-    pub endoscalar: HoistedEndoscalar<'dr, D>,
+    pub endoscalar: FixedVec<HoistedEndoscalar<'dr, D>, Whole<P>>,
     #[ragu(gadget)]
-    pub interstitials: FixedVec<Point<'dr, D, C>, NumSteps<P>>,
+    pub interstitials: FixedVec<Point<'dr, D, C>, WalkSteps<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walk<'dr, D, C, P> {
     /// The walk's last interstitial: $P_n$.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a walk of several segments, whose last segment holds it.
     pub fn p(&self) -> &Point<'dr, D, C> {
         self.interstitials
             .last()
-            .expect("every walk has at least one interstitial")
+            .expect("a walk of one segment has at least one interstitial")
     }
+}
+
+/// Output gadget of [`SegmentStage`]: a segment of a walk of several, as a
+/// walk of its own, and nothing for a walk of one segment.
+#[derive(Gadget)]
+pub struct Segment<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// The point the segment starts from.
+    #[ragu(gadget)]
+    pub initial: FixedVec<Point<'dr, D, C>, Split<P>>,
+    /// Copies of the walk's inputs the segment folds.
+    #[ragu(gadget)]
+    pub inputs: FixedVec<Point<'dr, D, C>, SegmentInputs<P>>,
+    /// The segment's outputs, one per step.
+    #[ragu(gadget)]
+    pub interstitials: FixedVec<Point<'dr, D, C>, SegmentSteps<P>>,
 }
 
 /// The loaded input stages, viewed as the walk's inputs.
@@ -785,13 +994,112 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
     }
 }
 
+/// The endoscalar's bits of a walk of several segments, bound to `pre_beta`
+/// by `bind_endoscalar`; committed after $\beta$. Nothing for a walk of one
+/// segment, whose bits [`WalkStage`] holds.
+#[derive(Default)]
+pub struct BitsStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
+
+impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BitsStage<C, P> {
+    type Parent = BindingStage<C, P>;
+    type Witness<'source> = &'source WalkWitness<C, P>;
+    type OutputKind = Kind![C::Base; FixedVec<HoistedEndoscalar<'_, _>, Split<P>>];
+
+    fn values() -> usize {
+        // The endoscalar's bits and hoisted products.
+        Split::<P>::len() * (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS)
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        FixedVec::try_from_fn(|_| {
+            HoistedEndoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))
+        })
+    }
+}
+
+/// One segment of a walk of several segments: the point it starts from,
+/// copies of the inputs it folds and its steps' outputs; committed after
+/// $\beta$, a polynomial per segment. Nothing for a walk of one segment.
+#[derive(Default)]
+pub struct SegmentStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
+
+impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for SegmentStage<C, P> {
+    type Parent = BitsStage<C, P>;
+    type Witness<'source> = &'source SegmentWitness<C, P>;
+    type OutputKind = Kind![C::Base; Segment<'_, _, C, P>];
+
+    fn values() -> usize {
+        // (x, y) per point.
+        2 * (Split::<P>::len() + SegmentInputs::<P>::len() + SegmentSteps::<P>::len())
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        Ok(Segment {
+            initial: FixedVec::try_from_fn(|_| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.initial))
+            })?,
+            inputs: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.inputs[i]))
+            })?,
+            interstitials: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
+            })?,
+        })
+    }
+}
+
+/// The output every segment of a walk of several segments but the last
+/// hands to the next, in walk order; committed after $\beta$. Nothing for a
+/// walk of one segment.
+#[derive(Default)]
+pub struct BoundariesStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
+
+impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BoundariesStage<C, P> {
+    type Parent = SegmentStage<C, P>;
+    type Witness<'source> = &'source WalkWitness<C, P>;
+    type OutputKind = Kind![C::Base; FixedVec<Point<'_, _, C>, NumBoundaries<P>>];
+
+    fn values() -> usize {
+        // (x, y) per point.
+        2 * NumBoundaries::<P>::len()
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        FixedVec::try_from_fn(|i| Point::alloc(dr, witness.as_ref().map(|w| w.boundaries[i])))
+    }
+}
+
 /// The rest of the children's nested commitments and the step's own online
 /// Fq commitments, committed before $w$.
 #[derive(Default)]
 pub struct PreambleStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
 
 impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStage<C, P> {
-    type Parent = BindingStage<C, P>;
+    // The stages of a walk of several segments sit before the input
+    // stages, so that a step reserves none of those; they hold nothing for
+    // a walk of one segment, whose chain is the input stages'.
+    type Parent = BoundariesStage<C, P>;
     type Witness<'source> = &'source PreambleWitness<C, P>;
     type OutputKind = Kind![C::Base; Preamble<'_, _, C, P>];
 
@@ -842,7 +1150,9 @@ points_stage!(
 
 /// The walk's stage: $\beta$'s bits, bound to `pre_beta` by
 /// `bind_endoscalar`, and the walk's outputs, one per step, the last of
-/// which is $P_n$; committed after $\beta$.
+/// which is $P_n$; committed after $\beta$. Nothing for a walk of several
+/// segments, whose bits [`BitsStage`] holds and whose outputs its
+/// segments do.
 #[derive(Default)]
 pub struct WalkStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
 
@@ -854,7 +1164,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
     fn values() -> usize {
         // The endoscalar's bits and hoisted products, then (x, y) of one
         // interstitial per step.
-        ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS + 2 * NumSteps::<P>::len()
+        Whole::<P>::len() * (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS) + 2 * WalkSteps::<P>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -866,7 +1176,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
         Self: 'dr,
     {
         Ok(Walk {
-            endoscalar: HoistedEndoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))?,
+            endoscalar: FixedVec::try_from_fn(|_| {
+                HoistedEndoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))
+            })?,
             interstitials: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
             })?,
@@ -883,7 +1195,7 @@ mod tests {
         internal::tests::{R, assert_stage_values},
         profile::{
             Standard,
-            testing::{Opening, Proving},
+            testing::{Opening, Proving, Segmented},
         },
     };
 
@@ -892,6 +1204,9 @@ mod tests {
     /// Each stage's declared values are its wires, in profile `P`.
     fn stage_values_match_wire_counts_in<P: Profile>() {
         assert_stage_values::<_, R, _>(&BindingStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&BitsStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&SegmentStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&BoundariesStage::<C, P>::default());
         assert_stage_values::<_, R, _>(&PreambleStage::<C, P>::default());
         assert_stage_values::<_, R, _>(&RegistryWxStage::<C, P>::default());
         assert_stage_values::<_, R, _>(&AbStage::<C, P>::default());
@@ -907,6 +1222,112 @@ mod tests {
         // alone and beside an extension.
         stage_values_match_wire_counts_in::<Opening>();
         stage_values_match_wire_counts_in::<Proving>();
+        // With both walks cut into segments.
+        stage_values_match_wire_counts_in::<Segmented>();
+    }
+
+    /// The stages of a walk of several segments hold nothing for a walk of
+    /// one, so the input stages sit where they did, and the walk stage
+    /// holds nothing for a walk of several.
+    #[test]
+    fn the_segment_stages_are_empty_for_a_walk_of_one_segment() {
+        use staging::{Stage, StageExt};
+
+        assert_eq!(<BitsStage<C, Standard> as Stage<_, R>>::values(), 0);
+        assert_eq!(<SegmentStage<C, Standard> as Stage<_, R>>::values(), 0);
+        assert_eq!(<BoundariesStage<C, Standard> as Stage<_, R>>::values(), 0);
+        assert_eq!(
+            <PreambleStage<C, Standard> as Stage<_, R>>::skip_gates(),
+            <BindingStage<C, Standard> as Stage<_, R>>::skip_gates()
+                + <BindingStage<C, Standard> as StageExt<_, R>>::num_gates()
+        );
+
+        let walk = segments::<Segmented>();
+        assert!(walk.is_split());
+        assert_eq!(
+            <BitsStage<C, Segmented> as Stage<_, R>>::values(),
+            ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS
+        );
+        assert_eq!(
+            <SegmentStage<C, Segmented> as Stage<_, R>>::values(),
+            2 * (walk.stage_points() + walk.steps_per_segment())
+        );
+        assert_eq!(
+            <BoundariesStage<C, Segmented> as Stage<_, R>>::values(),
+            2 * (walk.count() - 1)
+        );
+        assert_eq!(<WalkStage<C, Segmented> as Stage<_, R>>::values(), 0);
+    }
+
+    /// The segments of a walk of several are one walk: each starts where
+    /// the one before ended, the boundaries are the points handed over, and
+    /// the last segment ends in the result of the walk held in one stage.
+    #[test]
+    fn a_segmented_walk_is_the_whole_walk() {
+        use rand::{Rng, SeedableRng, rngs::StdRng};
+        use udon::{curve::Projective, field::Field};
+
+        type P = Segmented;
+        let mut rng = StdRng::seed_from_u64(11);
+        let points: Vec<C> = (0..NumPoints::<P>::len())
+            .map(|_| {
+                (ragu_core::pasta::Ep::generator()
+                    * ragu_core::pasta::Fq::random(|bytes| rng.fill_bytes(bytes)))
+                .to_affine()
+            })
+            .collect();
+        let endoscalar = Uendo::from(0x1234_5678_9abc_def0_0fed_cba9_8765_4321_u128);
+        let walk = segments::<P>();
+        let witness = WalkWitness::<C, P>::new(endoscalar, &points);
+        let whole = PointsWitness::<C, NumPoints<P>, Endoscalings<P>>::new(endoscalar, &points);
+
+        assert_eq!(witness.segments.len(), walk.count());
+        assert_eq!(witness.interstitials.len(), 0);
+        assert_eq!(witness.segments[0].initial, points[0]);
+        for step in 0..walk.steps() {
+            let (segment, local) = walk.locate(step);
+            assert_eq!(
+                witness.segments[segment].interstitials[local], whole.interstitials[step],
+                "step {step}"
+            );
+            assert!(core::ptr::eq(
+                witness.segment_of(step),
+                &witness.segments[segment]
+            ));
+        }
+        for segment in 1..walk.count() {
+            assert_eq!(
+                witness.segments[segment].initial,
+                witness.boundaries[segment - 1]
+            );
+            assert_eq!(
+                witness.boundaries[segment - 1],
+                whole.interstitials[segment * walk.steps_per_segment() - 1]
+            );
+        }
+        for (i, &input) in points[1..].iter().enumerate() {
+            let segment = i / (walk.steps_per_segment() * P::NATIVE_ENDOSCALINGS_PER_STEP);
+            let slot = i - walk.inputs_of(segment).start;
+            assert_eq!(witness.segments[segment].inputs[slot], input, "input {i}");
+        }
+        assert_eq!(
+            witness.p(),
+            *whole.interstitials.last().expect("a walk has a step")
+        );
+        assert_eq!(
+            witness.last_segment().interstitials[walk.last_local_step()],
+            witness.p()
+        );
+
+        // A walk of one segment keeps every interstitial in the walk stage.
+        let points: Vec<C> = points[..NumPoints::<Standard>::len()].to_vec();
+        let witness = WalkWitness::<C, Standard>::new(endoscalar, &points);
+        assert!(witness.segments.is_empty());
+        assert_eq!(witness.interstitials.len(), NumSteps::<Standard>::len());
+        assert_eq!(
+            witness.p(),
+            *witness.interstitials.last().expect("a walk has a step")
+        );
     }
 
     /// Every input has exactly one source, and splitting the walk into the
@@ -980,6 +1401,10 @@ mod tests {
         // alone and beside an extension.
         walk_round_trips_through_the_stages_in::<Opening>();
         walk_round_trips_through_the_stages_in::<Proving>();
+        // With the stages a nested walk of several segments adds to the
+        // nested extension, which the preamble stage holds: no binding
+        // names one.
+        walk_round_trips_through_the_stages_in::<Segmented>();
     }
 
     /// A child's $P_n$ is the last of its points, where

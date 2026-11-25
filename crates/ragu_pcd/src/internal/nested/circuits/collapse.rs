@@ -69,7 +69,10 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt as _, allocator::Standard, consistent::Consistent, vec::FixedVec,
+    Element, GadgetExt as _,
+    allocator::{Allocator, Standard},
+    consistent::Consistent,
+    vec::FixedVec,
 };
 use udon::curve::EndomorphismAffine as Affine;
 
@@ -124,129 +127,12 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (dr, stages) = common::load_all(dr, &witness)?;
 
-        // The walk's contracts: points on the curve, and the endoscalar
-        // stage's bit wires bits with its product wires the products of those
-        // bits, each gadget re-emitted on the stage's wires.
-        stages.points.enforce_consistent(dr)?;
-        stages.endoscalar.enforce_consistent(dr)?;
-
         let allocator = &mut Standard::new();
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
-
-        // The lifted challenges a parent opens this step at.
-        let pairs = &stages.challenges.pairs;
-        unified
-            .x
-            .receive(dr, allocator)?
-            .enforce_equal(dr, &pairs[stages::challenges::X].lift)?;
-        unified
-            .y
-            .receive(dr, allocator)?
-            .enforce_equal(dr, &pairs[stages::challenges::Y].lift)?;
-        unified
-            .u
-            .receive(dr, allocator)?
-            .enforce_equal(dr, &pairs[stages::challenges::U].lift)?;
-
-        // The commitments a parent endoscales, in `unified` order.
-        let last_interstitial = stages
-            .points
-            .interstitials
-            .last()
-            .expect("every walk has at least one interstitial");
-        let held = [
-            &stages.s_prime.native_preamble,
-            &stages.inner_error.native_inner_error,
-            &stages.outer_error.native_outer_error,
-            &stages.query.native_query,
-            &stages.eval.native_eval,
-            &stages.ab.a,
-            &stages.ab.b,
-            &stages.query.registry_xy,
-            last_interstitial,
-            &stages.preamble.native_points_binding,
-            &stages.preamble.native_points_preamble,
-            &stages.s_prime.native_points_registry_wx,
-            &stages.ab.native_points_ab,
-            &stages.f.native_points_f,
-            &stages.preamble.online_commitments[0],
-            &stages.preamble.online_commitments[1],
-        ];
-        // The bridge-hash stage holds the step's own last online commitment,
-        // the one the preamble holds and w absorbed.
-        stages.bridge_hash.o1.enforce_equal(
-            dr,
-            &stages.preamble.online_commitments[NUM_ONLINE_FP_POLYS - 1],
-        )?;
-
-        let exported = unified.exported.receive(dr, allocator)?;
-        for (instance, stage) in exported.iter().zip(held) {
-            instance.enforce_equal(dr, stage)?;
-        }
+        bind(dr, allocator, &mut unified, &stages)?;
 
         let lifts = &stages.challenges.pairs;
-
-        // Evaluate the children's instance copies at this step's challenge
-        // stage y_n, which is also bound to the public copy above.
-        let y = &lifts[challenges::Y].lift;
-        let left_unified = stages.preamble.left.nested_instance().ky(dr, y)?;
-        let right_unified = stages.preamble.right.nested_instance().ky(dr, y)?;
-        // The binding circuit's k(y): the k(y) of the children's native
-        // extension stages it names, then of their own online slots it
-        // names, as the bridge preamble holds them. A profile without a
-        // binding computes nothing here.
-        let left_binding = ky::binding_ky(
-            dr,
-            y,
-            &stages.preamble.left.bound(),
-            &stages.preamble.left.online_fq_openings,
-        )?;
-        let right_binding = ky::binding_ky(
-            dr,
-            y,
-            &stages.preamble.right.bound(),
-            &stages.preamble.right.online_fq_openings,
-        )?;
-        // The children's `compute_v` claims take the same exported
-        // openings after the unified instance, so the opening a child's
-        // binding circuit exposes is the one its `compute_v` folded, then
-        // the online helper's values and the online batch's commitments. A
-        // profile that exports none of them keeps the unified k(y).
-        let (left_compute_v, left_online_helper) = ky::nested_online_ky::<_, _, P>(
-            dr,
-            y,
-            &stages.preamble.left.nested_instance(),
-            &left_unified,
-            &stages.preamble.left.online_fq_openings,
-            &stages.preamble.left.online_values,
-            &ky::native_online_stages::<P, _>(|index| stages.preamble.left[index].clone()),
-            &stages.preamble.left.online_points,
-            &stages.preamble.left.mesh,
-        )?;
-        let (right_compute_v, right_online_helper) = ky::nested_online_ky::<_, _, P>(
-            dr,
-            y,
-            &stages.preamble.right.nested_instance(),
-            &right_unified,
-            &stages.preamble.right.online_fq_openings,
-            &stages.preamble.right.online_values,
-            &ky::native_online_stages::<P, _>(|index| stages.preamble.right[index].clone()),
-            &stages.preamble.right.online_points,
-            &stages.preamble.right.mesh,
-        )?;
-        let ky = TwoProofKySource::new(
-            dr,
-            stages.preamble.left.nested.c.clone(),
-            stages.preamble.right.nested.c.clone(),
-            left_unified,
-            right_unified,
-            left_compute_v,
-            right_compute_v,
-            left_online_helper,
-            right_online_helper,
-            left_binding,
-            right_binding,
-        );
+        let ky = source(dr, &stages)?;
         // The grid holds the claims' targets with the fold randomizer's.
         let zero = Element::zero(dr);
         let mut ky = revdot::randomized::<_, RevdotParameters<P>>(
@@ -287,6 +173,253 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         is_base_case
             .not(dr)
             .conditional_enforce_equal(dr, allocator, &witnessed_c, &computed_c)?;
+
+        let (output, instance) = unified.finish(dr, allocator)?;
+        Ok(WithAux::new(output, instance))
+    }
+}
+
+/// What `collapse` holds besides the fold: the walk's contracts, the
+/// instance's lifted challenges against the challenge stage, and its
+/// exported commitments against their stage copies.
+fn bind<'dr, D, C, P, A>(
+    dr: &mut D,
+    allocator: &mut A,
+    unified: &mut unified::OutputBuilder<'dr, D, A, C>,
+    stages: &common::Loaded<'dr, D, C, P>,
+) -> Result<()>
+where
+    D: Driver<'dr, F = C::Base>,
+    C: Affine,
+    P: Profile,
+    A: Allocator<'dr, D>,
+{
+    // The walk's contracts: points on the curve, and the endoscalar
+    // stage's bit wires bits with its product wires the products of those
+    // bits, each gadget re-emitted on the stage's wires. A walk of
+    // several segments has a polynomial of the points stage per segment
+    // and this circuit loads the last one alone, so there each step
+    // holds its own points to the curve instead.
+    let walk = crate::internal::nested::segments::<P>();
+    if !walk.is_split() {
+        stages.points.enforce_consistent(dr)?;
+    }
+    stages.endoscalar.enforce_consistent(dr)?;
+
+    // The lifted challenges a parent opens this step at.
+    let pairs = &stages.challenges.pairs;
+    unified
+        .x
+        .receive(dr, allocator)?
+        .enforce_equal(dr, &pairs[stages::challenges::X].lift)?;
+    unified
+        .y
+        .receive(dr, allocator)?
+        .enforce_equal(dr, &pairs[stages::challenges::Y].lift)?;
+    unified
+        .u
+        .receive(dr, allocator)?
+        .enforce_equal(dr, &pairs[stages::challenges::U].lift)?;
+
+    // The commitments a parent endoscales, in `unified` order. The
+    // walk's result is the interstitial of its last step, which the
+    // polynomial of the walk's last segment holds.
+    let last_interstitial = &stages.points.interstitials[walk.last_local_step()];
+    let held = [
+        &stages.s_prime.native_preamble,
+        &stages.inner_error.native_inner_error,
+        &stages.outer_error.native_outer_error,
+        &stages.query.native_query,
+        &stages.eval.native_eval,
+        &stages.ab.a,
+        &stages.ab.b,
+        &stages.query.registry_xy,
+        last_interstitial,
+        &stages.preamble.native_points_binding,
+        &stages.preamble.native_points_preamble,
+        &stages.s_prime.native_points_registry_wx,
+        &stages.ab.native_points_ab,
+        &stages.f.native_points_f,
+        &stages.preamble.online_commitments[0],
+        &stages.preamble.online_commitments[1],
+    ];
+    // The bridge-hash stage holds the step's own last online commitment,
+    // the one the preamble holds and w absorbed.
+    stages.bridge_hash.o1.enforce_equal(
+        dr,
+        &stages.preamble.online_commitments[NUM_ONLINE_FP_POLYS - 1],
+    )?;
+
+    let exported = unified.exported.receive(dr, allocator)?;
+    for (instance, stage) in exported.iter().zip(held) {
+        instance.enforce_equal(dr, stage)?;
+    }
+
+    Ok(())
+}
+
+/// The nested fold's targets that are not constants: the children's $c$
+/// values and the $k(y_n)$ of their nested unified instances, `compute_v`
+/// claims, online helpers and binding circuits, each computed from the
+/// preamble bridge stage's copies at the challenge stage's $y_n$.
+fn source<'dr, D, C, P>(
+    dr: &mut D,
+    stages: &common::Loaded<'dr, D, C, P>,
+) -> Result<TwoProofKySource<'dr, D>>
+where
+    D: Driver<'dr, F = C::Base>,
+    C: Affine,
+    P: Profile,
+{
+    let lifts = &stages.challenges.pairs;
+
+    // Evaluate the children's instance copies at this step's challenge
+    // stage y_n, which is also bound to the public copy above.
+    let y = &lifts[challenges::Y].lift;
+    let left_unified = stages.preamble.left.nested_instance().ky(dr, y)?;
+    let right_unified = stages.preamble.right.nested_instance().ky(dr, y)?;
+    // The binding circuit's k(y): the k(y) of the children's native
+    // extension stages it names, then of their own online slots it
+    // names, as the bridge preamble holds them. A profile without a
+    // binding computes nothing here.
+    let left_binding = ky::binding_ky(
+        dr,
+        y,
+        &stages.preamble.left.bound(),
+        &stages.preamble.left.online_fq_openings,
+    )?;
+    let right_binding = ky::binding_ky(
+        dr,
+        y,
+        &stages.preamble.right.bound(),
+        &stages.preamble.right.online_fq_openings,
+    )?;
+    // The children's `compute_v` claims take the same exported
+    // openings after the unified instance, so the opening a child's
+    // binding circuit exposes is the one its `compute_v` folded, then
+    // the online helper's values and the online batch's commitments. A
+    // profile that exports none of them keeps the unified k(y).
+    let (left_compute_v, left_online_helper) = ky::nested_online_ky::<_, _, P>(
+        dr,
+        y,
+        &stages.preamble.left.nested_instance(),
+        &left_unified,
+        &stages.preamble.left.online_fq_openings,
+        &stages.preamble.left.online_values,
+        &ky::native_online_stages::<P, _>(|index| stages.preamble.left[index].clone()),
+        &stages.preamble.left.online_points,
+        &stages.preamble.left.mesh,
+    )?;
+    let (right_compute_v, right_online_helper) = ky::nested_online_ky::<_, _, P>(
+        dr,
+        y,
+        &stages.preamble.right.nested_instance(),
+        &right_unified,
+        &stages.preamble.right.online_fq_openings,
+        &stages.preamble.right.online_values,
+        &ky::native_online_stages::<P, _>(|index| stages.preamble.right[index].clone()),
+        &stages.preamble.right.online_points,
+        &stages.preamble.right.mesh,
+    )?;
+    let ky = TwoProofKySource::new(
+        dr,
+        stages.preamble.left.nested.c.clone(),
+        stages.preamble.right.nested.c.clone(),
+        left_unified,
+        right_unified,
+        left_compute_v,
+        right_compute_v,
+        left_online_helper,
+        right_online_helper,
+        left_binding,
+        right_binding,
+    );
+    Ok(ky)
+}
+
+/// The left and the right child's target of one circuit, which a profile
+/// has for both children or for neither.
+fn pair<T: Clone>(left: &Option<T>, right: &Option<T>) -> Option<[T; 2]> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some([left.clone(), right.clone()]),
+        (None, None) => None,
+        _ => unreachable!("a profile's circuit has a target for each child"),
+    }
+}
+
+/// The circuit a profile whose nested fold is verified in chunks registers
+/// in `collapse`'s place (see [`Chunking`](crate::profile::Chunking)).
+///
+/// It holds everything `collapse` holds besides the fold and computes the
+/// same targets, and then, instead of folding them, enforces each target it
+/// computed equal to the value the [`targets`](stages::targets) stage
+/// holds, where the [`fold_inner`](super::fold_inner) circuits read it. The
+/// two layers are those circuits' and [`fold_outer`](super::fold_outer)'s,
+/// and the instance's $c_n$ is the latter's to cover.
+pub struct Targets<C: Affine, R: Rank, P: Profile> {
+    _marker: PhantomData<(C, R, P)>,
+}
+
+impl<C: Affine, R: Rank, P: Profile> Targets<C, R, P> {
+    /// Creates the circuit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the profile's `collapse` verifies the fold whole.
+    pub fn new() -> Self {
+        assert!(
+            crate::internal::nested::is_fold_chunked::<P>(),
+            "a fold verified whole is `collapse`'s"
+        );
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Targets<C, R, P> {
+    type Last = stages::challenges::Stage<C, R, P>;
+    type Instance<'source> = &'source unified::Instance<C>;
+    type Witness<'source> = common::Witness<'source, C, P>;
+    type Output = unified::OutputKind<C>;
+    type Aux<'source> = unified::Instance<C>;
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        _: &mut D,
+        _: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        unreachable!("instance for internal circuits is not invoked")
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
+        let (dr, stages) = common::load_all(dr, &witness)?;
+
+        let allocator = &mut Standard::new();
+        let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
+        bind(dr, allocator, &mut unified, &stages)?;
+
+        // The targets this circuit computed are the ones the chunks fold.
+        let ky = source(dr, &stages)?;
+        let computed = stages::targets::Targets {
+            unified: [ky.left_unified.clone(), ky.right_unified.clone()],
+            compute_v: [ky.left_compute_v.clone(), ky.right_compute_v.clone()],
+            online_helper: pair(&ky.left_online_helper, &ky.right_online_helper),
+            binding: pair(&ky.left_binding, &ky.right_binding),
+        }
+        .into_values();
+        assert_eq!(
+            computed.len(),
+            stages.targets.len(),
+            "the targets stage holds every target the circuit computes"
+        );
+        for (computed, staged) in computed.iter().zip(stages.targets.iter()) {
+            computed.enforce_equal(dr, staged)?;
+        }
 
         let (output, instance) = unified.finish(dr, allocator)?;
         Ok(WithAux::new(output, instance))

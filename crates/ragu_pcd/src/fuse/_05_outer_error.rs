@@ -130,7 +130,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The target of the fold randomizer's claim, which the inner error
         // stage holds for `collapse`.
         let randomizer_c = native_inner_error_witness.randomizer_c;
-        let (ky, collapsed) = Emulator::emulate_wireless(
+        let (ky, collapsed, targets) = Emulator::emulate_wireless(
             (
                 preamble_witness,
                 &native_inner_error_witness.error_terms,
@@ -315,7 +315,42 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     },
                 };
 
-                Ok((ky, collapsed))
+                // The targets `collapse` computes, for the stage that
+                // carries them to the chunks of a fold verified in chunks.
+                let targets = if native::is_fold_chunked::<C::Profile>() {
+                    native::stages::targets::Targets {
+                        application: Some(&ky_source.application),
+                        bind_endoscalar: [
+                            Some(&ky_source.left_bind_endoscalar),
+                            Some(&ky_source.right_bind_endoscalar),
+                        ],
+                        statement: ky_source.left_statement.is_some().then_some([
+                            ky_source.left_statement.as_ref(),
+                            ky_source.right_statement.as_ref(),
+                        ]),
+                        binding: ky_source.left_binding.is_some().then_some([
+                            ky_source.left_binding.as_ref(),
+                            ky_source.right_binding.as_ref(),
+                        ]),
+                        online_helper: ky_source.left_online_helper.is_some().then_some([
+                            ky_source.left_online_helper.as_ref(),
+                            ky_source.right_online_helper.as_ref(),
+                        ]),
+                    }
+                    .into_values()
+                    .into_iter()
+                    .map(|target| {
+                        *target
+                            .expect("a profile's circuit has a target for each child")
+                            .value()
+                            .take()
+                    })
+                    .collect()
+                } else {
+                    alloc::vec::Vec::new()
+                };
+
+                Ok((ky, collapsed, targets))
             },
         )?;
 
@@ -332,6 +367,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 collapsed,
                 ky,
                 sponge_state_elements,
+                targets,
             };
         self.compute_native_outer_error(rng, &native_outer_error_witness, builder)?;
 
@@ -425,7 +461,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         drop(nested_claims);
 
         let randomizer_c = nested_inner_error_witness.randomizer_c;
-        let collapsed = NestedFuseEmulator::<C>::emulate_wireless(
+        let (collapsed, targets) = NestedFuseEmulator::<C>::emulate_wireless(
             (
                 (&nested_inner_error_witness.error_terms, nested_y, nested_mu),
                 (
@@ -524,7 +560,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
                 let fold_products = revdot::ClaimFolder::new(&nested_mu);
 
-                FixedVec::try_from_fn(|i| {
+                let collapsed = FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
                         Element::alloc(dr, allocator, inner_error_terms.as_ref().map(|et| et[i][j]))
                     })?;
@@ -533,7 +569,43 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     let v = fold_products
                         .fold_inner::<nested::RevdotParameters<C::Profile>>(dr, &errors, &ky)?;
                     Ok(*v.value().take())
-                })
+                })?;
+
+                // The targets `collapse` computes, for the stage that
+                // carries them to the chunks of a fold verified in chunks.
+                let targets = if nested::is_fold_chunked::<C::Profile>() {
+                    nested::stages::targets::Targets {
+                        unified: [
+                            Some(&ky_source.left_unified),
+                            Some(&ky_source.right_unified),
+                        ],
+                        compute_v: [
+                            Some(&ky_source.left_compute_v),
+                            Some(&ky_source.right_compute_v),
+                        ],
+                        online_helper: ky_source.left_online_helper.is_some().then_some([
+                            ky_source.left_online_helper.as_ref(),
+                            ky_source.right_online_helper.as_ref(),
+                        ]),
+                        binding: ky_source.left_binding.is_some().then_some([
+                            ky_source.left_binding.as_ref(),
+                            ky_source.right_binding.as_ref(),
+                        ]),
+                    }
+                    .into_values()
+                    .into_iter()
+                    .map(|target| {
+                        *target
+                            .expect("a profile's circuit has a target for each child")
+                            .value()
+                            .take()
+                    })
+                    .collect()
+                } else {
+                    alloc::vec::Vec::new()
+                };
+
+                Ok((collapsed, targets))
             },
         )?;
 
@@ -548,6 +620,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_outer_error: builder.native_outer_error_commitment(),
             error_terms,
             collapsed,
+            targets,
         };
         let bridge_rx = nested::stages::outer_error::Stage::<C::HostCurve, R, C::Profile>::rx(
             Blind::random(rng),

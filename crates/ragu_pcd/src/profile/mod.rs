@@ -237,6 +237,42 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The endoscalings a nested endoscaling step performs, likewise.
     const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
 
+    /// The steps of the nested walk that a segment of its points holds, at
+    /// most. A nested step loads the points stage, a gate per point it
+    /// holds, so a walk held in one polynomial of that stage is bounded by
+    /// the rank's gate budget. A walk of more steps is cut into segments:
+    /// the stage then holds one segment's points, the proof carries a
+    /// polynomial of it per segment and one more for the points handed
+    /// between them, and a step loads its own segment alone. Each of those
+    /// polynomials is a point the native walk folds, which the profile's
+    /// [`Shape`] counts.
+    ///
+    /// The default holds any walk in one segment, which is the points stage
+    /// of a profile that does not set this. Must be nonzero.
+    const NESTED_STEPS_PER_SEGMENT: usize = usize::MAX;
+
+    /// The steps of the native walk that a segment of its points holds, at
+    /// most. A native step loads every stage the walk's points are committed
+    /// in, a gate per point they hold, so a walk whose steps read the points
+    /// where they were committed is bounded by the rank's gate budget. A walk
+    /// of more steps is cut into segments: the proof then carries, beside
+    /// the stages that commit the points, a polynomial per segment that
+    /// holds copies of the segment's points and its steps' outputs, one for
+    /// the endoscalar's bits and one for the points handed between the
+    /// segments, and a step loads its own segment alone. A bonding per
+    /// segment holds the copies to the stages that committed the points.
+    /// Each of those polynomials is a point the nested walk folds, which the
+    /// profile's [`Shape`] counts.
+    ///
+    /// The default holds any walk in one segment, which is the walk of a
+    /// profile that does not set this. Must be nonzero.
+    const NATIVE_STEPS_PER_SEGMENT: usize = usize::MAX;
+
+    /// How the profile cuts the fuse's own wide circuits into chunks (see
+    /// [`Chunking`]). The default cuts none, which is the fuse of a profile
+    /// that does not set this.
+    const CHUNKING: Chunking = Chunking::WHOLE;
+
     /// What the profile's prover holds across proofs beyond the proof
     /// under construction: the extension's witness source, which an
     /// application takes at
@@ -777,6 +813,38 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                     .into(),
             ));
         }
+        if Self::NESTED_STEPS_PER_SEGMENT == 0 {
+            return Err(Error::Initialization(
+                "a segment of the profile's nested walk holds no step".into(),
+            ));
+        }
+        if Self::NATIVE_STEPS_PER_SEGMENT == 0 {
+            return Err(Error::Initialization(
+                "a segment of the profile's native walk holds no step".into(),
+            ));
+        }
+        if Self::CHUNKING.native_fold
+            > <native::NumFoldGroups<Self> as ragu_primitives::vec::Len>::len()
+        {
+            return Err(Error::Initialization(
+                "the profile cuts the native fold into more chunks than it has groups".into(),
+            ));
+        }
+        if Self::CHUNKING.nested_fold
+            > <nested::NumFoldGroups<Self> as ragu_primitives::vec::Len>::len()
+        {
+            return Err(Error::Initialization(
+                "the profile cuts the nested fold into more chunks than it has groups".into(),
+            ));
+        }
+        if native::is_opening_chunked::<Self>()
+            && native::open::Schedule::of::<Self>().widest_band() > Self::CHUNKING.native_band
+        {
+            return Err(Error::Initialization(
+                "a band of the profile's native opening program is too small for the values its chunk reads"
+                    .into(),
+            ));
+        }
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
         }
@@ -877,6 +945,53 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 }
 
+/// How a profile cuts the fuse's own wide circuits into chunks.
+///
+/// A fuse circuit that folds or opens every polynomial of a proof grows
+/// with the proof, and a profile whose proofs carry many polynomials has
+/// circuits past the rank's gate budget. Such a circuit is cut into
+/// chunks: circuits of the same work over a part of the polynomials each,
+/// which hand their partial results on through a stage. The chunk circuits
+/// are internal circuits of the fuse and their stages are stages of it; a
+/// proof carries their polynomials as its extension's last circuits and
+/// stages, after every one the profile and the online batch declare, so
+/// the other side's walk folds their commitments with the extension's.
+///
+/// Each count is the number of chunk circuits, and zero keeps the work in
+/// the one circuit of a profile that cuts nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chunking {
+    /// The circuits that verify the first layer of the native fold, each
+    /// over an equal share of its groups: the `fold_inner` circuits. With
+    /// any, `collapse` holds the fold's targets to a stage the chunks read,
+    /// and one more circuit verifies the second layer.
+    pub native_fold: usize,
+    /// The circuits that verify the first layer of the nested fold,
+    /// likewise.
+    pub nested_fold: usize,
+    /// The circuits that run the native opening program, `compute_v`'s
+    /// work, each over an equal share of its steps: the `open` circuits.
+    /// With any, `compute_v` stages what they share and takes $v$ from the
+    /// last.
+    pub native_openings: usize,
+    /// The values a band of the native opening program holds: the copies
+    /// of the `query` and `eval` stages' values that one `open` circuit
+    /// reads. A band must hold every value its circuit's share of the
+    /// program reads, which the setup checks. Unused when
+    /// [`native_openings`](Self::native_openings) is zero.
+    pub native_band: usize,
+}
+
+impl Chunking {
+    /// No circuit is cut.
+    pub const WHOLE: Self = Chunking {
+        native_fold: 0,
+        nested_fold: 0,
+        native_openings: 0,
+        native_band: 0,
+    };
+}
+
 /// The token the crate's own profiles carry in [`Profile::BUILT_IN`]: the
 /// type it was made for, as the function that names it. Its field is
 /// private, so only this crate constructs one, and a copy names the type
@@ -891,14 +1006,49 @@ impl BuiltIn {
     }
 }
 
-/// The registered native extension, including the online batch helper.
+/// The registered native extension, including the online batch helper and,
+/// for a native walk of several segments, the stages that hold the walk's
+/// endoscalar bits, its segments and the points handed between them (see
+/// [`native::num_walk_stages`]). Those come after every stage the profile
+/// and the online batch declare, so no circuit of the extension and no
+/// binding names one, and their masks come after those stages' masks,
+/// before the final masks.
+///
+/// A profile that cuts the fuse's own circuits into chunks
+/// ([`Profile::CHUNKING`]) has the chunk circuits as the extension's last
+/// circuits, which load no stage of the extension, and the stages they
+/// hand values through after the walk's (see
+/// [`native::num_fold_polynomials`]).
 pub(crate) fn native_extension<P: Profile>() -> Extension {
-    online::stages::layout::<P, online::stages::Native>()
+    let mut extension = online::stages::layout::<P, online::stages::Native>();
+    extension.stages += native::num_builtin_stages::<P>();
+    extension.circuits.extend(core::iter::repeat_n(
+        Vec::new(),
+        native::num_builtin_circuits::<P>(),
+    ));
+    extension
 }
 
-/// The registered nested extension, including the online batch helper.
+/// The registered nested extension, including the online batch helper and,
+/// for a nested walk of several segments, the stages that hold the walk's
+/// further segments and the points handed between them (see
+/// [`nested::num_walk_stages`]). Those come after every stage the profile
+/// and the online batch declare, so no circuit of the extension and no
+/// binding names one, and their masks come after those stages' masks,
+/// before the final masks.
+///
+/// A profile that cuts the fuse's own circuits into chunks
+/// ([`Profile::CHUNKING`]) has the chunk circuits as the extension's last
+/// circuits and the stage they read after the walk's, as on the native
+/// side (see [`nested::num_fold_polynomials`]).
 pub(crate) fn nested_extension<P: Profile>() -> Extension {
-    online::stages::layout::<P, online::stages::Nested>()
+    let mut extension = online::stages::layout::<P, online::stages::Nested>();
+    extension.stages += nested::num_builtin_stages::<P>();
+    extension.circuits.extend(core::iter::repeat_n(
+        Vec::new(),
+        nested::num_builtin_circuits::<P>(),
+    ));
+    extension
 }
 
 /// A registry slot a profile's circuit hook fills with one internal circuit.
@@ -1655,7 +1805,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle 
 pub struct Shape {
     /// The native rx polynomials: the fixed ones, the walk's steps and the
     /// profile's extension, with the native online batch's helper circuit
-    /// and stages when [`Profile::NATIVE_ONLINE`] is nonempty.
+    /// and stages when [`Profile::NATIVE_ONLINE`] is nonempty, and the
+    /// polynomials a native walk of several segments adds (see
+    /// [`Profile::NATIVE_STEPS_PER_SEGMENT`]).
     pub native_rx: usize,
     /// The nested-curve points the nested walk folds: the native batch, with
     /// the commitments of the [`Profile::NATIVE_ONLINE`] polynomials.
@@ -1663,7 +1815,9 @@ pub struct Shape {
     /// The nested walk's steps.
     pub nested_steps: usize,
     /// The nested rx polynomials, with the nested online batch's helper
-    /// circuit and stages when [`Profile::NESTED_ONLINE`] is nonempty.
+    /// circuit and stages when [`Profile::NESTED_ONLINE`] is nonempty, and
+    /// the polynomials a nested walk of several segments adds (see
+    /// [`Profile::NESTED_STEPS_PER_SEGMENT`]).
     pub nested_rx: usize,
     /// The step's own polynomials over the scalar field: the
     /// [`Profile::ONLINE_FQ_POLYS`] slots followed by the
@@ -1687,23 +1841,28 @@ impl Shape {
     /// Panics under the same conditions as [`Self::solve`]. When used in
     /// a constant layout, an invalid shape fails at compile time.
     pub const fn of<P: Profile>() -> Self {
-        let mut shape = Self::solve_with_online(
+        let mut shape = Self::solve_segmented(
             P::NATIVE_EXTENSION
                 + if P::NATIVE_ONLINE.is_empty() {
                     0
                 } else {
                     online::stages::RXS
-                },
+                }
+                + native::num_fold_polynomials(P::CHUNKING.native_fold)
+                + native::num_opening_polynomials(P::CHUNKING.native_openings),
             P::NESTED_EXTENSION
                 + if P::NESTED_ONLINE.is_empty() {
                     0
                 } else {
                     online::stages::RXS
-                },
+                }
+                + nested::num_fold_polynomials(P::CHUNKING.nested_fold),
             P::ONLINE_FQ_POLYS + P::NESTED_ONLINE.polynomials.len(),
             P::NATIVE_ONLINE.polynomials.len(),
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
+            P::NATIVE_STEPS_PER_SEGMENT,
+            P::NESTED_STEPS_PER_SEGMENT,
         );
         shape.source_polynomials =
             P::NATIVE_MESH.is_some() as usize + P::NESTED_MESH.is_some() as usize;
@@ -1743,6 +1902,33 @@ impl Shape {
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
+        Self::solve_segmented(
+            native_extension,
+            nested_extension,
+            online_fq,
+            online_fp,
+            native_endoscalings,
+            nested_endoscalings,
+            usize::MAX,
+            usize::MAX,
+        )
+    }
+
+    /// [`solve_with_online`](Self::solve_with_online) for walks cut into
+    /// segments of at most `native_steps_per_segment` and
+    /// `nested_steps_per_segment` steps, whose polynomials the other side's
+    /// walk folds like any other rx polynomial.
+    #[allow(clippy::too_many_arguments)]
+    const fn solve_segmented(
+        native_extension: usize,
+        nested_extension: usize,
+        online_fq: usize,
+        online_fp: usize,
+        native_endoscalings: usize,
+        nested_endoscalings: usize,
+        native_steps_per_segment: usize,
+        nested_steps_per_segment: usize,
+    ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
         loop {
@@ -1754,6 +1940,8 @@ impl Shape {
                 online_fp,
                 native_endoscalings,
                 nested_endoscalings,
+                native_steps_per_segment,
+                nested_steps_per_segment,
             );
             if shape.native_steps == native_steps {
                 return shape;
@@ -1766,6 +1954,7 @@ impl Shape {
 
     /// One pass around the cycle: the shape that `native_steps` native steps
     /// imply, whose `native_steps` is the count the resulting batch needs.
+    #[allow(clippy::too_many_arguments)]
     const fn with_native_steps(
         native_steps: usize,
         native_extension: usize,
@@ -1774,11 +1963,26 @@ impl Shape {
         online_fp: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
+        native_steps_per_segment: usize,
+        nested_steps_per_segment: usize,
     ) -> Self {
-        let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
+        // The native walk's own polynomials are sized with the steps the
+        // pass starts from, as the steps' are: at the fixed point those are
+        // the walk's.
+        let native_segments = endoscalar::segment_count(native_steps, native_steps_per_segment);
+        let native_rx = native::NUM_FIXED_RX
+            + native_steps
+            + native_extension
+            + native::num_walk_stages(native_segments);
         let nested_points = nested::num_endoscaling_points(native_rx) + online_fp;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
-        let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
+        let nested_segments =
+            endoscalar::Segments::new(nested_points, nested_endoscalings, nested_steps_per_segment)
+                .count();
+        let nested_rx = nested::NUM_FIXED_RX
+            + nested_steps
+            + nested_extension
+            + nested::num_walk_stages(nested_segments);
         let native_points = nested::pcs::num_batched_points(nested_rx, online_fq);
         let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {

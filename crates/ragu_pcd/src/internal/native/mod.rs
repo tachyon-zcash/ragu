@@ -22,7 +22,7 @@ pub use circuits::bind_challenges::NUM_BINDERS;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
-    staging::StageExt,
+    staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
 use ragu_primitives::vec::{ConstLen, FixedVec, Len};
@@ -93,6 +93,441 @@ const _: () = assert!(
 /// [`NUM_ENDOSCALING_STEPS`].
 pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, Endoscalings<P>>;
 
+/// How the native walk of profile `P` is cut into segments: one, the whole
+/// walk, unless the profile sets
+/// [`NATIVE_STEPS_PER_SEGMENT`](Profile::NATIVE_STEPS_PER_SEGMENT) below
+/// the walk's steps.
+///
+/// The steps of a walk of one segment read every point from the stage that
+/// committed it and write the walk stage's interstitials. The steps of a
+/// walk of several read their segment's polynomial of
+/// [`SegmentStage`](stages::points::SegmentStage) instead, which holds
+/// copies of the points the segment folds and its steps' outputs, and the
+/// endoscalar's bits from [`BitsStage`](stages::points::BitsStage); a
+/// [`walk_loading`](circuits::walk_loading) bonding per segment holds the
+/// copies to the stages that committed the points and ties the segment to
+/// its neighbours through
+/// [`BoundariesStage`](stages::points::BoundariesStage).
+pub struct Walk<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Walk<P> {
+    /// The segments, evaluated once per profile.
+    pub const SEGMENTS: endoscalar::Segments = endoscalar::Segments::new(
+        NumPoints::<P>::LEN,
+        P::NATIVE_ENDOSCALINGS_PER_STEP,
+        P::NATIVE_STEPS_PER_SEGMENT,
+    );
+}
+
+/// The segments of profile `P`'s native walk (see [`Walk`]).
+pub const fn segments<P: Profile>() -> endoscalar::Segments {
+    Walk::<P>::SEGMENTS
+}
+
+/// The stage polynomials a native walk of `segments` segments adds to a
+/// proof: the bits stage's, one of the segment stage per segment, then the
+/// boundaries stage's. None for a walk of one segment.
+///
+/// A proof carries them as the last stages of its native extension (see
+/// `profile::native_extension`), so the nested walk folds their commitments
+/// with the extension's.
+pub const fn num_walk_stages(segments: usize) -> usize {
+    if segments > 1 { segments + 2 } else { 0 }
+}
+
+/// The bondings a native walk of `segments` segments adds beyond its
+/// stages' masks: a loading per segment and the final mask of its steps.
+/// None for a walk of one segment.
+pub const fn num_walk_bondings(segments: usize) -> usize {
+    if segments > 1 { segments + 1 } else { 0 }
+}
+
+/// The index, among the native extension's stages, of the first stage the
+/// native walk adds: the stages the profile and the online batch declare
+/// come before.
+pub(crate) fn walk_stage_offset<P: Profile>() -> usize {
+    crate::profile::online::stages::layout::<P, crate::profile::online::stages::Native>().stages
+}
+
+/// The rx polynomial of the bits stage of profile `P`'s native walk, for a
+/// walk of several segments.
+///
+/// # Panics
+///
+/// Panics if the walk is one segment, whose bits the walk stage holds.
+pub fn walk_bits_rx<P: Profile>() -> RxIndex {
+    assert!(
+        segments::<P>().is_split(),
+        "a walk of one segment keeps its bits in the walk stage"
+    );
+    RxIndex::ExtensionStage(walk_stage_offset::<P>() as u32)
+}
+
+/// The rx polynomial of segment `segment` of profile `P`'s native walk, for
+/// a walk of several segments.
+///
+/// # Panics
+///
+/// Panics if the walk is one segment or has no such segment.
+pub fn segment_rx<P: Profile>(segment: usize) -> RxIndex {
+    let walk = segments::<P>();
+    assert!(
+        walk.is_split(),
+        "a walk of one segment has no segment stage"
+    );
+    assert!(segment < walk.count(), "no such segment");
+    RxIndex::ExtensionStage((walk_stage_offset::<P>() + 1 + segment) as u32)
+}
+
+/// The rx polynomial of the boundaries stage of profile `P`'s native walk,
+/// for a walk of several segments.
+///
+/// # Panics
+///
+/// Panics if the walk is one segment, which has no boundary.
+pub fn boundaries_rx<P: Profile>() -> RxIndex {
+    let walk = segments::<P>();
+    assert!(walk.is_split(), "a walk of one segment has no boundary");
+    RxIndex::ExtensionStage((walk_stage_offset::<P>() + 1 + walk.count()) as u32)
+}
+
+/// The polynomials a native fold cut into `chunks` first-layer chunk
+/// circuits adds to a proof: the chunk circuits', the second layer's
+/// circuit's and the targets stage's. None for a fold `collapse` verifies
+/// whole.
+pub const fn num_fold_polynomials(chunks: usize) -> usize {
+    if chunks > 0 { chunks + 2 } else { 0 }
+}
+
+/// The circuits that verify the first layer of profile `P`'s native fold:
+/// none when `collapse` verifies the fold whole (see
+/// [`Chunking`](crate::profile::Chunking)).
+pub fn fold_chunks<P: Profile>() -> usize {
+    P::CHUNKING.native_fold
+}
+
+/// Whether profile `P` cuts the native fold's verification into chunks.
+pub fn is_fold_chunked<P: Profile>() -> bool {
+    fold_chunks::<P>() > 0
+}
+
+/// The groups of profile `P`'s native fold that first-layer chunk `chunk`
+/// verifies: the chunks share the groups evenly, in order.
+///
+/// # Panics
+///
+/// Panics if the fold has no such chunk.
+pub fn fold_groups<P: Profile>(chunk: usize) -> core::ops::Range<usize> {
+    let chunks = fold_chunks::<P>();
+    assert!(chunk < chunks, "no such fold chunk");
+    let groups = NumFoldGroups::<P>::len();
+    chunk * groups / chunks..(chunk + 1) * groups / chunks
+}
+
+/// A stage of the fuse that a proof carries among its native extension's
+/// stages, after the ones the profile and the online batch declare, in the
+/// order of [`builtin_stage`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinStage {
+    /// The bits stage of a walk of several segments.
+    WalkBits,
+    /// The segment stage of a walk of several segments, one per segment.
+    WalkSegment(usize),
+    /// The boundaries stage of a walk of several segments.
+    WalkBoundaries,
+    /// The targets stage of a fold verified in chunks.
+    FoldTargets,
+    /// The carry stage of an opening program run in chunks.
+    OpenCarry,
+    /// The band stage of an opening program run in chunks, one per band: a
+    /// chunk's by its index, then `compute_v`'s own.
+    OpenBand(usize),
+}
+
+/// The stages the fuse adds to profile `P`'s native extension: those of a
+/// walk of several segments, then the targets stage of a fold verified in
+/// chunks, then the carry stage and the bands of an opening program run in
+/// chunks.
+pub fn num_builtin_stages<P: Profile>() -> usize {
+    num_walk_stages(segments::<P>().count())
+        + is_fold_chunked::<P>() as usize
+        + num_opening_stages(opening_chunks::<P>())
+}
+
+/// The circuits that run profile `P`'s opening program: none when
+/// `compute_v` runs it whole (see [`Chunking`](crate::profile::Chunking)).
+pub fn opening_chunks<P: Profile>() -> usize {
+    P::CHUNKING.native_openings
+}
+
+/// Whether profile `P` runs its opening program in chunks.
+pub fn is_opening_chunked<P: Profile>() -> bool {
+    opening_chunks::<P>() > 0
+}
+
+/// The stage polynomials an opening program run in `chunks` chunks adds to
+/// a proof: the carry stage's and a band's per chunk and for `compute_v`.
+pub const fn num_opening_stages(chunks: usize) -> usize {
+    if chunks > 0 { chunks + 2 } else { 0 }
+}
+
+/// The polynomials an opening program run in `chunks` chunks adds to a
+/// proof: the chunk circuits' and the stages' ([`num_opening_stages`]).
+pub const fn num_opening_polynomials(chunks: usize) -> usize {
+    if chunks > 0 {
+        chunks + num_opening_stages(chunks)
+    } else {
+        0
+    }
+}
+
+/// The bondings an opening program run in `chunks` chunks adds beyond its
+/// stages' masks: a loading per band and the final mask of the circuits
+/// that end on the band stage.
+pub const fn num_opening_bondings(chunks: usize) -> usize {
+    if chunks > 0 { chunks + 2 } else { 0 }
+}
+
+/// Length type for the bands of profile `P`'s opening program: one per
+/// chunk and one for `compute_v`, none for a program run whole.
+pub struct NumOpenBands<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumOpenBands<P> {
+    fn len() -> usize {
+        match opening_chunks::<P>() {
+            0 => 0,
+            chunks => chunks + 1,
+        }
+    }
+}
+
+/// Length type that is one for a profile whose opening program runs in
+/// chunks and zero otherwise.
+pub struct Opened<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for Opened<P> {
+    fn len() -> usize {
+        is_opening_chunked::<P>() as usize
+    }
+}
+
+/// Length type for the values a band of profile `P`'s opening program
+/// holds: the profile's [`native_band`](crate::profile::Chunking), and
+/// none for a program run whole.
+pub struct OpenBandLen<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for OpenBandLen<P> {
+    fn len() -> usize {
+        if is_opening_chunked::<P>() {
+            P::CHUNKING.native_band
+        } else {
+            0
+        }
+    }
+}
+
+/// The rx polynomial of the carry stage of profile `P`'s opening program.
+///
+/// # Panics
+///
+/// Panics if `compute_v` runs the program whole.
+pub fn open_carry_rx<P: Profile>() -> RxIndex {
+    assert!(
+        is_opening_chunked::<P>(),
+        "a program run whole has no carry stage"
+    );
+    RxIndex::ExtensionStage(
+        (walk_stage_offset::<P>()
+            + num_walk_stages(segments::<P>().count())
+            + is_fold_chunked::<P>() as usize) as u32,
+    )
+}
+
+/// The rx polynomial of band `band` of profile `P`'s opening program: a
+/// chunk's by its index, and `compute_v`'s own after the chunks'.
+///
+/// # Panics
+///
+/// Panics if the program has no such band.
+pub fn open_band_rx<P: Profile>(band: usize) -> RxIndex {
+    assert!(band < NumOpenBands::<P>::len(), "no such band");
+    let RxIndex::ExtensionStage(carry) = open_carry_rx::<P>() else {
+        unreachable!("the carry stage is a stage of the extension")
+    };
+    RxIndex::ExtensionStage(carry + 1 + band as u32)
+}
+
+/// The fuse's stage at index `stage` of profile `P`'s native extension's
+/// stages, or `None` for a stage the profile or the online batch declares.
+///
+/// # Panics
+///
+/// Panics if the extension has no such stage.
+pub fn builtin_stage<P: Profile>(stage: usize) -> Option<BuiltinStage> {
+    let declared = walk_stage_offset::<P>();
+    let index = stage.checked_sub(declared)?;
+    let walk = num_walk_stages(segments::<P>().count());
+    if index < walk {
+        return Some(match index {
+            0 => BuiltinStage::WalkBits,
+            index if index + 1 == walk => BuiltinStage::WalkBoundaries,
+            index => BuiltinStage::WalkSegment(index - 1),
+        });
+    }
+    let index = index - walk;
+    let fold = is_fold_chunked::<P>() as usize;
+    if index < fold {
+        return Some(BuiltinStage::FoldTargets);
+    }
+    let index = index - fold;
+    assert!(
+        index < num_opening_stages(opening_chunks::<P>()),
+        "no such extension stage"
+    );
+    Some(match index {
+        0 => BuiltinStage::OpenCarry,
+        index => BuiltinStage::OpenBand(index - 1),
+    })
+}
+
+/// The rx polynomial of the targets stage of profile `P`'s native fold,
+/// for a fold verified in chunks.
+///
+/// # Panics
+///
+/// Panics if `collapse` verifies the fold whole.
+pub fn fold_targets_rx<P: Profile>() -> RxIndex {
+    assert!(
+        is_fold_chunked::<P>(),
+        "a fold verified whole has no targets stage"
+    );
+    RxIndex::ExtensionStage(
+        (walk_stage_offset::<P>() + num_walk_stages(segments::<P>().count())) as u32,
+    )
+}
+
+/// A circuit of the fuse that a proof carries among its native extension's
+/// circuits, after the ones the profile and the online batch declare, in
+/// the order of [`builtin_circuit`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinCircuit {
+    /// A first-layer chunk of a fold verified in chunks.
+    FoldInner(usize),
+    /// The second layer's circuit of a fold verified in chunks.
+    FoldOuter,
+    /// A chunk of an opening program run in chunks.
+    Open(usize),
+}
+
+/// The circuits a fold verified in chunks adds: its chunks and its second
+/// layer's circuit.
+fn num_fold_circuits<P: Profile>() -> usize {
+    match fold_chunks::<P>() {
+        0 => 0,
+        chunks => chunks + 1,
+    }
+}
+
+/// The circuits the fuse adds to profile `P`'s native extension: the
+/// chunks of a fold verified in chunks and its second layer's circuit,
+/// then the chunks of an opening program run in chunks.
+pub fn num_builtin_circuits<P: Profile>() -> usize {
+    num_fold_circuits::<P>() + opening_chunks::<P>()
+}
+
+/// The index, among the native extension's circuits, of the first circuit
+/// the fuse adds: the circuits the profile and the online batch declare
+/// come before.
+pub(crate) fn builtin_circuit_offset<P: Profile>() -> usize {
+    crate::profile::online::stages::layout::<P, crate::profile::online::stages::Native>()
+        .circuits
+        .len()
+}
+
+/// The fuse's circuit at index `circuit` of profile `P`'s native
+/// extension's circuits, or `None` for a circuit the profile or the online
+/// batch declares.
+///
+/// # Panics
+///
+/// Panics if the extension has no such circuit.
+pub fn builtin_circuit<P: Profile>(circuit: usize) -> Option<BuiltinCircuit> {
+    let index = circuit.checked_sub(builtin_circuit_offset::<P>())?;
+    let chunks = fold_chunks::<P>();
+    assert!(
+        index < num_builtin_circuits::<P>(),
+        "no such extension circuit"
+    );
+    let fold = num_fold_circuits::<P>();
+    Some(if index >= fold {
+        BuiltinCircuit::Open(index - fold)
+    } else if index < chunks {
+        BuiltinCircuit::FoldInner(index)
+    } else {
+        BuiltinCircuit::FoldOuter
+    })
+}
+
+/// Chunk `chunk` of profile `P`'s opening program, among the native
+/// extension's circuits: the index of its circuit and of its rx
+/// polynomial.
+///
+/// # Panics
+///
+/// Panics if the program has no such chunk.
+pub fn open_chunk<P: Profile>(chunk: usize) -> u32 {
+    assert!(chunk < opening_chunks::<P>(), "no such opening chunk");
+    (builtin_circuit_offset::<P>() + num_fold_circuits::<P>() + chunk) as u32
+}
+
+/// First-layer chunk `chunk` of profile `P`'s native fold, among the
+/// native extension's circuits: the index of its circuit and of its rx
+/// polynomial.
+///
+/// # Panics
+///
+/// Panics if the fold has no such chunk.
+pub fn fold_inner<P: Profile>(chunk: usize) -> u32 {
+    assert!(chunk < fold_chunks::<P>(), "no such fold chunk");
+    (builtin_circuit_offset::<P>() + chunk) as u32
+}
+
+/// The second layer's circuit of profile `P`'s native fold, for a fold
+/// verified in chunks, among the native extension's circuits: the index of
+/// its circuit and of its rx polynomial.
+///
+/// # Panics
+///
+/// Panics if `collapse` verifies the fold whole.
+pub fn fold_outer<P: Profile>() -> u32 {
+    assert!(
+        is_fold_chunked::<P>(),
+        "a fold verified whole has no second-layer circuit"
+    );
+    (builtin_circuit_offset::<P>() + fold_chunks::<P>()) as u32
+}
+
+/// Length type that is one for a native walk of several segments in profile
+/// `P` and zero for a walk of one.
+pub struct Split<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for Split<P> {
+    fn len() -> usize {
+        segments::<P>().is_split() as usize
+    }
+}
+
+/// Length type for the loading bondings of profile `P`'s native walk: one
+/// per segment of a walk of several, none for a walk of one.
+pub struct NumWalkLoadings<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumWalkLoadings<P> {
+    fn len() -> usize {
+        let walk = segments::<P>();
+        if walk.is_split() { walk.count() } else { 0 }
+    }
+}
+
 /// Length type for the circuits of the profile's native extension.
 pub struct NumExtensionCircuits<P: Profile>(core::marker::PhantomData<P>);
 
@@ -161,7 +596,10 @@ pub const FOLD_GROUP_SIZE: usize = 8;
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(false);
     let circuits = 6 + NUM_BINDERS + NumSteps::<P>::len() + extension.circuits;
-    let bondings = 18 + extension.bondings;
+    let bondings = 18
+        + extension.bondings
+        + num_walk_bondings(segments::<P>().count())
+        + num_opening_bondings(opening_chunks::<P>());
     2 + 1 + 2 * circuits + bondings
 }
 
@@ -208,9 +646,11 @@ pub mod stages {
     pub mod eval;
     pub mod inner_error;
     pub mod outer_error;
+    pub mod open;
     pub mod points;
     pub mod preamble;
     pub mod query;
+    pub mod targets;
 }
 
 pub mod circuits {
@@ -220,16 +660,24 @@ pub mod circuits {
     pub mod collapse;
     pub mod compute_v;
     pub mod endoscaling_step;
+    pub mod fold_inner;
+    pub mod fold_outer;
     pub mod hashes_1;
     pub mod hashes_2;
+    pub mod open;
+    pub mod open_base;
+    pub mod open_loading;
+    pub mod segment_step;
+    pub mod walk_loading;
 }
 
 pub mod claims;
 pub mod online;
+pub mod open;
 pub mod pcs;
 pub mod unified;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InternalCircuitIndex {
     // Native circuits
     Hashes1Circuit,
@@ -281,6 +729,24 @@ pub enum InternalCircuitIndex {
     /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
     /// order.
     ExtensionBonding(u32),
+    /// The bonding that holds a segment of a native walk of several
+    /// segments to the stages that commit its points (see
+    /// [`walk_loading`](circuits::walk_loading)). A walk of one segment has
+    /// none.
+    WalkLoading(u32),
+    /// The final mask of the steps of a native walk of several segments,
+    /// whose last stage is the segment's. A walk of one segment has none:
+    /// its steps end under the walk stage's.
+    WalkSegmentFinalStaged,
+    /// The bonding that holds a band of an opening program run in chunks
+    /// to the stage values it copies (see
+    /// [`open_loading`](circuits::open_loading)): a chunk's band by its
+    /// index, then `compute_v`'s own. A program run whole has none.
+    OpeningLoading(u32),
+    /// The final mask of the circuits of an opening program run in chunks,
+    /// which end on the band stage: the chunks and `compute_v`. A program
+    /// run whole has none: `compute_v` ends under the eval stage's.
+    OpeningFinalStaged,
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -360,19 +826,31 @@ impl InternalCircuitIndex {
         NUM_FIXED_INTERNAL
             + NumSteps::<P>::len()
             + crate::profile::native_extension::<P>().internal()
+            + num_walk_bondings(segments::<P>().count())
+            + num_opening_bondings(opening_chunks::<P>())
     }
 
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
-    /// profile's extension circuits after the walk and its bondings last.
+    /// profile's extension circuits after the walk and its bondings after
+    /// the fuse's masks, then, for a walk of several segments, its loadings
+    /// and its steps' final mask.
     /// The index tests compare this order with [`Self::circuit_index`].
     pub fn all<P: Profile>() -> Vec<Self> {
         let extension = crate::profile::native_extension::<P>();
-        let all = Self::all_with(
+        let mut all = Self::all_with(
             NumSteps::<P>::len(),
             extension.circuits.len(),
             extension.bondings(),
         );
+        if segments::<P>().is_split() {
+            all.extend((0..NumWalkLoadings::<P>::len() as u32).map(Self::WalkLoading));
+            all.push(Self::WalkSegmentFinalStaged);
+        }
+        if is_opening_chunked::<P>() {
+            all.extend((0..NumOpenBands::<P>::len() as u32).map(Self::OpeningLoading));
+            all.push(Self::OpeningFinalStaged);
+        }
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
@@ -434,6 +912,37 @@ impl InternalCircuitIndex {
             ApplicationStage => bonding + 16,
             ApplicationFinalStaged => bonding + 17,
             ExtensionBonding(i) => bonding + 18 + super::checked_index(i, extension.bondings),
+            WalkLoading(i) => {
+                bonding
+                    + 18
+                    + extension.bondings
+                    + super::checked_index(i, NumWalkLoadings::<P>::len())
+            }
+            WalkSegmentFinalStaged => {
+                assert!(
+                    segments::<P>().is_split(),
+                    "a walk of one segment has no segment stage"
+                );
+                bonding + 18 + extension.bondings + NumWalkLoadings::<P>::len()
+            }
+            OpeningLoading(i) => {
+                bonding
+                    + 18
+                    + extension.bondings
+                    + num_walk_bondings(segments::<P>().count())
+                    + super::checked_index(i, NumOpenBands::<P>::len())
+            }
+            OpeningFinalStaged => {
+                assert!(
+                    is_opening_chunked::<P>(),
+                    "a program run whole has no band stage"
+                );
+                bonding
+                    + 18
+                    + extension.bondings
+                    + num_walk_bondings(segments::<P>().count())
+                    + NumOpenBands::<P>::len()
+            }
         };
         CircuitIndex::new(pos)
     }
@@ -471,7 +980,11 @@ impl InternalCircuitIndex {
             | PreambleFinalStaged
             | ApplicationStage
             | ApplicationFinalStaged
-            | ExtensionBonding(_) => true,
+            | ExtensionBonding(_)
+            | WalkLoading(_)
+            | WalkSegmentFinalStaged
+            | OpeningLoading(_)
+            | OpeningFinalStaged => true,
         }
     }
 }
@@ -515,6 +1028,14 @@ pub struct InternalCircuitValues<T, P: Profile> {
     pub application_final_staged: T,
     /// One per bonding of the profile's native extension.
     pub extension_bondings: FixedVec<T, NumExtensionBondings<P>>,
+    /// One per segment of a native walk of several segments.
+    pub walk_loadings: FixedVec<T, NumWalkLoadings<P>>,
+    /// One for a native walk of several segments.
+    pub walk_segment_final_staged: FixedVec<T, Split<P>>,
+    /// One per band of an opening program run in chunks.
+    pub opening_loadings: FixedVec<T, NumOpenBands<P>>,
+    /// One for an opening program run in chunks.
+    pub opening_final_staged: FixedVec<T, Opened<P>>,
 }
 
 impl<T, P: Profile> InternalCircuitValues<T, P> {
@@ -566,6 +1087,10 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             ApplicationStage => &self.application_stage,
             ApplicationFinalStaged => &self.application_final_staged,
             ExtensionBonding(j) => &self.extension_bondings[j as usize],
+            WalkLoading(k) => &self.walk_loadings[k as usize],
+            WalkSegmentFinalStaged => &self.walk_segment_final_staged[0],
+            OpeningLoading(k) => &self.opening_loadings[k as usize],
+            OpeningFinalStaged => &self.opening_final_staged[0],
         }
     }
 
@@ -621,12 +1146,16 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             application_stage: f(ApplicationStage)?,
             application_final_staged: f(ApplicationFinalStaged)?,
             extension_bondings: try_fixed_vec(|j| f(ExtensionBonding(j as u32)))?,
+            walk_loadings: try_fixed_vec(|k| f(WalkLoading(k as u32)))?,
+            walk_segment_final_staged: try_fixed_vec(|_| f(WalkSegmentFinalStaged))?,
+            opening_loadings: try_fixed_vec(|k| f(OpeningLoading(k as u32)))?,
+            opening_final_staged: try_fixed_vec(|_| f(OpeningFinalStaged))?,
         })
     }
 }
 
 /// Enum identifying which rx polynomial component to index within [`RxValues`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RxIndex {
     // Circuits
     Hashes1,
@@ -967,9 +1496,42 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     let extension = crate::profile::native_extension::<C::Profile>();
     let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
     let mut extension_bondings = alloc::vec::Vec::with_capacity(extension.bondings());
+    // How the opening program is shared between its chunks, for a profile
+    // that runs it in chunks.
+    let opening = is_opening_chunked::<C::Profile>()
+        .then(|| alloc::sync::Arc::new(open::Schedule::of::<C::Profile>()));
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
+            ExtensionCircuit(k) if builtin_circuit::<C::Profile>(k as usize).is_some() => {
+                // A circuit of the fuse's own: it ends its output with the
+                // zero suffix itself and loads no stage of the extension.
+                extension_circuits.push(crate::profile::Registration::Circuit);
+                match builtin_circuit::<C::Profile>(k as usize).expect("checked above") {
+                    BuiltinCircuit::FoldInner(chunk) => {
+                        registry.register_internal_circuit(circuits::fold_inner::Circuit::<
+                            C,
+                            R,
+                            HEADER_SIZE,
+                            RevdotParameters<C::Profile>,
+                        >::new(chunk))?
+                    }
+                    BuiltinCircuit::FoldOuter => {
+                        registry.register_internal_circuit(circuits::fold_outer::Circuit::<
+                            C,
+                            R,
+                            HEADER_SIZE,
+                            RevdotParameters<C::Profile>,
+                        >::new())?
+                    }
+                    BuiltinCircuit::Open(chunk) => registry.register_internal_circuit(
+                        circuits::open::Circuit::<C, R, HEADER_SIZE>::new(
+                            chunk,
+                            opening.clone().expect("a profile with opening chunks"),
+                        ),
+                    )?,
+                }
+            }
             ExtensionCircuit(k) => {
                 use crate::profile::online::stages::{self as extension, Native};
                 let slot = CircuitSlot::new(registry);
@@ -992,8 +1554,45 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             ExtensionBonding(j) => {
                 use crate::profile::online::stages::{self as extension, Native};
                 let slot = BondingSlot::new(registry);
-                let (registry, registration) =
-                    match extension::bonding::<C::Profile, Native>(j as usize)? {
+                // The fuse's own stages follow the stages the profile and
+                // the online batch declare, so their masks sit between
+                // those stages' masks and the final masks (see
+                // `builtin_stage`).
+                let declared = walk_stage_offset::<C::Profile>();
+                let builtin = num_builtin_stages::<C::Profile>();
+                let j = j as usize;
+                let registered = if (declared..declared + builtin).contains(&j) {
+                    match builtin_stage::<C::Profile>(j).expect("a stage the fuse adds") {
+                        BuiltinStage::WalkBits => slot.register_mask::<stages::points::BitsStage<
+                            C::NestedCurve,
+                            C::Profile,
+                        >>()?,
+                        BuiltinStage::WalkSegment(_) => slot
+                            .register_mask::<stages::points::SegmentStage<
+                                C::NestedCurve,
+                                C::Profile,
+                            >>()?,
+                        BuiltinStage::WalkBoundaries => slot
+                            .register_mask::<stages::points::BoundariesStage<
+                                C::NestedCurve,
+                                C::Profile,
+                            >>()?,
+                        BuiltinStage::FoldTargets => slot.register_mask::<stages::targets::Stage<
+                            C,
+                            R,
+                            HEADER_SIZE,
+                            RevdotParameters<C::Profile>,
+                        >>()?,
+                        BuiltinStage::OpenCarry => {
+                            slot.register_mask::<stages::open::CarryStage<C, R, HEADER_SIZE>>()?
+                        }
+                        BuiltinStage::OpenBand(_) => {
+                            slot.register_mask::<stages::open::BandStage<C, R, HEADER_SIZE>>()?
+                        }
+                    }
+                } else {
+                    let index = if j < declared { j } else { j - builtin };
+                    match extension::bonding::<C::Profile, Native>(index)? {
                         extension::Bonding::Online(bonding) => {
                             bonding.register::<_, R, C::Profile, Native>(slot)?
                         }
@@ -1003,10 +1602,33 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                             )?
                         }
                     }
-                    .into_parts();
+                };
+                let (registry, registration) = registered.into_parts();
                 extension_bondings.push(registration);
                 registry
             }
+            WalkLoading(segment) => {
+                let circuit = circuits::walk_loading::Circuit::<C, R>::new(segment as usize);
+                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
+            }
+            WalkSegmentFinalStaged => registry.register_bonding(<stages::points::SegmentStage<
+                C::NestedCurve,
+                C::Profile,
+            > as StageExt<C::CircuitField, R>>::final_mask(
+            )?),
+            OpeningLoading(band) => {
+                let circuit = circuits::open_loading::Circuit::<C, R, HEADER_SIZE>::new(
+                    band as usize,
+                    opening.clone().expect("a profile with opening chunks"),
+                );
+                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
+            }
+            OpeningFinalStaged => registry.register_bonding(<stages::open::BandStage<
+                C,
+                R,
+                HEADER_SIZE,
+            > as StageExt<C::CircuitField, R>>::final_mask(
+            )?),
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
@@ -1089,9 +1711,17 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             )?),
             BindEndoscalarCircuit => registry
                 .register_internal_circuit(circuits::bind_endoscalar::Circuit::<C, R>::new())?,
-            EndoscalingStep(step) => registry.register_internal_circuit(
-                circuits::endoscaling_step::Circuit::<C, R>::new(step as usize),
-            )?,
+            EndoscalingStep(step) => {
+                if segments::<C::Profile>().is_split() {
+                    registry.register_internal_circuit(
+                        circuits::segment_step::Circuit::<C, R>::new(step as usize),
+                    )?
+                } else {
+                    registry.register_internal_circuit(
+                        circuits::endoscaling_step::Circuit::<C, R>::new(step as usize),
+                    )?
+                }
+            }
             Hashes1Circuit => {
                 registry.register_internal_circuit(circuits::hashes_1::Circuit::<
                     C,
@@ -1107,20 +1737,32 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 RevdotParameters<C::Profile>,
             >::new(params))?,
             CollapseCircuit => {
-                registry.register_internal_circuit(circuits::collapse::Circuit::<
+                if is_fold_chunked::<C::Profile>() {
+                    registry.register_internal_circuit(circuits::collapse::Targets::<
+                        C,
+                        R,
+                        HEADER_SIZE,
+                        RevdotParameters<C::Profile>,
+                    >::new())?
+                } else {
+                    registry.register_internal_circuit(circuits::collapse::Circuit::<
+                        C,
+                        R,
+                        HEADER_SIZE,
+                        RevdotParameters<C::Profile>,
+                    >::new())?
+                }
+            }
+            ComputeVCircuit => match &opening {
+                Some(schedule) => registry.register_internal_circuit(
+                    circuits::open_base::Circuit::<C, R, HEADER_SIZE>::new(schedule.clone()),
+                )?,
+                None => registry.register_internal_circuit(circuits::compute_v::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
-                    RevdotParameters<C::Profile>,
-                >::new())?
-            }
-            ComputeVCircuit => {
-                registry.register_internal_circuit(circuits::compute_v::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                >::new())?
-            }
+                >::new())?,
+            },
             BindChallengesCircuit(k) => {
                 crate::with_binder!(k, C, R, HEADER_SIZE, params, |circuit| {
                     registry.register_internal_circuit(circuit)?
@@ -1171,5 +1813,127 @@ mod index_positions {
         check::<Standard>();
         check::<crate::profile::testing::Wider>();
         check::<crate::profile::Aggregator<4>>();
+        check::<crate::profile::testing::Segmented>();
+        check::<crate::profile::testing::Chunked>();
+    }
+
+    /// A fold verified in chunks names its circuits and its stage as the
+    /// last of the native extension's, and its chunks share the fold's
+    /// groups in order, each taking some.
+    #[test]
+    fn a_chunked_fold_names_its_polynomials() {
+        type P = crate::profile::testing::Chunked;
+        let chunks = fold_chunks::<P>();
+        assert!(is_fold_chunked::<P>() && chunks > 1);
+        assert_eq!(num_builtin_circuits::<P>(), chunks + 1);
+        assert_eq!(num_builtin_stages::<P>(), 1);
+        assert_eq!(num_fold_polynomials(chunks), chunks + 2);
+
+        let circuits = NumExtensionCircuits::<P>::len();
+        assert_eq!(circuits, builtin_circuit_offset::<P>() + chunks + 1);
+        for chunk in 0..chunks {
+            assert_eq!(
+                builtin_circuit::<P>(fold_inner::<P>(chunk) as usize),
+                Some(BuiltinCircuit::FoldInner(chunk))
+            );
+        }
+        assert_eq!(fold_outer::<P>() as usize, circuits - 1);
+        assert_eq!(
+            builtin_circuit::<P>(circuits - 1),
+            Some(BuiltinCircuit::FoldOuter)
+        );
+        let stages = NumExtensionStages::<P>::len();
+        assert_eq!(
+            fold_targets_rx::<P>(),
+            RxIndex::ExtensionStage(stages as u32 - 1)
+        );
+        assert_eq!(
+            builtin_stage::<P>(stages - 1),
+            Some(BuiltinStage::FoldTargets)
+        );
+
+        // The chunks' groups partition the fold's, in order.
+        let groups = NumFoldGroups::<P>::len();
+        let mut next = 0;
+        for chunk in 0..chunks {
+            let share = fold_groups::<P>(chunk);
+            assert_eq!(share.start, next);
+            assert!(!share.is_empty());
+            next = share.end;
+        }
+        assert_eq!(next, groups);
+
+        // A fold `collapse` verifies whole adds none of them.
+        assert!(!is_fold_chunked::<Standard>());
+        assert_eq!(num_builtin_circuits::<Standard>(), 0);
+        assert_eq!(num_builtin_stages::<Standard>(), 0);
+        assert_eq!(num_fold_polynomials(0), 0);
+
+        // A walk of several segments keeps its stages before the fold's.
+        type S = crate::profile::testing::Segmented;
+        let stages = NumExtensionStages::<S>::len();
+        assert_eq!(
+            builtin_stage::<S>(stages - 1),
+            Some(BuiltinStage::WalkBoundaries)
+        );
+        assert_eq!(
+            builtin_stage::<S>(walk_stage_offset::<S>()),
+            Some(BuiltinStage::WalkBits)
+        );
+        assert_eq!(
+            builtin_stage::<S>(walk_stage_offset::<S>() + 1),
+            Some(BuiltinStage::WalkSegment(0))
+        );
+    }
+
+    /// A walk of several segments names a polynomial per stage it adds, the
+    /// last stages of the native extension, and a bonding per segment and
+    /// one for its steps' final mask, the last of the internal circuits.
+    #[test]
+    fn a_segmented_walk_names_its_polynomials() {
+        type P = crate::profile::testing::Segmented;
+        let walk = segments::<P>();
+        assert!(walk.is_split());
+        let stages = NumExtensionStages::<P>::len();
+        assert_eq!(
+            stages,
+            walk_stage_offset::<P>() + num_walk_stages(walk.count())
+        );
+        assert_eq!(
+            walk_bits_rx::<P>(),
+            RxIndex::ExtensionStage(walk_stage_offset::<P>() as u32)
+        );
+        assert_eq!(
+            boundaries_rx::<P>(),
+            RxIndex::ExtensionStage(stages as u32 - 1)
+        );
+        let named: Vec<_> = (0..walk.count()).map(segment_rx::<P>).collect();
+        assert_eq!(named.len(), walk.count());
+        assert!(named.windows(2).all(|pair| pair[0] != pair[1]));
+        assert!(!named.contains(&walk_bits_rx::<P>()));
+        assert!(!named.contains(&boundaries_rx::<P>()));
+
+        let all = InternalCircuitIndex::all::<P>();
+        let loadings = all
+            .iter()
+            .filter(|id| matches!(id, InternalCircuitIndex::WalkLoading(_)))
+            .count();
+        assert_eq!(loadings, walk.count());
+        assert_eq!(
+            all.last(),
+            Some(&InternalCircuitIndex::WalkSegmentFinalStaged)
+        );
+
+        // A walk of one segment adds none of them.
+        assert!(!segments::<Standard>().is_split());
+        assert!(
+            InternalCircuitIndex::all::<Standard>()
+                .iter()
+                .all(|id| !matches!(
+                    id,
+                    InternalCircuitIndex::WalkLoading(_)
+                        | InternalCircuitIndex::WalkSegmentFinalStaged
+                ))
+        );
     }
 }

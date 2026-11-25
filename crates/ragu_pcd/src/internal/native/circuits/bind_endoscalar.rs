@@ -28,6 +28,21 @@
 //! its walk folded. Any other profile's instance is the unified instance
 //! alone.
 //!
+//! # A walk of several segments
+//!
+//! A profile whose walk is cut into segments (see
+//! [`Walk`](crate::internal::native::Walk)) keeps the endoscalar's bits in
+//! [`BitsStage`] and its steps' outputs in a polynomial of [`SegmentStage`]
+//! per segment. The circuit then binds the bits stage's gadget to
+//! `pre_beta` and loads the polynomial of the segment the walk ends in,
+//! whose last interstitial is $P_n$. It loads one polynomial of that stage,
+//! so it cannot hold every point the walk consumes to the curve: the steps
+//! do, each for the copies it reads, and the
+//! [`walk_loading`](super::walk_loading) bondings carry that to the input
+//! stages, which the circuit loads unenforced. It still holds the points of
+//! the binding stage the walk does not fold to the curve: no step reads
+//! them.
+//!
 //! [`nested_p_commitment`]: unified::Output::nested_p_commitment
 
 use core::marker::PhantomData;
@@ -46,14 +61,16 @@ use ragu_core::{
 use ragu_primitives::{
     Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, Point, WithSuffix,
     allocator::Standard,
+    consistent::Consistent,
     io::Write,
     vec::{CollectFixed, FixedVec},
 };
 
 use super::super::{
+    segments,
     stages::points::{
-        AbStage, BindingStage, FStage, Inputs, PreambleStage, RegistryWxStage, WalkStage,
-        WalkWitness,
+        AbStage, BindingStage, BitsStage, BoundariesStage, FStage, Inputs, PreambleStage,
+        RegistryWxStage, SegmentStage, WalkStage, WalkWitness,
     },
     unified::{self, OutputBuilder},
 };
@@ -130,6 +147,9 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         Self: 'dr,
     {
         let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
+        let (bits, builder) = builder.add_stage::<BitsStage<C::NestedCurve, C::Profile>>()?;
+        let (segment, builder) = builder.add_stage::<SegmentStage<C::NestedCurve, C::Profile>>()?;
+        let builder = builder.skip_stage::<BoundariesStage<C::NestedCurve, C::Profile>>()?;
         let (preamble, builder) =
             builder.add_stage::<PreambleStage<C::NestedCurve, C::Profile>>()?;
         let (registry_wx, builder) =
@@ -139,14 +159,55 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let (walk, builder) = builder.add_stage::<WalkStage<C::NestedCurve, C::Profile>>()?;
         let dr = builder.finish();
 
-        // Enforced: every point the walk consumes lies on the curve.
+        let geometry = segments::<C::Profile>();
         let inputs = witness.as_ref().map(|w| w.inputs);
-        let _ = binding.enforced(dr, inputs.as_ref().map(|i| &i.binding))?;
-        let preamble = preamble.enforced(dr, inputs.as_ref().map(|i| &i.preamble))?;
-        let registry_wx = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
-        let ab = ab.enforced(dr, inputs.as_ref().map(|i| &i.ab))?;
-        let f = f.enforced(dr, inputs.as_ref().map(|i| &i.f))?;
+        let (preamble, registry_wx, ab, f) = if geometry.is_split() {
+            // The steps hold the points they fold to the curve, on their
+            // segments' copies, which the loading bondings hold to these
+            // stages. No step reads the points the walk does not fold: the
+            // children's exported online Fq commitments and the step's
+            // nested online input stage, all in the binding stage.
+            let binding = binding.unenforced(dr, inputs.as_ref().map(|i| &i.binding))?;
+            for point in binding
+                .online_input
+                .iter()
+                .chain(binding.left.online_fq.iter())
+                .chain(binding.right.online_fq.iter())
+            {
+                point.enforce_consistent(dr)?;
+            }
+            (
+                preamble.unenforced(dr, inputs.as_ref().map(|i| &i.preamble))?,
+                registry_wx.unenforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?,
+                ab.unenforced(dr, inputs.as_ref().map(|i| &i.ab))?,
+                f.unenforced(dr, inputs.as_ref().map(|i| &i.f))?,
+            )
+        } else {
+            // Enforced: every point the walk consumes lies on the curve.
+            let _ = binding.enforced(dr, inputs.as_ref().map(|i| &i.binding))?;
+            (
+                preamble.enforced(dr, inputs.as_ref().map(|i| &i.preamble))?,
+                registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?,
+                ab.enforced(dr, inputs.as_ref().map(|i| &i.ab))?,
+                f.enforced(dr, inputs.as_ref().map(|i| &i.f))?,
+            )
+        };
         let walk = walk.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
+        // The endoscalar's gadget and the walk's result: the walk stage's
+        // and its last interstitial, or, for a walk of several segments,
+        // the bits stage's and the last interstitial of the segment the
+        // walk ends in.
+        let (endoscalar, walked_p) = if geometry.is_split() {
+            let bits = bits.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
+            let segment =
+                segment.unenforced(dr, witness.as_ref().map(|w| w.walk.last_segment()))?;
+            (
+                bits[0].clone(),
+                segment.interstitials[geometry.last_local_step()].clone(),
+            )
+        } else {
+            (walk.endoscalar[0].clone(), walk.p().clone())
+        };
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
@@ -158,12 +219,12 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let pre_beta = unified_output.pre_beta.read(dr, allocator)?;
         let pre_beta = EndoscalarChallenge::from_element(dr, allocator, pre_beta)?;
         let extracted = HoistedEndoscalar::hoist(dr, Endoscalar::extract(pre_beta))?;
-        extracted.enforce_conservative_equal(dr, &walk.endoscalar)?;
+        extracted.enforce_conservative_equal(dr, &endoscalar)?;
 
         // The walk's last interstitial is P_n: pin it to the instance, where
         // a parent reads it.
         let p = unified_output.nested_p_commitment.receive(dr, allocator)?;
-        walk.p().enforce_equal(dr, &p)?;
+        walked_p.enforce_equal(dr, &p)?;
 
         let a = unified_output.nested_a_commitment.receive(dr, allocator)?;
         ab.a.enforce_equal(dr, &a)?;

@@ -62,6 +62,12 @@ pub struct Witness<C: Cycle, FP: revdot::Parameters> {
     /// Carries the Fiat-Shamir transcript from hashes_1 into hashes_2.
     pub sponge_state_elements:
         FixedVec<C::CircuitField, PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>>,
+
+    /// The targets `collapse` computes, in the
+    /// [`targets`](super::targets) stage's order: that stage's witness,
+    /// computed with the values above. Empty for a fold `collapse` verifies
+    /// whole.
+    pub targets: alloc::vec::Vec<C::CircuitField>,
 }
 
 /// k(y) output gadgets for a single child proof.
@@ -116,7 +122,9 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: revdot::Parameters> 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    // The targets stage holds nothing for a fold `collapse` verifies
+    // whole, whose chain is the preamble's.
+    type Parent = super::targets::Stage<C, R, HEADER_SIZE, FP>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 

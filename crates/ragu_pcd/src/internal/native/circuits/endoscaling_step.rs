@@ -16,6 +16,12 @@
 //! inputs' curve membership, and the interstitials are equal to points
 //! computed from them.
 //!
+//! A profile whose walk is past what a step can reserve cuts it into
+//! segments, whose steps are [`segment_step`](super::segment_step)'s
+//! instead (see [`Walk`](crate::internal::native::Walk)); this is the step
+//! of a walk of one segment. The stages a walk of several segments adds to
+//! the chain hold nothing here.
+//!
 //! A step exposes no values, but its public output is still the zero suffix
 //! every internal circuit carries (see [`unified`]), so its instance
 //! polynomial is $k(Y) = 1$ while its linear constraint has no wires. The
@@ -42,9 +48,12 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, GadgetExt, NonzeroBank, WithSuffix, vec::Len};
 
-use super::super::stages::points::{
-    AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, PreambleStage, RegistryWxStage,
-    WalkInputs, WalkStage, WalkWitness,
+use super::super::{
+    segments,
+    stages::points::{
+        AbStage, BindingStage, BitsStage, BoundariesStage, FStage, Inputs, NumInputs, NumSteps,
+        PreambleStage, RegistryWxStage, SegmentStage, WalkInputs, WalkStage, WalkWitness,
+    },
 };
 use crate::{
     internal::endoscalar::input_range,
@@ -63,8 +72,13 @@ impl<C: ProfiledCycle, R: Rank> Circuit<C, R> {
     ///
     /// # Panics
     ///
-    /// Panics if `step` is not a step of the walk.
+    /// Panics if `step` is not a step of the walk, or if the profile's walk
+    /// is of several segments.
     pub fn new(step: usize) -> MultiStage<C::CircuitField, R, Self> {
+        assert!(
+            !segments::<C::Profile>().is_split(),
+            "the steps of a walk of several segments read their segment's stage"
+        );
         let num_steps = NumSteps::<C::Profile>::len();
         assert!(
             step < num_steps,
@@ -104,6 +118,10 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
+        // The stages of a walk of several segments: nothing here.
+        let dr = dr.skip_stage::<BitsStage<C::NestedCurve, C::Profile>>()?;
+        let dr = dr.skip_stage::<SegmentStage<C::NestedCurve, C::Profile>>()?;
+        let dr = dr.skip_stage::<BoundariesStage<C::NestedCurve, C::Profile>>()?;
         let (preamble, dr) = dr.add_stage::<PreambleStage<C::NestedCurve, C::Profile>>()?;
         let (registry_wx, dr) = dr.add_stage::<RegistryWxStage<C::NestedCurve, C::Profile>>()?;
         let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve, C::Profile>>()?;
@@ -118,7 +136,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let ab = ab.unenforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let f = f.unenforced(dr, inputs.as_ref().map(|i| &i.f))?;
         let walked = walk.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
-        let endoscalar = &walked.endoscalar;
+        let endoscalar = &walked.endoscalar[0];
         let interstitials = &walked.interstitials;
         let walk = WalkInputs {
             binding: &binding,

@@ -120,7 +120,7 @@ fn checked_index(index: u32, count: usize) -> usize {
 }
 
 /// Identifies which of the two child proofs a component came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Side {
     Left,
     Right,

@@ -6,7 +6,11 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
+use ragu_circuits::{
+    Blind, CircuitExt,
+    polynomials::Rank,
+    staging::{MultiStage, StageExt},
+};
 use ragu_core::{Error, Result};
 use ragu_primitives::Uendo;
 use rand::CryptoRng;
@@ -116,25 +120,110 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &mut *rng,
         )?;
 
-        let (collapse_trace, unified) = native::circuits::collapse::Circuit::<
+        // The fold's verification: `collapse`, or, for a profile that cuts
+        // it into chunks, the circuit that holds the fold's targets to
+        // their stage, a chunk per share of the first layer's groups and
+        // the second layer's circuit. The chunks' polynomials and the
+        // targets stage's are the last of the native extension's.
+        type Collapse<'a, C, R, const H: usize> = native::circuits::collapse::Witness<
+            'a,
             C,
             R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new()
-        .trace(native::circuits::collapse::Witness {
-            binding: &native_points.binding,
-            preamble_witness,
-            unified,
-            outer_error_witness: native_outer_error_witness,
-            inner_error_witness: native_inner_error_witness,
-        })?
-        .into_parts();
-        let collapse_rx = self.native_registry.assemble(
-            &collapse_trace,
-            native::InternalCircuitIndex::CollapseCircuit.circuit_index::<C::Profile>(),
-            &mut *rng,
-        )?;
+            H,
+            native::RevdotParameters<<C as ProfiledCycle>::Profile>,
+        >;
+        let collapse_witness = |unified| -> Collapse<'_, C, R, HEADER_SIZE> {
+            native::circuits::collapse::Witness {
+                binding: &native_points.binding,
+                preamble_witness,
+                unified,
+                outer_error_witness: native_outer_error_witness,
+                inner_error_witness: native_inner_error_witness,
+            }
+        };
+        let mut fold_circuit_rxs = Vec::new();
+        let mut fold_stage_rxs = Vec::new();
+        let (collapse_rx, unified) = if native::is_fold_chunked::<C::Profile>() {
+            let (collapse_trace, mut unified) = native::circuits::collapse::Targets::<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >::new()
+            .trace(collapse_witness(unified))?
+            .into_parts();
+            let collapse_rx = self.native_registry.assemble(
+                &collapse_trace,
+                native::InternalCircuitIndex::CollapseCircuit.circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?;
+            for chunk in 0..native::fold_chunks::<C::Profile>() {
+                let (trace, next) = native::circuits::fold_inner::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    native::RevdotParameters<C::Profile>,
+                >::new(chunk)
+                .trace(collapse_witness(unified))?
+                .into_parts();
+                unified = next;
+                fold_circuit_rxs.push(
+                    self.native_registry.assemble(
+                        &trace,
+                        native::InternalCircuitIndex::ExtensionCircuit(native::fold_inner::<
+                            C::Profile,
+                        >(
+                            chunk
+                        ))
+                        .circuit_index::<C::Profile>(),
+                        &mut *rng,
+                    )?,
+                );
+            }
+            let (trace, unified) = native::circuits::fold_outer::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >::new()
+            .trace(collapse_witness(unified))?
+            .into_parts();
+            fold_circuit_rxs.push(
+                self.native_registry.assemble(
+                    &trace,
+                    native::InternalCircuitIndex::ExtensionCircuit(
+                        native::fold_outer::<C::Profile>(),
+                    )
+                    .circuit_index::<C::Profile>(),
+                    &mut *rng,
+                )?,
+            );
+            fold_stage_rxs.push(<native::stages::targets::Stage<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            > as StageExt<C::CircuitField, R>>::rx(
+                Blind::random(rng),
+                native_outer_error_witness,
+            )?);
+            (collapse_rx, unified)
+        } else {
+            let (collapse_trace, unified) = native::circuits::collapse::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >::new()
+            .trace(collapse_witness(unified))?
+            .into_parts();
+            let collapse_rx = self.native_registry.assemble(
+                &collapse_trace,
+                native::InternalCircuitIndex::CollapseCircuit.circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?;
+            (collapse_rx, unified)
+        };
 
         // The online batch's helper, traced first: compute-v takes its fold.
         let challenges = Challenges {
@@ -260,7 +349,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             online.as_ref(),
             rng,
         )?;
-        let rxs = builder.native_online_mut().extension_rxs(rxs)?;
+        let mut rxs = builder.native_online_mut().extension_rxs(rxs)?;
+        // The fuse's own polynomials follow the ones the profile and the
+        // online batch declare: the stages of a walk of several segments,
+        // then the circuits and the stage of a fold verified in chunks (see
+        // `native::builtin_stage` and `native::builtin_circuit`).
+        rxs.stages.extend(builder.take_native_walk_stage_rxs());
+        rxs.stages.extend(fold_stage_rxs);
+        rxs.circuits.extend(fold_circuit_rxs);
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its native extension".into(),
@@ -278,12 +374,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     /// Traces the collapse and compute-v circuits with the saved nested
     /// stage witnesses. Their shared instance accumulates coverage, which
     /// must be complete after both circuits. The endoscaling traces
-    /// are produced earlier by [`Self::compute_p`].
+    /// are produced earlier by [`Self::compute_p`]; the instance circuits
+    /// load the points of the walk's last segment, where its result is.
     pub(super) fn compute_nested_internal_circuits<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         nested_endoscalar: Uendo,
-        nested_points: &nested::PointsWitness<C::HostCurve, C::Profile>,
+        nested_points: &nested::WalkWitness<C::HostCurve, C::Profile>,
         nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve, C::Profile>,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
@@ -345,7 +442,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             online_fold: online_fold.clone(),
             endoscalar: nested_endoscalar,
             bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
-            points: nested_points,
+            points: nested_points.last(),
             preamble: nested_preamble_witness,
             s_prime: nested_s_prime_witness,
             inner_error: nested_inner_error_witness,
@@ -357,18 +454,88 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             challenges: nested_challenges_witness,
         };
 
-        let (collapse_trace, instance) = MultiStage::new(nested::circuits::collapse::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new())
-        .trace(witness(instance))?
-        .into_parts();
-        let collapse_rx = self.nested_registry.assemble(
-            &collapse_trace,
-            nested::InternalCircuitIndex::Collapse.circuit_index::<C::Profile>(),
-            &mut *rng,
-        )?;
+        // The fold's verification: `collapse`, or, for a profile that cuts
+        // it into chunks, the circuit that holds the fold's targets to
+        // their stage, a chunk per share of the first layer's groups and
+        // the second layer's circuit, as on the native side.
+        let mut fold_circuit_rxs = Vec::new();
+        let mut fold_stage_rxs = Vec::new();
+        let (collapse_rx, instance) = if nested::is_fold_chunked::<C::Profile>() {
+            let (collapse_trace, mut instance) =
+                MultiStage::new(nested::circuits::collapse::Targets::<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >::new())
+                .trace(witness(instance))?
+                .into_parts();
+            let collapse_rx = self.nested_registry.assemble(
+                &collapse_trace,
+                nested::InternalCircuitIndex::Collapse.circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?;
+            for chunk in 0..nested::fold_chunks::<C::Profile>() {
+                let (trace, next) = MultiStage::new(nested::circuits::fold_inner::Circuit::<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >::new(chunk))
+                .trace(witness(instance))?
+                .into_parts();
+                instance = next;
+                fold_circuit_rxs.push(
+                    self.nested_registry.assemble(
+                        &trace,
+                        nested::InternalCircuitIndex::ExtensionCircuit(nested::fold_inner::<
+                            C::Profile,
+                        >(
+                            chunk
+                        ))
+                        .circuit_index::<C::Profile>(),
+                        &mut *rng,
+                    )?,
+                );
+            }
+            let (trace, instance) = MultiStage::new(nested::circuits::fold_outer::Circuit::<
+                C::HostCurve,
+                R,
+                C::Profile,
+            >::new())
+            .trace(witness(instance))?
+            .into_parts();
+            fold_circuit_rxs.push(
+                self.nested_registry.assemble(
+                    &trace,
+                    nested::InternalCircuitIndex::ExtensionCircuit(
+                        nested::fold_outer::<C::Profile>(),
+                    )
+                    .circuit_index::<C::Profile>(),
+                    &mut *rng,
+                )?,
+            );
+            fold_stage_rxs.push(
+                <nested::stages::targets::Stage<C::HostCurve, C::Profile> as StageExt<
+                    C::ScalarField,
+                    R,
+                >>::rx(Blind::random(rng), nested_outer_error_witness)?,
+            );
+            (collapse_rx, instance)
+        } else {
+            let (collapse_trace, instance) =
+                MultiStage::new(nested::circuits::collapse::Circuit::<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >::new())
+                .trace(witness(instance))?
+                .into_parts();
+            let collapse_rx = self.nested_registry.assemble(
+                &collapse_trace,
+                nested::InternalCircuitIndex::Collapse.circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?;
+            (collapse_rx, instance)
+        };
 
         let (compute_v_trace, instance) = MultiStage::new(nested::circuits::compute_v::Circuit::<
             C::HostCurve,
@@ -402,7 +569,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             builder.native_online().commitments(),
             rng,
         )?;
-        let rxs = builder.nested_online_mut().extension_rxs(rxs)?;
+        let mut rxs = builder.nested_online_mut().extension_rxs(rxs)?;
+        // The fuse's own polynomials follow the ones the profile and the
+        // online batch declare: the stages of a walk of several segments,
+        // then the circuits and the stage of a fold verified in chunks (see
+        // `nested::builtin_stage` and `nested::builtin_circuit`).
+        rxs.stages.extend(builder.take_nested_walk_stage_rxs());
+        rxs.stages.extend(fold_stage_rxs);
+        rxs.circuits.extend(fold_circuit_rxs);
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its nested extension".into(),

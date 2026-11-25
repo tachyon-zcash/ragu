@@ -288,6 +288,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             let (commitment, _) = self
                 .compute_native_endoscaling(&mut trivial_rng, beta_endo, &inputs, &mut builder)
                 .expect("trivial native endoscaling");
+            // A walk of several segments commits polynomials that are
+            // stages of the native extension, every one of which this proof
+            // already holds as an all-ones placeholder, so the walk's are
+            // dropped.
+            drop(builder.take_native_walk_stage_rxs());
             (poly, commitment)
         };
         builder.set_nested_p_poly(nested_p_poly, nested_p_commitment);
@@ -355,6 +360,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     native_outer_error: builder.native_outer_error_commitment(),
                     error_terms: FixedVec::from_fn(|_| C::ScalarField::ZERO),
                     collapsed: FixedVec::from_fn(|_| C::ScalarField::ZERO),
+                    targets: Vec::new(),
                 },
             )
             .expect("trivial outer_error rx");
@@ -469,7 +475,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 push(point, poly);
             }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
-            let (commitment, _) = self
+            // The polynomials a walk of several segments adds are stages of
+            // the nested extension, every one of which this proof already
+            // holds as an all-ones placeholder, so the walk's are dropped.
+            let (commitment, _, _) = self
                 .compute_endoscaling(
                     &mut trivial_rng,
                     beta_endo,

@@ -323,6 +323,12 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     nested_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_endoscalar_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_points_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    // The polynomials a nested walk of several segments adds, held between
+    // the walk and the extension's prover, which appends them to the
+    // extension's stages: empty for a walk of one segment.
+    nested_walk_stage_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    // The native walk's, likewise.
+    native_walk_stage_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
 
     // Nested accumulator polynomials
     nested_a_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
@@ -646,6 +652,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_extension_stage_rxs: None,
             nested_endoscalar_rx: None,
             nested_points_rx: None,
+            nested_walk_stage_rxs: Vec::new(),
+            native_walk_stage_rxs: Vec::new(),
             nested_a_poly: None,
             nested_b_poly: None,
             nested_registry_xy_poly: None,
@@ -1205,6 +1213,52 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             "double-set: nested_points_rx"
         );
         self.nested_points_rx = Some(Arc::new(v));
+    }
+
+    /// Holds the polynomials a nested walk of several segments adds, for
+    /// [`take_nested_walk_stage_rxs`](Self::take_nested_walk_stage_rxs) to
+    /// hand to the nested extension's stages.
+    pub(crate) fn set_nested_walk_stage_rxs(
+        &mut self,
+        v: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    ) {
+        assert!(
+            self.nested_walk_stage_rxs.is_empty(),
+            "double-set: nested_walk_stage_rxs"
+        );
+        self.nested_walk_stage_rxs = v;
+    }
+
+    /// Takes the polynomials
+    /// [`set_nested_walk_stage_rxs`](Self::set_nested_walk_stage_rxs) held:
+    /// none for a walk of one segment.
+    pub(crate) fn take_nested_walk_stage_rxs(
+        &mut self,
+    ) -> Vec<sparse::Polynomial<C::ScalarField, R>> {
+        core::mem::take(&mut self.nested_walk_stage_rxs)
+    }
+
+    /// Holds the polynomials a native walk of several segments adds, for
+    /// [`take_native_walk_stage_rxs`](Self::take_native_walk_stage_rxs) to
+    /// hand to the native extension's stages.
+    pub(crate) fn set_native_walk_stage_rxs(
+        &mut self,
+        v: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    ) {
+        assert!(
+            self.native_walk_stage_rxs.is_empty(),
+            "double-set: native_walk_stage_rxs"
+        );
+        self.native_walk_stage_rxs = v;
+    }
+
+    /// Takes the polynomials
+    /// [`set_native_walk_stage_rxs`](Self::set_native_walk_stage_rxs) held:
+    /// none for a walk of one segment.
+    pub(crate) fn take_native_walk_stage_rxs(
+        &mut self,
+    ) -> Vec<sparse::Polynomial<C::CircuitField, R>> {
+        core::mem::take(&mut self.native_walk_stage_rxs)
     }
 
     /// Lazily computes and caches commitments for all endoscaling step rx

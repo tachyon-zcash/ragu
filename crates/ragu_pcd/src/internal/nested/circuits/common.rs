@@ -11,6 +11,12 @@
 //! points stage and the hoisted endoscalar stage's contract, boolean bits
 //! with product wires the products of those bits, once for all consuming
 //! circuits.
+//!
+//! A nested walk of several segments has a polynomial of the points stage
+//! per segment (see [`Walk`](crate::internal::nested::Walk)). The instance
+//! circuits load the last segment's, which holds the walk's result, and
+//! reserve the boundaries stage without reading it; each step holds its own
+//! segment's points to the curve.
 
 use ragu_circuits::{polynomials::Rank, staging::StageBuilder};
 use ragu_core::{
@@ -57,6 +63,9 @@ pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub endoscalar: HoistedEndoscalar<'dr, D>,
     pub bridge_hash: stages::bridge_hash::Output<'dr, D, C>,
     pub points: Points<'dr, D, C, P>,
+    /// The targets of a fold verified in chunks: nothing for a fold
+    /// `collapse` verifies whole.
+    pub targets: FixedVec<ragu_primitives::Element<'dr, D>, stages::targets::TargetsLen<P>>,
     pub preamble: stages::preamble::Output<'dr, D, C, P>,
     pub s_prime: stages::s_prime::Output<'dr, D, C, P>,
     pub inner_error: stages::inner_error::Output<'dr, D, C, P>,
@@ -82,6 +91,10 @@ where
     let (endoscalar, dr) = dr.add_stage::<EndoscalarStage>()?;
     let (bridge_hash, dr) = dr.add_stage::<stages::bridge_hash::Stage<C>>()?;
     let (points, dr) = dr.add_stage::<PointsStage<C, P>>()?;
+    // The points a walk of several segments hands between them: the
+    // loading circuits read them, the instance circuits do not.
+    let dr = dr.skip_stage::<stages::boundaries::Stage<C, P>>()?;
+    let (targets, dr) = dr.add_stage::<stages::targets::Stage<C, P>>()?;
     let (preamble, dr) = dr.add_stage::<stages::preamble::Stage<C, R, P>>()?;
     let (s_prime, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, P>>()?;
     let (inner_error, dr) = dr.add_stage::<stages::inner_error::Stage<C, R, P>>()?;
@@ -97,6 +110,7 @@ where
         endoscalar: endoscalar.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?,
         bridge_hash: bridge_hash.unenforced(dr, witness.as_ref().map(|w| w.bridge_hash))?,
         points: points.unenforced(dr, witness.as_ref().map(|w| w.points))?,
+        targets: targets.unenforced(dr, witness.as_ref().map(|w| w.outer_error))?,
         preamble: preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble))?,
         s_prime: s_prime.unenforced(dr, witness.as_ref().map(|w| w.s_prime))?,
         inner_error: inner_error.unenforced(dr, witness.as_ref().map(|w| w.inner_error))?,

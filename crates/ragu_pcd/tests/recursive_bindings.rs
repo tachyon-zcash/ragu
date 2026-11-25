@@ -32,7 +32,6 @@ use crate::{
     Proof,
     internal::{
         Side,
-        endoscalar::PointsWitness,
         native::{self, stages::points},
         nested::{self, stages::challenges},
     },
@@ -501,14 +500,7 @@ fn install_walk(
 
     let bits = extract_endoscalar(proof.pre_beta())?;
     let walked = inputs.walk();
-    let walk = points::WalkWitness::new(
-        bits,
-        PointsWitness::<
-            EpAffine,
-            native::NumPoints<crate::profile::Standard>,
-            native::Endoscalings<crate::profile::Standard>,
-        >::new(bits, &walked),
-    );
+    let walk = points::WalkWitness::<EpAffine, crate::profile::Standard>::new(bits, &walked);
     assert_eq!(walk.p(), proof.nested_p_commitment());
     assert_eq!(
         horner(&walked, nested::challenge::<C>(proof.pre_beta())?),

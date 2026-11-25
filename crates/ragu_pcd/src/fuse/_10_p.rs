@@ -8,7 +8,7 @@
 //! $\text{commit}(\sum\_j \beta^j \cdot p\_j) = \sum\_j \beta^j \cdot C\_j$.
 //!
 //! The commitment is computed via
-//! [`PointsWitness`]
+//! [`nested::WalkWitness`]
 //! Horner evaluation.
 //!
 //! The nested batch is accumulated the same way into $p_n(X)$, with
@@ -51,10 +51,7 @@ use crate::{
             self, RxComponent, RxIndex, online,
             stages::points::{self as native_points, Inputs, WalkWitness},
         },
-        nested::{
-            self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
-            PointsWitness, pcs,
-        },
+        nested::{self, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage, pcs},
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -168,7 +165,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         randomizers: &Randomizers<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        PointsWitness<C::HostCurve, C::Profile>,
+        nested::WalkWitness<C::HostCurve, C::Profile>,
         NativeInputs<C>,
         NativeWalk<C>,
     )> {
@@ -227,7 +224,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         f: &NativeF<C, R>,
         randomizer: &NativeRandomizer<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<PointsWitness<C::HostCurve, C::Profile>> {
+    ) -> Result<nested::WalkWitness<C::HostCurve, C::Profile>> {
         // Collect commitments for PointsWitness construction.
         let mut commitments: Vec<C::HostCurve> = Vec::new();
 
@@ -307,7 +304,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let endoscalar_alpha = Blind::random(rng);
         let points_alpha = Blind::random(rng);
-        let (p_commitment, points) = self.compute_endoscaling(
+        let (p_commitment, points, walk_stage_rxs) = self.compute_endoscaling(
             rng,
             beta_endo,
             &points,
@@ -315,6 +312,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             points_alpha,
             builder,
         )?;
+        // The polynomials a walk of several segments adds, which the proof
+        // carries as its nested extension's last stages.
+        builder.set_nested_walk_stage_rxs(walk_stage_rxs);
 
         builder.set_native_p_poly(poly, p_commitment);
 
@@ -375,13 +375,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// `PointsStage`, in the order `compute_p` (`_10_p.rs`)
     /// accumulates them. Writes `nested_endoscalar_rx`,
     /// `nested_points_rx`, and `nested_endoscaling_step_rxs` onto
-    /// `builder`, and returns the accumulated `p` commitment (last
-    /// `PointsStage` interstitial) together with the points witness the
-    /// nested circuits load.
+    /// `builder`, and returns the accumulated `p` commitment (the walk's
+    /// last interstitial) together with the walk's witness the nested
+    /// circuits load, and the polynomials a walk of several segments adds
+    /// beyond the points stage's first: the further segments' polynomials
+    /// of the points stage, then the boundaries stage's (see
+    /// [`nested::Walk`]). None for a walk of one segment. The caller
+    /// places them, as the last stages of the proof's nested extension.
     ///
     /// Shared by `compute_p` (in `fuse/_10_p.rs`) and by
     /// [`dummy_proof`](Self::dummy_proof), so the nested
     /// endoscaling setup lives in one place.
+    #[allow(clippy::type_complexity)]
     pub(crate) fn compute_endoscaling<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -390,16 +395,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         endoscalar_alpha: Blind<C::ScalarField>,
         points_alpha: Blind<C::ScalarField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve, C::Profile>)> {
+    ) -> Result<(
+        C::HostCurve,
+        nested::WalkWitness<C::HostCurve, C::Profile>,
+        Vec<sparse::Polynomial<C::ScalarField, R>>,
+    )> {
         assert_eq!(points.len(), NumPoints::<C::Profile>::len());
 
-        let witness = PointsWitness::<C::HostCurve, C::Profile>::new(beta_endo, points);
+        let witness = nested::WalkWitness::<C::HostCurve, C::Profile>::new(beta_endo, points);
 
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
         let points_rx = <PointsStage<C::HostCurve, C::Profile> as StageExt<C::ScalarField, R>>::rx(
             points_alpha,
-            &witness,
+            &witness.segments[0],
         )?;
 
         let num_steps = NumSteps::<C::Profile>::len();
@@ -409,13 +418,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // job touches the RNG.
         let blinds: Vec<Blind<C::ScalarField>> =
             (0..num_steps).map(|_| Blind::random(rng)).collect();
-        let (registry, points) = (&self.nested_registry, &witness);
+        let (registry, walk) = (&self.nested_registry, &witness);
         for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
-            let staged = MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step));
+            let staged = MultiStage::new(nested::endoscaling_step::<C::HostCurve, R, C::Profile>(
+                step,
+            ));
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
                     endoscalar: beta_endo,
-                    points,
+                    points: walk.of_step(step),
                 })?
                 .into_output();
             registry.assemble_with_alpha(
@@ -428,21 +439,42 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             step_rxs.push(step_rx?);
         }
 
+        // The polynomials of a walk of several segments, with their blinding
+        // factors drawn after the steps', so that a walk of one segment
+        // draws what it always did.
+        let mut walk_stage_rxs = Vec::with_capacity(witness.segments.len());
+        if witness.segments.len() > 1 {
+            for segment in &witness.segments[1..] {
+                walk_stage_rxs.push(<PointsStage<C::HostCurve, C::Profile> as StageExt<
+                    C::ScalarField,
+                    R,
+                >>::rx(Blind::random(rng), segment)?);
+            }
+            walk_stage_rxs.push(
+                <nested::stages::boundaries::Stage<C::HostCurve, C::Profile> as StageExt<
+                    C::ScalarField,
+                    R,
+                >>::rx(Blind::random(rng), &witness.boundaries)?,
+            );
+        }
+
         builder.set_nested_endoscaling_step_rxs(step_rxs);
         builder.set_nested_endoscalar_rx(endoscalar_rx);
         builder.set_nested_points_rx(points_rx);
 
-        let p_commitment = *witness
-            .interstitials
-            .last()
-            .expect("every walk has at least one interstitial");
-        Ok((p_commitment, witness))
+        let p_commitment = witness.result();
+        Ok((p_commitment, witness, walk_stage_rxs))
     }
 
     /// Runs the native endoscaling over the committed inputs: walks them
     /// under `beta_endo`, commits the walk stage, traces the steps, and
     /// writes all of it onto `builder`. Returns $P_n$ (the last
     /// interstitial) with the walk stage's witness.
+    ///
+    /// A walk of several segments also commits its bits stage, a segment
+    /// stage polynomial per segment and its boundaries stage, which the
+    /// builder holds for the native extension's stages (see
+    /// `native::num_walk_stages`).
     ///
     /// Shared by `compute_p` (in `fuse/_10_p.rs`) and
     /// [`dummy_proof`](Self::dummy_proof), like
@@ -457,16 +489,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         C::NestedCurve,
         native_points::WalkWitness<C::NestedCurve, C::Profile>,
     )> {
-        use native_points::{WalkStage, WalkWitness};
+        use native_points::{BitsStage, BoundariesStage, SegmentStage, WalkStage, WalkWitness};
 
-        let walk = WalkWitness::new(
-            beta_endo,
-            crate::internal::endoscalar::PointsWitness::<
-                C::NestedCurve,
-                native::NumPoints<C::Profile>,
-                native::Endoscalings<C::Profile>,
-            >::new(beta_endo, &inputs.walk()),
-        );
+        let split = native::segments::<C::Profile>().is_split();
+        let walk = WalkWitness::new(beta_endo, &inputs.walk());
 
         let walk_rx = <WalkStage<C::NestedCurve, C::Profile> as StageExt<C::CircuitField, R>>::rx(
             Blind::random(rng),
@@ -481,12 +507,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             (0..num_steps).map(|_| Blind::random(rng)).collect();
         let (registry, walk_ref) = (&self.native_registry, &walk);
         for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
-            let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
-                .trace(native::circuits::endoscaling_step::Witness {
-                    inputs,
-                    walk: walk_ref,
-                })?
-                .into_output();
+            let witness = native::circuits::endoscaling_step::Witness {
+                inputs,
+                walk: walk_ref,
+            };
+            let trace = if split {
+                native::circuits::segment_step::Circuit::<C, R>::new(step)
+                    .trace(witness)?
+                    .into_output()
+            } else {
+                native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
+                    .trace(witness)?
+                    .into_output()
+            };
             registry.assemble_with_alpha(
                 &trace,
                 native::InternalCircuitIndex::EndoscalingStep(step as u32)
@@ -497,8 +530,32 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             step_rxs.push(step_rx?);
         }
 
+        // A walk of several segments: its bits stage, a polynomial of the
+        // segment stage per segment, then its boundaries stage, in the
+        // order the native extension holds them. Their blinding factors
+        // follow the steps', so a walk of one segment draws what it did.
+        let mut walk_stage_rxs = Vec::new();
+        if split {
+            walk_stage_rxs.reserve(native::num_walk_stages(walk.segments.len()));
+            walk_stage_rxs.push(<BitsStage<C::NestedCurve, C::Profile> as StageExt<
+                C::CircuitField,
+                R,
+            >>::rx(Blind::random(rng), &walk)?);
+            for segment in &walk.segments {
+                walk_stage_rxs.push(<SegmentStage<C::NestedCurve, C::Profile> as StageExt<
+                    C::CircuitField,
+                    R,
+                >>::rx(Blind::random(rng), segment)?);
+            }
+            walk_stage_rxs.push(<BoundariesStage<C::NestedCurve, C::Profile> as StageExt<
+                C::CircuitField,
+                R,
+            >>::rx(Blind::random(rng), &walk)?);
+        }
+
         builder.set_native_points_walk_rx(walk_rx);
         builder.set_native_endoscaling_step_rxs(step_rxs);
+        builder.set_native_walk_stage_rxs(walk_stage_rxs);
 
         let p_commitment = walk.p();
         Ok((p_commitment, walk))

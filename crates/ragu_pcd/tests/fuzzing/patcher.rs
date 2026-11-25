@@ -97,7 +97,7 @@ use crate::{
     internal::{
         endoscalar::EndoscalarStage,
         native::{self, online, stages::points as native_points, total_circuit_counts},
-        nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
+        nested::{self, EndoscalingStepWitness, NumSteps, PointsStage},
         transcript::Transcript,
     },
     profile::ProfiledCycle,
@@ -1096,11 +1096,37 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // walked points (including P_n at the last interstitial);
         // each step forces its interstitial from those bits, the previous
         // interstitial and its inputs. The walk's chain is every points
-        // stage, then the walk stage.
+        // stage, then the walk stage. A walk of several segments keeps its
+        // bits, its segments and the points handed between them in stages
+        // of their own, after the binding stage: a step reserves the chain
+        // up to its segment, and bind_endoscalar all of it, with the
+        // segment the walk ends in.
         let beta_endo = extract_endoscalar(builder.pre_beta())?;
         type Nested<C> = <C as Cycle>::NestedCurve;
+        let native_geometry = native::segments::<C::Profile>();
+        let segment_values = |segment: &native_points::SegmentWitness<Nested<C>, C::Profile>|
+         -> Result<Vec<C::CircuitField>> {
+            Ok([
+                binding_values.clone(),
+                stage_values::<_, R, native_points::BitsStage<Nested<C>, C::Profile>>(
+                    &native_walk,
+                )?,
+                stage_values::<_, R, native_points::SegmentStage<Nested<C>, C::Profile>>(segment)?,
+            ]
+            .concat())
+        };
         let native_walk_values: Vec<C::CircuitField> = [
-            binding_values.clone(),
+            if native_geometry.is_split() {
+                [
+                    segment_values(native_walk.last_segment())?,
+                    stage_values::<_, R, native_points::BoundariesStage<Nested<C>, C::Profile>>(
+                        &native_walk,
+                    )?,
+                ]
+                .concat()
+            } else {
+                binding_values.clone()
+            },
             stage_values::<_, R, native_points::PreambleStage<Nested<C>, C::Profile>>(
                 &native_points.preamble,
             )?,
@@ -1121,21 +1147,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 walk: &native_walk,
             })
         };
+        // The endoscalar's bits: the walk stage's, or the bits stage's for
+        // a walk of several segments.
+        let endoscalar_wires = if native_geometry.is_split() {
+            stage_wire_indices::<C::CircuitField, R, native_points::BitsStage<Nested<C>, C::Profile>>(
+                |bits| wires_of(&bits),
+            )?
+        } else {
+            stage_wire_indices::<C::CircuitField, R, native_points::WalkStage<Nested<C>, C::Profile>>(
+                |walk| wires_of(&walk.endoscalar),
+            )?
+        };
         let bind_endoscalar_spec = CircuitSpec {
             name: "bind_endoscalar".into(),
-            outputs: stage_wire_indices::<
-                C::CircuitField,
-                R,
-                native_points::WalkStage<Nested<C>, C::Profile>,
-            >(|walk| wires_of(&walk.endoscalar))?
-            .into_iter()
-            .map(OutputRef::Stage)
-            .chain(
-                covered_outputs(&bind_endoscalar, bind_endoscalar_witness()?, coverage(&[]))?
-                    .into_iter()
-                    .map(OutputRef::Instance),
-            )
-            .collect(),
+            outputs: endoscalar_wires
+                .into_iter()
+                .map(OutputRef::Stage)
+                .chain(
+                    covered_outputs(&bind_endoscalar, bind_endoscalar_witness()?, coverage(&[]))?
+                        .into_iter()
+                        .map(OutputRef::Instance),
+                )
+                .collect(),
         };
         visitor.visit(
             &bind_endoscalar_spec,
@@ -1145,6 +1178,33 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         for step in 0..native::NumSteps::<C::Profile>::len() {
+            if native_geometry.is_split() {
+                // A step of a walk of several segments forces its
+                // interstitial in its own segment's polynomial.
+                let circuit = native::circuits::segment_step::Circuit::<C, R>::new(step);
+                let local = native_geometry.locate(step).1;
+                let spec = CircuitSpec {
+                    name: format!("native_endoscaling_step_{step}"),
+                    outputs: stage_wire_indices::<
+                        C::CircuitField,
+                        R,
+                        native_points::SegmentStage<Nested<C>, C::Profile>,
+                    >(|segment| {
+                        wires_of(&segment.interstitials[local])
+                    })?
+                    .into_iter()
+                    .map(OutputRef::Stage)
+                    .collect(),
+                };
+                let values = segment_values(native_walk.segment_of(step))?;
+                visitor.visit(&spec, &circuit, &values, || {
+                    Ok(native::circuits::endoscaling_step::Witness {
+                        inputs: &native_points,
+                        walk: &native_walk,
+                    })
+                })?;
+                continue;
+            }
             let circuit = native::circuits::endoscaling_step::Circuit::<C, R>::new(step);
             let spec = CircuitSpec {
                 name: format!("native_endoscaling_step_{step}"),
@@ -1173,31 +1233,40 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // every other point are inputs. The points are the prover's own
         // witness, from `compute_p`.
         let own_o1 = builder.online_commitments()[crate::header::NUM_ONLINE_FP_POLYS - 1];
-        let endoscaling_values: Vec<C::ScalarField> = [
-            stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
-            stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,
-            stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(&points_witness)?,
-        ]
-        .concat();
+        // A step loads the endoscalar and bridge-hash stages, then the
+        // points of its own segment of the walk: the walk's one polynomial
+        // of the points stage unless the profile cuts the walk.
+        let endoscaling_values =
+            |points: &nested::PointsWitness<C::HostCurve, C::Profile>| -> Result<Vec<C::ScalarField>> {
+                Ok([
+                    stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
+                    stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,
+                    stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(points)?,
+                ]
+                .concat())
+            };
 
+        let walk = nested::segments::<C::Profile>();
         for step in 0..NumSteps::<C::Profile>::len() {
-            let circuit =
-                MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step));
+            let circuit = MultiStage::new(nested::endoscaling_step::<C::HostCurve, R, C::Profile>(
+                step,
+            ));
+            let (segment, local) = (points_witness.of_step(step), walk.locate(step).1);
             let spec = CircuitSpec {
                 name: format!("endoscaling_step_{step}"),
                 outputs: stage_wire_indices::<
                     C::ScalarField,
                     R,
                     PointsStage<C::HostCurve, C::Profile>,
-                >(|points| wires_of(&points.interstitials[step]))?
+                >(|points| wires_of(&points.interstitials[local]))?
                 .into_iter()
                 .map(OutputRef::Stage)
                 .collect(),
             };
-            visitor.visit_nested(&spec, &circuit, &endoscaling_values, || {
+            visitor.visit_nested(&spec, &circuit, &endoscaling_values(segment)?, || {
                 Ok(EndoscalingStepWitness {
                     endoscalar: beta_endo,
-                    points: &points_witness,
+                    points: segment,
                 })
             })?;
         }
@@ -1243,8 +1312,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_eval: builder.native_eval_commitment(),
             nested: nested_eval,
         };
+        // The instance circuits load the points of the walk's last segment
+        // and reserve the boundaries stage after it.
         let nested_values: Vec<C::ScalarField> = [
-            endoscaling_values,
+            endoscaling_values(points_witness.last())?,
+            stage_values::<_, R, nested::stages::boundaries::Stage<C::HostCurve, C::Profile>>(
+                &points_witness.boundaries,
+            )?,
             stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_preamble,
             )?,
@@ -1305,7 +1379,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 },
                 endoscalar: beta_endo,
                 bridge_hash: own_o1,
-                points: &points_witness,
+                points: points_witness.last(),
                 preamble: &nested_preamble,
                 s_prime: &nested_s_prime_witness,
                 inner_error: &nested_inner_error_witness,
