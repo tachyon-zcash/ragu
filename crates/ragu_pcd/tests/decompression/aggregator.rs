@@ -540,22 +540,20 @@ fn decompresses_a_wallet_proof() {
     assert_eq!(*node.data(), Fp::from(42));
     every_consumer(&app, node.clone(), true, &mut rng, "the decompression");
 
-    // The step exports the commitment and the opening of its online Fq
-    // polynomial, which holds the nested IPA's s(X). The proof carries
-    // them for its verifier, which holds the fuse's circuits and the
-    // chunks' binding circuits to the same values: with another
-    // commitment or another opened value, a claim on one side fails.
+    // The step commits the nested IPA's s(X) in its nested batch. The
+    // proof carries the commitment for its verifier, which holds the
+    // fuse's walk and the chunks' binding circuit to the same point: with
+    // another commitment, a claim fails.
     let (proof, data) = node.clone().into_parts();
-    assert_eq!(proof.online_fq_commitments.len(), 1);
-    assert_eq!(proof.online_fq_openings.len(), 2);
+    let ipa = crate::decompress::online::slot::IPA;
     let mut other = proof.clone();
-    other.online_fq_commitments[0] = -other.online_fq_commitments[0];
+    other.nested_online_commitments[ipa] = -other.nested_online_commitments[ipa];
     assert!(
         matches!(
             app.verify_uncompressed(&other.carry::<Value>(data), &mut rng),
             Ok(false)
         ),
-        "another exported commitment fails"
+        "another batch commitment fails"
     );
     // The left opening's point exposes the staged digest. The
     // `hashes_1` and statement claims bind it to the step.
@@ -571,15 +569,6 @@ fn decompresses_a_wallet_proof() {
             "another step binding value fails: {i}"
         );
     }
-    let mut other = proof;
-    other.online_fq_openings[1] += <ragu_core::pasta::Fq as udon::field::Field>::ONE;
-    assert!(
-        matches!(
-            app.verify_uncompressed(&other.carry::<Value>(data), &mut rng),
-            Ok(false)
-        ),
-        "another exported opening fails"
-    );
 
     let decompressed = app.context().prepare(&compressed).unwrap();
     let (relabelled, ()) = app
@@ -651,12 +640,12 @@ fn decompresses_a_wallet_proof() {
     );
 
     // The nested curve's binding, from the prover's side: a step that
-    // commits, in its online Fq slot, the challenge polynomial of other
-    // round challenges exports that polynomial's own commitment and
-    // opening, which agree with each other and with the proof, but the
-    // opening is not s(X)'s and the commitment not the nested IPA's G'.
+    // commits, in its nested batch, the challenge polynomial of other
+    // round challenges opens that polynomial's own commitment, which
+    // agrees with the proof, but the opening is not s(X)'s and the
+    // commitment not the nested IPA's G'.
     let decompressed = app.context().prepare(&compressed).unwrap();
-    let (other_fq, ()) = crate::decompress::support::with_other_fq_polynomial(|| {
+    let (other_ipa, ()) = crate::decompress::support::with_other_nested_ipa_polynomial(|| {
         app.fuse_with_source(
             &mut rng,
             Decompress::<Value>::new(true),
@@ -669,10 +658,10 @@ fn decompresses_a_wallet_proof() {
     .unwrap();
     every_consumer(
         &app,
-        other_fq,
+        other_ipa,
         false,
         &mut rng,
-        "a decompression whose online Fq slot holds another polynomial",
+        "a decompression whose nested batch holds another polynomial",
     );
 }
 

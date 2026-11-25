@@ -194,11 +194,11 @@ pub(crate) fn chain_skips(before: usize, shapes: &[StageShape]) -> Vec<usize> {
 /// the front of every circuit of that side of a proof's decompression,
 /// which the run stages follow: the online input stage's 19, then the
 /// online query stage's, which holds two evaluations of the wallet registry
-/// per internal circuit of the Standard profile's scalar-field side and 32
+/// per internal circuit of the Standard profile's scalar-field side and 33
 /// values besides. The decompression holds its layout to this count where
 /// the aggregator is compiled (`decompress::online`). Like the runs'
 /// shapes, it is part of the Standard profile's wire format.
-pub(crate) const ONLINE_PREFIX_GATES: usize = 19 + 16 + nested::InternalCircuitIndex::NUM;
+pub(crate) const ONLINE_PREFIX_GATES: usize = 19 + 17 + nested::InternalCircuitIndex::NUM;
 
 /// The generators each run's stage of the scalar-field side lands its
 /// values on at rank `R`, for a proof of profile `P` at rank `K`, by run,

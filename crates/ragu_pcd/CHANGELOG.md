@@ -23,15 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound, over round challenges fixed before the step's challenge: the
   decompression step stages the compression transcript's last squeeze, and
   the extension holds it to the squeeze it computes, through the step
-  binding. The decompression step commits the host IPA's challenge
-  polynomial in the native batch. Its opening is checked by the native
-  extension and its commitment is bound through `Binding::batch`. The nested
-  curve's: every step commits that IPA's challenge polynomial as its online
-  Fq polynomial (`Profile::online_fq_polynomials`), and exports its
-  commitment and opening for the slots the profile's bindings name
-  (`Binding::online` on the native binding, `Binding::openings` on the
-  nested one), through `bind_endoscalar`'s and the nested `compute_v`'s
-  instances; a proof and a compressed proof of such a profile carry them.
+  binding. Each IPA's challenge polynomial is a polynomial of the online
+  batch of its field, committed before the step's second challenge and
+  opened at it: the decompression step commits the host IPA's in the native
+  batch, and every step commits the nested IPA's in the nested batch. The
+  extension of the polynomial's field checks the opening, and the other
+  side's binding circuit exposes the commitment, bound through
+  `Binding::batch`.
   `Profile::native_extension_rxs` is handed the step's six online openings.
   A step folds its own application claim, so in a profile with a statement
   circuit its `hashes_1` exports the step binding's staged digest after its

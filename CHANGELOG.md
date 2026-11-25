@@ -60,9 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. The fuse proves the opening and does not constrain its value: a
   profile's extension does, through the commitment and the opening the step
   exports to its parent for the slots the profile's bindings name
-  (`Binding::online`, `Binding::openings`). The `Aggregator` profile sets
-  the count to one for the nested IPA's challenge polynomial; the standard
-  profile does not change.
+  (`Binding::online`, `Binding::openings`). No built-in profile sets the
+  count, so the standard profile does not change.
 - Online polynomial batches: a profile can declare a fixed batch of
   online polynomials on each field, each opened at several points, and a
   source-registry mesh that reduces many claimed registry restrictions to one

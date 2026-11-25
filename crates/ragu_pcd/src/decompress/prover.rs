@@ -241,13 +241,15 @@ where
         })
     }
 
-    /// The step's online Fq polynomial: the challenge polynomial $s(X)$
-    /// of the nested curve's IPA of the proof the step's chunks run over,
-    /// whose commitment is that IPA's $G'$.
-    pub(crate) fn online_fq_polynomials(
+    /// The nested IPA's challenge polynomial occupies a nested batch slot:
+    /// $s(X)$ of the nested curve's IPA of the proof the step's chunks run
+    /// over, whose commitment is that IPA's $G'$. The scalar-field side's
+    /// chunks hold its opening in every step, so a step that decompresses
+    /// nothing commits the canonical proof's.
+    pub(super) fn nested_ipa_polynomial(
         &self,
         source: Option<&Decompressed<C>>,
-    ) -> Vec<sparse::Polynomial<C::ScalarField, R>> {
+    ) -> sparse::Polynomial<C::ScalarField, R> {
         let nested = &self.sides(source).nested;
         #[cfg_attr(not(test), allow(unused_mut))]
         let mut rounds: Vec<C::ScalarField> = nested.schedule.regions.lifts[squeezed::ROUNDS..]
@@ -257,10 +259,8 @@ where
         // Test hook: this runs on the thread that calls `fuse`, outside its
         // parallel jobs, as the hook's thread-local requires.
         #[cfg(test)]
-        super::support::mutate_fq_rounds(&mut rounds);
-        alloc::vec![sparse::Polynomial::from_coeffs(
-            crate::ipa::challenge_polynomial(&rounds)
-        )]
+        super::support::mutate_nested_ipa_rounds(&mut rounds);
+        sparse::Polynomial::from_coeffs(crate::ipa::challenge_polynomial(&rounds))
     }
 
     /// The native online input stage's values for the proof the step's
@@ -392,19 +392,13 @@ where
         source: Option<&Decompressed<C>>,
         output_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
         host_ipa_commitment: C::HostCurve,
-        online_fq_openings: &[C::ScalarField],
         registry: &Registry<'_, C::ScalarField, R>,
         (online_input, online_query): (Vec<C::ScalarField>, Vec<C::ScalarField>),
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
         let params = self.wallet.params;
-        let &[x, y] = online_fq_openings else {
-            return Err(Error::Initialization(
-                "the aggregator's step exports the opening of its one online Fq polynomial".into(),
-            ));
-        };
-        // The binding exposes the application's output commitments, the
-        // host IPA's batch commitment and the nested IPA's opening.
+        // The binding exposes the application's output commitments and
+        // the host IPA's batch commitment.
         let prepared: Prepared<C, Nested> = self
             .sides(source)
             .nested
@@ -413,7 +407,6 @@ where
                 source.is_some(),
                 output_commitments,
                 host_ipa_commitment,
-                [x, y],
             )?
             .with_online(online_input, online_query)?;
         let prepared = &prepared;
@@ -1282,7 +1275,8 @@ impl online::Values {
     /// verifier computed them for the proof `own` was prepared from: the
     /// claims' restrictions, the instance's opening and the wire bindings'
     /// registry values. The step's challenges and the mesh's
-    /// intersections, which only its fuse knows, are left zero.
+    /// intersections, which only its fuse knows, are left zero, and the
+    /// opening of the IPA's $s(X)$ is its value at that zero $y$.
     ///
     /// # Panics
     ///
@@ -1307,6 +1301,8 @@ impl online::Values {
                 stage[Self::value_at(wire)] = value;
             }
         }
+        // Outside a step the stage's y is zero, and s(0) is one.
+        stage[Self::value_at(self.ipa())] = P::Scalar::ONE;
         stage
     }
 }
@@ -1485,10 +1481,6 @@ fn supply<F: Field, P, Q>(
         work.points[*slot] = *point;
     }
     work.points[regions.g_prime] = other.g_prime;
-    // Outside a step the opening is of s(X) at zero, which is one.
-    if let Some([_, y]) = regions.fq_opening {
-        work.elements[y] = F::ONE;
-    }
 }
 
 type Executor<F> = Emulator<Wireless<Always<()>, F>>;
@@ -1677,24 +1669,16 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Nested> {
-    /// Supplies the commitments, opening and flag the enclosing step
-    /// exposes to its nested binding circuit.
+    /// Supplies the commitments and flag the enclosing step exposes to its
+    /// nested binding circuit.
     pub(crate) fn for_step<K: Rank, const HEADER_SIZE: usize>(
         &self,
         params: &C::Params,
         decompression: bool,
         output_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
         host_ipa_commitment: C::HostCurve,
-        fq_opening: [C::ScalarField; 2],
     ) -> Result<Self> {
         let mut prepared = self.clone();
-        let [x, y] = prepared
-            .schedule
-            .regions
-            .fq_opening
-            .expect("the scalar-field side holds the online Fq opening");
-        prepared.work.elements[x] = fq_opening[0];
-        prepared.work.elements[y] = fq_opening[1];
         let regions = &prepared.schedule.regions;
         let digits_sum = regions.digits_sum;
         let slots = regions

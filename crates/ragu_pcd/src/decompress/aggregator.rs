@@ -22,10 +22,10 @@
 //! per run of the compression's transcript, then the trailing, lifts, work
 //! and digits stages (see [`Front`]), the digits chunks last, under two
 //! final masks, and its binding circuit, which exposes its recomputation
-//! of the circuit-field side's digits stage, the commitment of the first
-//! output slot of the step that proves the chunks, and the point and value
-//! at which that step opened its online Fq polynomial; that side's
-//! transcript stage is empty and stays out.
+//! of the circuit-field side's digits stage, both output commitments of
+//! the step that proves the chunks and the commitment of the host IPA's
+//! $s(X)$ in that step's native batch; that side's transcript stage is
+//! empty and stays out.
 //!
 //! Every circuit of either side loads the aggregator's two online stages
 //! of the side's field, which the fuse commits, before the extension's
@@ -129,10 +129,9 @@ use crate::{
 /// online batches, which the step's fuse opens on restrictions its source
 /// meshes hold to the wallet registries the [`Decompression`] carries. The
 /// proof's own circuit is held to the wallet registry's domain. Both IPAs'
-/// final generators are bound: the host curve's through the polynomial
-/// the decompression step commits in its native online batch, the nested
-/// curve's through the step's online Fq polynomial, each over round
-/// challenges the transcript digest that step stages fixes before its
+/// final generators are bound, each through the polynomial the step
+/// commits in the online batch of its field, over round challenges the
+/// transcript digest the decompression step stages fixes before its
 /// challenge. The decompression module's *Registry evaluations* and *The
 /// step binding* give the arguments. The construction is unaudited.
 ///
@@ -228,14 +227,12 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NESTED_EXTENSION: usize =
         Self::NESTED_CIRCUITS.circuits + 1 + nested_stages(num_runs::<WalletRank>());
 
-    // One online Fq polynomial per step: the nested IPA's s(X).
-    const ONLINE_FQ_POLYS: usize = 1;
-
     // The wallet registry's evaluations the chunks read, as openings of
-    // its restrictions, which the meshes hold to the registry.
+    // its restrictions, which the meshes hold to the registry, and each
+    // IPA's s(X) in the batch of its field.
     const NATIVE_ONLINE: Layout = online::NATIVE;
     const NESTED_ONLINE: Layout = online::NESTED;
-    const NATIVE_MESH: Option<Mesh> = Some(online::NATIVE_MESH);
+    const NATIVE_MESH: Option<Mesh> = Some(online::MESH);
     const NESTED_MESH: Option<Mesh> = Some(online::MESH);
     // The proof's own circuit is one of the wallet registry's: its domain
     // point, at which the claims' restriction is opened, is held to that
@@ -381,20 +378,27 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Ok(context.nested_online_inputs(source))
     }
 
-    fn native_extension() -> Extension {
-        native_layout(Self::native_circuits(HEADER_SIZE), num_runs::<WalletRank>())
-    }
-
-    fn online_fq_polynomials<'params, Base, R, B>(
+    fn nested_online_polynomials<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&Decompressed<Base>>,
+        phase: crate::profile::online::Phase,
+        _: &[Base::ScalarField],
+        _: crate::profile::online::PreparationChallenges<Base::ScalarField>,
     ) -> Result<alloc::vec::Vec<ragu_circuits::polynomials::sparse::Polynomial<Base::ScalarField, R>>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend,
     {
-        Ok(context.online_fq_polynomials(source))
+        Ok(if phase == crate::profile::online::Phase::BeforeY {
+            alloc::vec![context.nested_ipa_polynomial(source)]
+        } else {
+            alloc::vec::Vec::new()
+        })
+    }
+
+    fn native_extension() -> Extension {
+        native_layout(Self::native_circuits(HEADER_SIZE), num_runs::<WalletRank>())
     }
 
     fn nested_extension() -> Extension {
@@ -544,11 +548,11 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(H)?;
         let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
+        let _ = online_fq_openings;
         context.nested_rxs::<Self>(
             source,
             *output_commitments,
-            native_online_commitments[online::HOST_IPA],
-            online_fq_openings,
+            native_online_commitments[online::slot::IPA],
             registry,
             online::stages(online),
             rng,
@@ -663,7 +667,8 @@ impl Counts {
 /// binding circuit exposes the nested extension's run stages, which the
 /// transcript absorbed, its recomputations of that extension's lifts and
 /// digits stages, and the nested IPA's $G'$, which the proof's consumer
-/// holds to the step's online Fq commitment, in that order.
+/// holds to the commitment of $s(X)$ in the step's nested batch, in that
+/// order.
 ///
 /// # Panics
 ///
@@ -714,10 +719,10 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
             stages: (0..runs as u32)
                 .chain([nested.lifts(), nested.digits()])
                 .collect(),
-            // The step's online Fq polynomial, which holds the nested
-            // IPA's s(X): its commitment is that IPA's G'.
-            online: vec![0],
-            batch: Vec::new(),
+            online: Vec::new(),
+            // The nested batch's s(X) of the nested IPA: its commitment
+            // is that IPA's G'.
+            batch: vec![online::slot::IPA as u32],
             openings: Vec::new(),
         }),
     }
@@ -730,9 +735,8 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
 /// stage after them, and the binding circuit the same stages as the rest,
 /// under the work stage's final mask then the digits stage's. The binding
 /// circuit recomputes the native extension's digits stage and exposes, after
-/// it, both application commitments and the host IPA helper's commitment,
-/// then, as elements,
-/// the point and value at which the proof opened its online Fq polynomial.
+/// it, both application commitments and the commitment of the host IPA's
+/// $s(X)$ in the step's native batch.
 ///
 /// # Panics
 ///
@@ -773,10 +777,9 @@ pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
             circuit: binding,
             stages: vec![Indices::native().digits()],
             online: vec![0, 1],
-            batch: vec![online::HOST_IPA as u32],
-            // The step's online Fq polynomial, which holds the nested
-            // IPA's s(X): the chunks hold its opening to s at that point.
-            openings: vec![0],
+            // The native batch's s(X) of the host IPA.
+            batch: vec![online::slot::IPA as u32],
+            openings: Vec::new(),
         }),
     }
 }

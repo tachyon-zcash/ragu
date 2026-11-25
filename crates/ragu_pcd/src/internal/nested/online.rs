@@ -167,8 +167,7 @@ pub fn point<F: Field>(w: F) -> F {
 ///
 /// It is not zero, so its commitment is not the identity, which the native
 /// walk cannot take. It is not constant, so its value at $\zeta_q$ depends
-/// on $\zeta_q$. The aggregator's decompression commits the nested IPA's
-/// $s(X)$ instead, whose commitment is that IPA's $G'$.
+/// on $\zeta_q$.
 ///
 /// This witness is retained for compatibility profiles. New consumers supply
 /// their own polynomials through the online-batch preparation hooks.
