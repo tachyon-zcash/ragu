@@ -1092,6 +1092,20 @@ fn decompression_preserves_both_wallet_commitments_for_the_next_fuse() {
         .unwrap()
         .finalize_with(params, Decompression::new(wallet, &mut rng).unwrap())
         .unwrap();
+    // Coefficients that do not commit to the wallet proof's commitments
+    // are refused before any proving.
+    for slot in 0..polynomials.len() {
+        let mut wrong = polynomials.clone();
+        wrong[slot][0] += Fp::ONE;
+        assert!(
+            matches!(
+                app.decompress_with_polynomials(&mut rng, &compressed, wrong),
+                Err(Error::InvalidWitness(ref reason))
+                    if reason.to_string().contains("online commitments")
+            ),
+            "other coefficients in slot {slot}"
+        );
+    }
     let node = app
         .decompress_with_polynomials(&mut rng, &compressed, polynomials.clone())
         .unwrap();

@@ -572,12 +572,13 @@ where
     ///
     /// The decompression proof binds both output commitments to the ones
     /// verified in the compressed wallet proof. Later fuses can open them
-    /// through the usual online oracle API. A proof with coefficients that
-    /// disagree with the wallet's commitments fails verification.
+    /// through the usual online oracle API. Coefficients that do not commit
+    /// to the wallet proof's online commitments are refused before proving.
     ///
     /// # Errors
     /// Fails if the header is not registered for decompression, the wallet's
-    /// compressed verifier rejects the proof, or proving fails.
+    /// compressed verifier rejects the proof, the coefficients do not commit
+    /// to the wallet proof's online commitments, or proving fails.
     pub fn decompress_with_polynomials<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         rng: &mut RNG,
@@ -591,6 +592,17 @@ where
             ));
         }
         let decompressed = self.context.prepare(pcd)?;
+        // The circuits hold the output commitments to the wallet proof's,
+        // which its verifier just accepted, so other coefficients would
+        // only yield a proof that no verifier accepts.
+        for (coefficients, expected) in polynomials.iter().zip(pcd.online_commitments()) {
+            if self.commit(coefficients)? != expected {
+                return Err(Error::InvalidWitness(
+                    "the coefficients do not commit to the wallet proof's online commitments"
+                        .into(),
+                ));
+            }
+        }
         let (pcd, ()) = self.fuse_with_source(
             rng,
             Decompress::<H>::with_excluded_suffixes(excluded, true),

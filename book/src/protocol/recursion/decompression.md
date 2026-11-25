@@ -56,8 +56,10 @@ aggregator Fuse.
 
 The prover $\mathcal P$ has a compressed wallet proof $\pi$ and its output
 header data. The decompression API first runs the wallet verifier on
-$\pi$ while preparing the witness. If it succeeds, the decompression step
-fuses two bootstrap proofs with unit input headers. The step encodes the
+$\pi$ while preparing the witness, then checks that the supplied
+coefficients commit to $\pi$'s two online commitments. If both succeed,
+the decompression step fuses two bootstrap proofs with unit input
+headers. The step encodes the
 wallet proof's output header data and constrains the encoded header's
 type suffix to differ from `Dummy`, zero, and the suffixes of omitted wallet
 output headers that declare online polynomials. Each exclusion adds one

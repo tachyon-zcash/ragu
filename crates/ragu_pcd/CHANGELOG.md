@@ -43,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its proofs are unchanged.
   `Aggregator` accepts header sizes from 1 through 195 field elements.
   `Application::decompress_with_polynomials` accepts coefficients for both
-  wallet output slots and binds their commitments to the wallet proof.
+  wallet output slots and binds their commitments to the wallet proof. It
+  refuses coefficients that do not commit to the wallet proof's commitments.
   Register the wallet's output header type with the aggregator to enable
   the handoff for that header.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
