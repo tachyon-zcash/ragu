@@ -39,7 +39,8 @@
 //! [`page`] is a function over a driver and not a circuit. A circuit that
 //! is one page calls it once after it loads its stages, as the endoscaling
 //! steps do. A circuit that does other work can call it for the pages it
-//! has room for.
+//! has room for. A step of a [`program`](super::program) runs a page as
+//! [`fold`] between a load and a store of its memory.
 //!
 //! # Capacity
 //!
@@ -198,8 +199,8 @@ pub fn range(capacity: usize, page: usize, len: usize) -> Range<usize> {
 ///
 /// This is the work of one page without the two ends: [`page`] takes
 /// `start` from a stage and holds the result to a stage. A caller that
-/// keeps its interstitials elsewhere calls this and holds the result
-/// itself.
+/// keeps its interstitials elsewhere, as a [`program`](super::program)
+/// keeps them in its memory, calls this and stores the result itself.
 ///
 /// # Errors
 ///

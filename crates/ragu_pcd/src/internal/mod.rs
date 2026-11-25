@@ -20,6 +20,8 @@
 //! - [`paging`] — one walk of a unit operation cut into circuits that
 //!   share a stage of interstitial states, which both endoscaling walks
 //!   are
+//! - [`program`] — one computation cut by hand into step circuits that
+//!   share a memory stage of cells, each defined by one step
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
 //! - [`ky`] — the $k(y)$ targets of a proof's revdot claims, computed one
@@ -28,8 +30,8 @@
 //!   `compute_v` circuits need
 //! - [`const_fns`] — compile-time helper functions for array construction
 //!
-//! [`revdot`], [`endoscalar`], [`paging`], [`transcript`], [`ky`] and
-//! [`inverter`] live in `shared/` and are re-exported here.
+//! [`revdot`], [`endoscalar`], [`paging`], [`program`], [`transcript`],
+//! [`ky`] and [`inverter`] live in `shared/` and are re-exported here.
 //!
 //! # Crossing the cycle
 //!
@@ -105,9 +107,15 @@ mod shared {
     pub mod inverter;
     pub mod ky;
     pub mod paging;
+    pub mod program;
     pub mod revdot;
     pub mod transcript;
 }
+#[expect(
+    unused_imports,
+    reason = "no circuit is a program yet: only the module's own tests use it"
+)]
+pub use shared::program;
 pub use shared::{endoscalar, inverter, ky, paging, revdot, transcript};
 
 /// Position `index` among a profile's `count` variants of one kind, for
