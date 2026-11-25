@@ -274,7 +274,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             randomizer_a: &randomizer.a,
             randomizer_b: &randomizer.b,
             mask: &randomizer.mask,
-            online_fq: builder.online_fq_polynomials(),
         }
     }
 

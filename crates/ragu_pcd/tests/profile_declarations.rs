@@ -1,7 +1,7 @@
 use ragu_circuits::polynomials::{AggregatorRank, R, WalletRank};
 
 use super::{
-    testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Opening, Wider},
+    testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Wider},
     *,
 };
 use crate::{compress::runs::num_runs, decompress::aggregator};
@@ -213,8 +213,7 @@ fn consistency_binds_every_staged_circuit() {
             circuit,
             stages,
             online: vec![],
-            native_online: Vec::new(),
-            openings: Vec::new(),
+            batch: Vec::new(),
         }),
     };
     assert!(binding(1, vec![1, 0]).is_consistent());
@@ -227,8 +226,9 @@ fn consistency_binds_every_staged_circuit() {
 }
 
 /// The profile's checks refuse a malformed extension, a statement
-/// circuit on the nested side, and a binding naming a stage the other
-/// side does not have, from either side.
+/// circuit on the nested side, a binding naming a stage the other side
+/// does not have, from either side, and a native binding naming a batch
+/// polynomial the step does not have or an output header slot.
 #[test]
 fn malformed_declarations_are_refused() {
     use alloc::vec;
@@ -314,8 +314,7 @@ fn malformed_declarations_are_refused() {
                     circuit: 0,
                     stages: vec![0, 1],
                     online: vec![],
-                    native_online: Vec::new(),
-                    openings: Vec::new(),
+                    batch: Vec::new(),
                 }),
             }
         }
@@ -356,17 +355,101 @@ fn malformed_declarations_are_refused() {
                     circuit: 0,
                     stages: vec![1],
                     online: vec![],
-                    native_online: Vec::new(),
-                    openings: Vec::new(),
+                    batch: Vec::new(),
                 }),
             }
         }
     }
 
+    /// [`Crossing`] with its native binding naming a polynomial of the
+    /// nested batch, which the profile does not declare.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct StrayBatch;
+
+    impl Profile for StrayBatch {
+        const NAME: &'static str = "stray batch";
+        const NATIVE_EXTENSION: usize = 1;
+        const NESTED_EXTENSION: usize = 2;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            let mut extension = Crossing::native_extension();
+            extension
+                .binding
+                .as_mut()
+                .expect("the crossing profile's native binding")
+                .batch = vec![0];
+            extension
+        }
+
+        fn nested_extension() -> Extension {
+            Crossing::nested_extension()
+        }
+    }
+
+    /// [`Crossing`] with its native binding naming a slot of the step's
+    /// output header, whose commitment is a host-curve point: only the
+    /// nested binding circuit holds one.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct StrayOnline;
+
+    impl Profile for StrayOnline {
+        const NAME: &'static str = "stray online";
+        const NATIVE_EXTENSION: usize = 1;
+        const NESTED_EXTENSION: usize = 2;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            let mut extension = Crossing::native_extension();
+            extension
+                .binding
+                .as_mut()
+                .expect("the crossing profile's native binding")
+                .online = vec![0];
+            extension
+        }
+
+        fn nested_extension() -> Extension {
+            Crossing::nested_extension()
+        }
+    }
+
+    /// The refusal's reason, for a declaration `check` refuses.
+    fn reason(result: Result<()>) -> alloc::string::String {
+        use alloc::string::ToString;
+        match result {
+            Err(Error::Initialization(reason)) => reason.to_string(),
+            Err(error) => panic!("unexpected error: {error}"),
+            Ok(()) => panic!("the declaration was accepted"),
+        }
+    }
+
+    assert!(Crossing::check().is_ok());
     assert!(StrayStatement::check().is_err());
     assert!(NestedStatement::check().is_err());
     assert!(StrayBinding::check().is_err());
     assert!(StrayNestedBinding::check().is_err());
+    // Each refusal of a binding's slots gives its own reason.
+    assert_eq!(
+        reason(StrayBatch::check()),
+        "the native binding circuit names a polynomial the nested online batch does not have"
+    );
+    assert_eq!(
+        reason(StrayOnline::check()),
+        "the native binding circuit names an output header slot, whose commitment is a point only the nested binding circuit holds"
+    );
 }
 
 /// A profile's name identifies it in diagnostics, so the checks refuse
@@ -536,7 +619,7 @@ fn standard_is_the_crate_layout() {
             nested_points: 122,
             nested_steps: 31,
             nested_rx: 45,
-            online_fq: 0,
+            nested_online: 0,
             native_points: 108,
             native_steps: 27,
             source_polynomials: 0,
@@ -546,26 +629,26 @@ fn standard_is_the_crate_layout() {
 }
 
 #[test]
-fn an_online_fq_polynomial_is_a_native_walk_point() {
-    // The point joins the nested batch's commitments in the native
-    // walk. A full walk then needs another native step, and with it
-    // the batch grows.
+fn a_nested_online_polynomial_is_a_native_walk_point() {
+    // The polynomial's commitment joins the nested batch's commitments
+    // in the native walk. A full walk then needs another native step,
+    // and with it the batch grows.
     let base = Shape::solve(0, 0, 0, 4, 4);
-    let with_fq = Shape::solve(0, 0, 1, 4, 4);
-    assert_eq!(with_fq.online_fq, 1);
+    let with_online = Shape::solve(0, 0, 1, 4, 4);
+    assert_eq!(with_online.nested_online, 1);
     assert_eq!(
-        with_fq.native_points,
-        nested::pcs::num_batched_points(with_fq.nested_rx, 0) + 1
+        with_online.native_points,
+        nested::pcs::num_batched_points(with_online.nested_rx, 0) + 1
     );
-    assert!(with_fq.native_points > base.native_points);
+    assert!(with_online.native_points > base.native_points);
 }
 
 #[test]
-fn an_online_fq_polynomial_alone_fills_the_native_walk() {
-    // The standard layout with the slot on. Its native walk has room
-    // for one more point, so the point adds no step and no polynomial.
-    let shape = Shape::of::<Opening>();
-    assert_eq!(shape, Shape::solve(0, 0, 1, 4, 4));
+fn a_nested_online_polynomial_alone_fills_the_native_walk() {
+    // The standard layout with one nested online polynomial. Its native
+    // walk has room for one more point, so the point adds no step and no
+    // rx polynomial.
+    let shape = Shape::solve(0, 0, 1, 4, 4);
     assert_eq!(
         shape,
         Shape {
@@ -573,15 +656,13 @@ fn an_online_fq_polynomial_alone_fills_the_native_walk() {
             nested_points: 122,
             nested_steps: 31,
             nested_rx: 45,
-            online_fq: 1,
+            nested_online: 1,
             native_points: 109,
             native_steps: 27,
             source_polynomials: 0,
         }
     );
     assert_eq!(shape.polynomials(), 103);
-    assert_eq!(native::RxIndex::num::<Opening>(), shape.native_rx);
-    assert_eq!(nested::RxIndex::num::<Opening>(), shape.nested_rx);
 
     // A second point overflows the walk and adds a native step. The
     // children's commitments of that step's rx polynomial are two more
@@ -594,7 +675,7 @@ fn an_online_fq_polynomial_alone_fills_the_native_walk() {
             nested_points: 124,
             nested_steps: 31,
             nested_rx: 45,
-            online_fq: 2,
+            nested_online: 2,
             native_points: 110,
             native_steps: 28,
             source_polynomials: 0,
@@ -602,29 +683,9 @@ fn an_online_fq_polynomial_alone_fills_the_native_walk() {
     );
 }
 
-#[test]
-fn check_refuses_more_online_fq_polynomials_than_a_step_opens() {
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    struct TooMany;
-    impl Profile for TooMany {
-        const NAME: &'static str = "too-many";
-        const NATIVE_EXTENSION: usize = 0;
-        const NESTED_EXTENSION: usize = 0;
-        const ONLINE_FQ_POLYS: usize = crate::profile::NUM_ONLINE_FQ_POLYS + 1;
-
-        type Context<'params, Base, R, B>
-            = ()
-        where
-            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
-            R: Rank,
-            B: SelectableBackend;
-    }
-    assert!(TooMany::check().is_err());
-}
-
-/// The aggregator's shape follows its pinned circuits, its one online
-/// Fq polynomial and its online batches, and grows with the header size
-/// through the transcript circuits.
+/// The aggregator's shape follows its pinned circuits and its online
+/// batches, and grows with the header size through the transcript
+/// circuits.
 #[test]
 fn aggregator_declares_the_decompression() {
     let shape = Shape::of::<Aggregator<4>>();
@@ -632,15 +693,15 @@ fn aggregator_declares_the_decompression() {
     let nested_stages = aggregator::nested_stages(num_runs::<WalletRank>());
     assert_eq!(nested_stages, 27, "a stage per run, then four");
     // Each field's online batch: its three stages and its helper among
-    // the side's polynomials, the mesh's twenty polynomials among the
-    // points the other side's walk folds, and the outgoing restriction
-    // the proof retains.
+    // the side's polynomials, the mesh's twenty polynomials and the IPA's
+    // challenge polynomial among the points the other side's walk folds,
+    // and the outgoing restriction the proof retains.
     let batch = online::stages::RXS;
     let expected = |native_circuits: usize| {
         let mut shape = Shape::solve_with_online(
             native_circuits + 2 + 6 + batch,
             19 + 1 + nested_stages + batch,
-            1 + 20,
+            21,
             21,
             per_step,
             per_step,
@@ -739,9 +800,9 @@ fn extensions_lengthen_both_walks() {
 }
 
 /// An extension proves: an application in the [`Proving`] profile,
-/// one trivial circuit on each side and one online Fq polynomial per
-/// step, seeds, fuses, verifies and compresses at the rank above the
-/// wallet's, where the fuse has room for the two polynomials.
+/// one trivial circuit on each side, seeds, fuses, verifies and
+/// compresses at the rank above the wallet's, where the fuse has room
+/// for the two polynomials.
 #[test]
 fn an_extension_proves_verifies_and_compresses() -> Result<()> {
     use rand::{SeedableRng, rngs::StdRng};
@@ -751,40 +812,11 @@ fn an_extension_proves_verifies_and_compresses() -> Result<()> {
 
     const HEADER_SIZE: usize = 4;
     assert_ne!(Shape::of::<Proving>(), Shape::of::<Standard>());
-    // Each step also commits an online Fq polynomial, which the nested
-    // `compute_v` opens and folds in the step's own nested batch.
-    assert_eq!(Shape::of::<Proving>().online_fq, 1);
 
     let app = ApplicationBuilder::<Profiled<Pasta, Proving>, R<14>, HEADER_SIZE>::new()
         .register(UnitStep)?
         .finalize(crate::pasta::baked_aggregator())?;
     let mut rng = StdRng::seed_from_u64(14);
-    let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
-    let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
-    let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;
-    assert!(app.verify_uncompressed(&fused, &mut rng)?);
-    let compressed = app.compress(&fused, &mut rng)?;
-    assert!(app.verify_compressed(&compressed)?);
-    Ok(())
-}
-
-/// The slot proves without an extension: an application in the
-/// [`Opening`] profile, one online Fq polynomial per step and nothing
-/// else beyond the fuse, seeds, fuses, verifies and compresses at the
-/// wallet rank.
-#[test]
-fn an_online_fq_polynomial_proves_verifies_and_compresses() -> Result<()> {
-    use rand::{SeedableRng, rngs::StdRng};
-
-    use super::testing::UnitStep;
-    use crate::ApplicationBuilder;
-
-    const HEADER_SIZE: usize = 4;
-
-    let app = ApplicationBuilder::<Profiled<Pasta, Opening>, R<13>, HEADER_SIZE>::new()
-        .register(UnitStep)?
-        .finalize(crate::pasta::baked())?;
-    let mut rng = StdRng::seed_from_u64(13);
     let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;

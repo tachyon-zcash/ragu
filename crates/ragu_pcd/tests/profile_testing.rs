@@ -165,25 +165,6 @@ impl Profile for Mismatched {
         B: SelectableBackend;
 }
 
-/// One online Fq polynomial per step and no extension: the standard
-/// layout with the slot on, which proves at the wallet rank.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Opening;
-
-impl Profile for Opening {
-    const NAME: &'static str = "opening";
-    const NATIVE_EXTENSION: usize = 0;
-    const NESTED_EXTENSION: usize = 0;
-    const ONLINE_FQ_POLYS: usize = 1;
-
-    type Context<'params, Base, R, B>
-        = ()
-    where
-        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
-        R: Rank,
-        B: SelectableBackend;
-}
-
 /// `CIRCUITS` native circuits and one nested circuit, each side's over
 /// one stage under one final mask, with hooks that register a one-stage
 /// test circuit ([`DigitsCircuit`]) and its stage as stand-ins.
@@ -534,9 +515,9 @@ impl Profile for Decompressing {
 }
 
 /// One [`Trivial`] circuit and no stage on each side, with the hooks
-/// that register and prove it, and one online Fq polynomial per step:
-/// the profile whose extension proves, at a rank above the wallet's,
-/// where the fuse has room for its two polynomials.
+/// that register and prove it: the profile whose extension proves, at a
+/// rank above the wallet's, where the fuse has room for its two
+/// polynomials.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Proving;
 
@@ -544,7 +525,6 @@ impl Profile for Proving {
     const NAME: &'static str = "proving";
     const NATIVE_EXTENSION: usize = 1;
     const NESTED_EXTENSION: usize = 1;
-    const ONLINE_FQ_POLYS: usize = 1;
 
     type Context<'params, Base, R, B>
         = ()
@@ -612,7 +592,6 @@ impl Profile for Proving {
         _: &Self::Context<'params, Base, R, B>,
         _: Option<&core::convert::Infallible>,
         _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
-        _: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -824,8 +803,7 @@ impl Profile for Crossing {
                 circuit: 0,
                 stages: vec![0],
                 online: vec![],
-                native_online: Vec::new(),
-                openings: Vec::new(),
+                batch: Vec::new(),
             }),
         }
     }
@@ -910,7 +888,6 @@ impl Profile for Crossing {
         context: &Self::Context<'params, Base, R, B>,
         _: Option<&core::convert::Infallible>,
         _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
-        _: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -976,8 +953,7 @@ impl Profile for CrossingBack {
                 circuit: 0,
                 stages: vec![0],
                 online: vec![],
-                native_online: Vec::new(),
-                openings: Vec::new(),
+                batch: Vec::new(),
             }),
         }
     }
@@ -1056,7 +1032,6 @@ impl Profile for CrossingBack {
         context: &Self::Context<'params, Base, R, B>,
         _: Option<&core::convert::Infallible>,
         _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
-        _: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>

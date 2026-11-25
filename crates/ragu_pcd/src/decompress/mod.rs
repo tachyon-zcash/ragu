@@ -162,42 +162,32 @@
 //! the aggregator proof. All three comparisons use the same flag,
 //! bound by the recomputed native digits stage commitment.
 //!
-//! The nested curve's $s(X)$ is over the scalar field, which no output
-//! slot holds, so its $G'$ is bound through the step's online polynomial
-//! of that field ([`Profile::ONLINE_FQ_POLYS`](crate::profile::Profile::ONLINE_FQ_POLYS)),
-//! which is the profile's own in every step, so its checks need no flag:
+//! The nested IPA's $s(X)$ is a nested profile batch polynomial at the
+//! same deadlines: committed before the step's $y$ and opened at the
+//! lift of $y$. Its checks need no flag:
 //!
 //! - Every step commits $s(X)$ of the nested curve's IPA of the proof its
-//!   chunks run over, the proof it decompresses or the canonical one, as
-//!   that polynomial, before its challenge $w$, and its nested
-//!   `compute_v` opens it at $\zeta_q$, the lift of $w$, and folds the
-//!   opening into the step's own nested batch.
-//! - The step exports the commitment and the opening to its parent, each
-//!   through the instance of the fuse circuit that holds it:
-//!   `bind_endoscalar`, which takes the commitment from the stage the
-//!   walk does, and the nested `compute_v`. The chunks' binding circuits
-//!   expose what they took, the circuit-field side its $G'$ and the
-//!   scalar-field side an opening, and the parent computes both claims'
-//!   $k(y)$ of each pair from one copy it holds
-//!   ([`Binding::online`](crate::profile::Binding::online) and
-//!   [`Binding::openings`](crate::profile::Binding::openings)). So the
-//!   circuit-field side's $G'$ is the commitment the step made before
-//!   $w$, and the opening the scalar-field side took is the one the step
-//!   folded.
-//! - The scalar-field side holds that opening's value to
-//!   [`ipa::s_at`](gadgets::ipa::s_at) at its point over the round
-//!   challenges it holds, which the circuit-field side's transcript
+//!   chunks run over, the proof it decompresses or the canonical one.
+//! - The nested chunks hold the PCS opening to
+//!   [`ipa::s_at`](gadgets::ipa::s_at) at the lift of $y$, over the round
+//!   challenges they hold, which the circuit-field side's transcript
 //!   squeezed and its lifts stage binds.
-//!   The argument is the host curve's: the polynomial was fixed before
-//!   $w$, and so before $\zeta_q$, and in the decompression step the
-//!   digest fixed the round challenges before $w$ too. There $\zeta_q$
-//!   is the lift of a 143-bit endoscalar and the polynomials have at
-//!   most $2^{15}$ coefficients at the aggregator rank, so another
-//!   polynomial passes with probability at most $2^{-128}$.
+//! - The native chunks take the nested IPA's $G'$ as a witness point and
+//!   the native binding circuit exposes it. The native binding claim
+//!   holds it to the batch commitment the step's walk folded
+//!   ([`Binding::batch`](crate::profile::Binding::batch)). The parent
+//!   computes that claim's $k(y)$ and the step's `bind_endoscalar`
+//!   claim's from one copy of the commitment in its native preamble.
+//! - The argument is the host curve's. The polynomial was fixed before
+//!   $y$, and in the decompression step the digest fixed the round
+//!   challenges before $w$, and so before $y$. The opening point is the
+//!   lift of a 143-bit endoscalar and the polynomials have at most
+//!   $2^{15}$ coefficients at the aggregator rank, so another polynomial
+//!   passes with probability at most $2^{-128}$.
 //!
-//! These checks run in every step, but only the decompression step
+//! The nested checks run in every step, but only the decompression step
 //! holds the digest. In any other step the round challenges of the proof
-//! the chunks run over are not fixed before $w$, and the opening does not
+//! the chunks run over are not fixed before $y$, and the opening does not
 //! establish that proof's $G'$; nothing rests on it, since that proof's
 //! statement binds nothing.
 //!

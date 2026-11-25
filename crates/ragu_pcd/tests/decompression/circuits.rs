@@ -882,7 +882,7 @@ fn the_step_binding_holds_g_prime_to_the_host_batch_commitment() {
     let query = |opening| {
         let mut query = native.online_query.elements.clone();
         let wire = crate::decompress::online::Values::value_at(
-            crate::decompress::online::Values::NATIVE.host_ipa(),
+            crate::decompress::online::Values::NATIVE.ipa(),
         );
         query[crate::decompress::online::QUERY_Y] = x;
         query[wire] = opening;
@@ -920,7 +920,7 @@ fn the_step_binding_holds_g_prime_to_the_host_batch_commitment() {
     let wallet_slots = core::array::from_fn(|i| nested.instance.points[span.at(span.len - 2 + i)]);
     let prepare = |flag, slots, ipa| {
         nested
-            .for_step::<TestR, HEADER_SIZE>(params, flag, slots, ipa, [Fq::ZERO, Fq::ONE])
+            .for_step::<TestR, HEADER_SIZE>(params, flag, slots, ipa)
             .unwrap()
     };
     let held = prepare(true, wallet_slots, commitment);
@@ -953,14 +953,14 @@ fn the_step_binding_holds_g_prime_to_the_host_batch_commitment() {
     assert_ne!(exposed(&held)[0], digits_commitment(native));
 }
 
-/// The nested curve's $G'$ is the commitment of the step's online Fq
-/// polynomial, in every step. The polynomial $s(X)$ over the round
+/// The nested curve's $G'$ is the commitment of $s(X)$ in the step's
+/// nested batch, in every step. The polynomial $s(X)$ over the round
 /// challenges the scalar-field side holds commits to the $G'$
 /// the circuit-field side holds and exposes. The scalar-field side
-/// accepts the opening of that polynomial at a point and no other value,
-/// and exposes the opening it took.
+/// accepts the opening of that polynomial at the query stage's $y$ and no
+/// other value, under no flag.
 #[test]
-fn the_online_fq_opening_holds_the_nested_g_prime() {
+fn the_nested_batch_opening_holds_the_nested_g_prime() {
     let setup = Setup::new();
     let params = crate::pasta::baked_aggregator();
     let sides = sides::<SmallR>(&setup);
@@ -987,25 +987,36 @@ fn the_online_fq_opening_holds_the_nested_g_prime() {
 
     // Prepared outside a step, the side holds the opening at zero.
     assert!(!rejected(nested), "s(0) = 1 is accepted");
+    let x = Fq::random(|bytes| rng.fill_bytes(bytes));
+    let y = poly.eval(x);
+    let prepared = |opening| {
+        let mut query = nested.online_query.elements.clone();
+        let wire = crate::decompress::online::Values::value_at(
+            crate::decompress::online::Values::NESTED.ipa(),
+        );
+        query[crate::decompress::online::QUERY_Y] = x;
+        query[wire] = opening;
+        nested
+            .clone()
+            .with_online(nested.online_input.elements.clone(), query)
+            .unwrap()
+    };
+    assert!(!rejected(&prepared(y)), "the opening of s(X) is accepted");
+    assert!(
+        rejected(&prepared(y + Fq::ONE)),
+        "another value is rejected"
+    );
+    // The side has no flag for this check: the decompression flag it
+    // takes from the other side holds the points alone.
     let slots = nested.schedule.regions.output_commitments.unwrap();
     let held = slots.map(|slot| nested.work.points[slot]);
     let host_ipa = nested.work.points[nested.schedule.regions.host_ipa_commitment.unwrap()];
-    let x = Fq::random(|bytes| rng.fill_bytes(bytes));
-    let y = poly.eval(x);
-    let opened = nested
-        .for_step::<TestR, HEADER_SIZE>(params, false, held, host_ipa, [x, y])
-        .unwrap();
-    assert!(!rejected(&opened), "the opening of s(X) is accepted");
-    let [x_slot, y_slot] = opened.schedule.regions.fq_opening.unwrap();
-    assert_eq!(
-        [opened.work.elements[x_slot], opened.work.elements[y_slot]],
-        [x, y],
-        "the opening is what the binding circuit exposes"
-    );
-    let other = nested
-        .for_step::<TestR, HEADER_SIZE>(params, false, held, host_ipa, [x, y + Fq::ONE])
-        .unwrap();
-    assert!(rejected(&other), "another value is rejected");
+    for flag in [false, true] {
+        let stepped = prepared(y + Fq::ONE)
+            .for_step::<TestR, HEADER_SIZE>(params, flag, held, host_ipa)
+            .unwrap();
+        assert!(rejected(&stepped), "another value is rejected");
+    }
 }
 
 #[test]
@@ -1166,19 +1177,17 @@ fn binding_circuits_expose_the_other_sides_commitments() {
     for stage in stages {
         rx.add_assign(&stage);
     }
-    // The circuit-field side's binding circuit exposes points alone.
-    let none = || FixedVec::try_from(Vec::<Fp>::new()).unwrap();
     let own = FixedVec::try_from(of_nested.clone()).unwrap();
     assert_eq!(
         rx.revdot(&registry.y(handle, y)),
-        circuit.ky((own, none()), y).unwrap()
+        circuit.ky(own, y).unwrap()
     );
     let mut other = of_nested.clone();
     other[0] = -other[0];
     let other = FixedVec::try_from(other).unwrap();
     assert_ne!(
         rx.revdot(&registry.y(handle, y)),
-        circuit.ky((other, none()), y).unwrap()
+        circuit.ky(other, y).unwrap()
     );
 
     // Another compression of the same proof: the sides prepared from it

@@ -14,7 +14,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Point,
     io::Write,
-    vec::{ConstLen, FixedVec, Len},
+    vec::{ConstLen, FixedVec},
 };
 use udon::curve::EndomorphismAffine as Affine;
 
@@ -25,7 +25,7 @@ use crate::{
             self, NUM_BINDERS, RxIndex,
             online::{self, NUM_ONLINE_FP_POLYS},
         },
-        nested::{PointsStage, online as online_fq, unified},
+        nested::{PointsStage, unified},
     },
     profile::{
         Profile, ProfiledCycle,
@@ -121,10 +121,6 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     /// and $u$. With the stashed commitments above these make up the child's
     /// nested instance.
     pub nested: NestedValues<C::Base>,
-    /// The openings of the child's own online Fq polynomials it exported,
-    /// the point then the value of each, tied to its nested `compute_v`
-    /// and binding circuits.
-    pub online_fq_openings: FixedVec<C::Base, online_fq::BoundOpeningsLen<P>>,
     /// Lifted w, alpha, beta and the two online helper sums of this child.
     pub online_values: FixedVec<C::Base, Present<P, Nested, 5>>,
     /// Common source-mesh coordinates and intersection values.
@@ -204,8 +200,6 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
                 y: instance.y,
                 u: instance.u,
             },
-            online_fq_openings: FixedVec::new(proof.online_fq_openings.clone())
-                .expect("a proof carries the openings its profile exports"),
         })
     }
 }
@@ -333,9 +327,6 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// The scalars of the child's nested unified instance.
     #[ragu(gadget)]
     pub nested: NestedValuesOutput<'dr, D>,
-    /// The openings of the child's own online Fq polynomials it exported.
-    #[ragu(gadget)]
-    pub online_fq_openings: FixedVec<Element<'dr, D>, online_fq::BoundOpeningsLen<P>>,
     /// Public values shared by the child's compute-v and online helper claims.
     #[ragu(gadget)]
     pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
@@ -515,13 +506,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                     u: value(dr, |n| n.u)?,
                 }
             },
-            online_fq_openings: FixedVec::try_from_fn(|i| {
-                Element::alloc(
-                    dr,
-                    &mut (),
-                    witness.as_ref().map(|w| w.online_fq_openings[i]),
-                )
-            })?,
         })
     }
 }
@@ -573,12 +557,10 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point, then the five nested scalars of each child, the
-        // online Fq openings it exported and its online helper values and
-        // mesh claims.
+        // (x, y) per point, then the five nested scalars of each child and
+        // its online helper values and mesh claims.
         num_points::<P>() * 2
             + 2 * (5
-                + online_fq::BoundOpeningsLen::<P>::len()
                 + <Present<P, Nested, 5> as ragu_primitives::vec::Len>::len()
                 + P::NESTED_MESH.map_or(0, |mesh| mesh.claims_len()))
     }

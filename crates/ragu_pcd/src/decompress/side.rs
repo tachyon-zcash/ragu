@@ -87,9 +87,6 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// How many flags the side takes from the other side, whose digits
     /// follow the foreign scalars' in that side's digits stage.
     const FLAGS: usize;
-    /// The elements the side's binding circuit exposes after its points:
-    /// what it took of the step's own online polynomials' openings.
-    const EXPOSED_ELEMENTS: usize;
     /// The points the side's binding circuit exposes for a proof at rank
     /// `K`: the other side's stage commitments it absorbed or recomputed,
     /// in the order the profile's [`Binding`](crate::profile::Binding)
@@ -194,8 +191,8 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
     }
 
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq commitment and has no
-        // online batch, so the circuit's instance is the unified one.
+        // The standard profile has no online batch, so the circuit's
+        // instance is the unified one.
         once(self.unified.clone())
     }
 
@@ -243,8 +240,8 @@ impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
     }
 
     fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq opening and has no
-        // online batch, so the circuit's instance is the unified one.
+        // The standard profile has no online batch, so the circuit's
+        // instance is the unified one.
         once(self.unified.clone())
     }
 
@@ -278,11 +275,10 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     const ONLINE: super::online::Values = super::online::Values::NATIVE;
     /// The scalar-field side has no flag for this side to take.
     const FLAGS: usize = 0;
-    const EXPOSED_ELEMENTS: usize = 0;
 
     /// The scalar-field side's run stages, then its lifts and digits
-    /// stages, then the commitment of the online Fq polynomial of the
-    /// step that proves the chunks.
+    /// stages, then the commitment of the nested IPA's $s(X)$ in the
+    /// nested batch of the step that proves the chunks.
     fn exposed<K: Rank>() -> usize {
         num_runs::<K>() + 3
     }
@@ -460,9 +456,6 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     /// The decompression flag, which the circuit-field side's statement
     /// circuit binds.
     const FLAGS: usize = 1;
-    /// The point and the value of the opening of the online Fq polynomial
-    /// of the step that proves the chunks.
-    const EXPOSED_ELEMENTS: usize = 2;
 
     /// The other side's digits stage, the two application output
     /// commitments and the host IPA helper's native batch commitment.

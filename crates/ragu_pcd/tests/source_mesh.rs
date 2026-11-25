@@ -429,6 +429,7 @@ impl Profile for SourceCapacity {
     }
     fn nested_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         _: &[Base::ScalarField],
         _: PreparationChallenges<Base::ScalarField>,
@@ -833,6 +834,7 @@ impl Profile for NestedMeshOnly {
 
     fn nested_online_polynomials<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
         phase: Phase,
         _: &[Base::ScalarField],
         _: PreparationChallenges<Base::ScalarField>,

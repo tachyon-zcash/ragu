@@ -51,33 +51,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `Application::bridge_hash` computes it outside the circuit, for hash
   chains over polynomial commitments. A header whose steps read it keeps the
   hashed kind last in its `OnlinePolyCommit`.
-- Online Fq polynomials: a profile that sets `Profile::ONLINE_FQ_POLYS`, at
-  most `NUM_ONLINE_FQ_POLYS`, gives each step its own online polynomial over
-  the scalar field. The step commits it before its challenge, and the nested
-  `compute_v` circuit opens it at the lift of that challenge and folds the
-  opening in the step's own nested batch. The profile's prover supplies the
-  polynomial (`Profile::online_fq_polynomials`), a fixed placeholder by
-  default. The fuse proves the opening and does not constrain its value: a
-  profile's extension does, through the commitment and the opening the step
-  exports to its parent for the slots the profile's bindings name
-  (`Binding::online`, `Binding::openings`). The `Aggregator` profile sets
-  the count to one for the nested IPA's challenge polynomial; the standard
-  profile does not change.
 - Online polynomial batches: a profile can declare a fixed batch of
   online polynomials on each field, each opened at several points, and a
   source-registry mesh that reduces many claimed registry restrictions to one
-  outgoing restriction per field, closed at compression. No built-in profile
-  declares either, so the standard profile does not change. See the
-  `ragu_pcd` changelog.
+  outgoing restriction per field, closed at compression. A binding circuit
+  can expose commitments of the other field's batch (`Binding::batch`). The
+  `Aggregator` profile declares both batches and both meshes; the standard
+  profile declares neither and does not change. See the `ragu_pcd` changelog.
 
 ### Changed
 
 - `NUM_ONLINE_POLYNOMIALS` and `NUM_ONLINE_QUERIES` are renamed to
   `NUM_ONLINE_FP_POLYS` and `NUM_ONLINE_FP_QUERIES`. `Shape` gains
-  `online_fq`, and `Shape::solve` takes the count of online Fq polynomials.
-  The internal online polynomial helpers live in `native::online` and
-  `nested::online`; `NUM_ONLINE_FQ_POLYS` is re-exported from `profile`
-  rather than `header`.
+  `nested_online`, and `Shape::solve` takes the count of nested online
+  polynomials. The internal online polynomial helpers live in
+  `native::online` and `nested::online`.
 
 - `Step::witness` takes the step's `Oracles` after the driver, and the
   application circuit's instance is prefixed by the challenge and the six

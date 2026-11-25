@@ -32,6 +32,10 @@
 //! its point, and the mesh that the polynomial is the wallet registry's
 //! restriction at the coordinates the input stage holds, which the step
 //! commits before its challenge. [`Values`] names the wires.
+//!
+//! Each batch also holds the challenge polynomial $s(X)$ of its field's
+//! IPA ([`slot::IPA`]), which no mesh owns. The step commits it before
+//! its $y$ and opens it at $y$, and the last value wire is the opening.
 
 use alloc::vec::Vec;
 
@@ -85,7 +89,8 @@ pub(crate) mod input {
 }
 
 /// The polynomial slots: the restrictions fixed before $w$, the two
-/// inherited first, their helpers, then $U$ and the outgoing restriction.
+/// inherited first, their helpers, the IPA's challenge polynomial, then
+/// $U$ and the outgoing restriction.
 pub(crate) mod slot {
     /// $m(W, r, y_c)$.
     pub const CLAIMS: usize = 2;
@@ -107,12 +112,19 @@ pub(crate) mod slot {
     pub const RIGHT_U: usize = 10;
     /// The first helper $T_a(Y) = m(w, a, Y)$.
     pub const HELPERS: usize = 11;
+    /// $s(X)$, the challenge polynomial of the IPA over the batch's
+    /// field: the host curve's in the native batch and the nested curve's
+    /// in the nested batch. Its commitment is that IPA's $G'$.
+    pub const IPA: usize = 18;
     /// $U(X) = m(w, X, y)$.
-    pub const U: usize = 18;
+    pub const U: usize = 19;
     /// The outgoing restriction.
-    pub const OUTGOING: usize = 19;
+    pub const OUTGOING: usize = 20;
 }
 
+// The IPA's challenge polynomial is fixed with the helpers, before y. A
+// polynomial fixed before w would add a commitment to the other side's
+// input stage.
 const POLYNOMIALS: [Phase; slot::OUTGOING + 1] = {
     let mut phases = [Phase::BeforeW; slot::OUTGOING + 1];
     let mut i = slot::HELPERS;
@@ -125,22 +137,13 @@ const POLYNOMIALS: [Phase; slot::OUTGOING + 1] = {
     phases
 };
 
-// The host IPA helper is fixed in BridgeSPrime before y. Keeping the
-// pre-w phase unchanged preserves the wallet compression's run bases.
-pub(crate) const HOST_IPA: usize = slot::U;
-const NATIVE_POLYNOMIALS: [Phase; POLYNOMIALS.len() + 1] = {
-    let mut phases = [Phase::BeforeY; POLYNOMIALS.len() + 1];
-    let mut i = 0;
-    while i < POLYNOMIALS.len() {
-        phases[native_slot(i)] = POLYNOMIALS[i];
-        i += 1;
-    }
-    phases
-};
-
-const fn native_slot(slot: usize) -> usize {
-    slot + (slot >= HOST_IPA) as usize
-}
+// Each batch opens its IPA's challenge polynomial at the step's y, and the
+// chunks hold the opening to s(y). That makes the commitment the IPA's G'
+// only if the step fixes the polynomial before it draws y.
+const _: () = assert!(
+    matches!(POLYNOMIALS[slot::IPA], Phase::BeforeW | Phase::BeforeY),
+    "the IPA's challenge polynomial is committed before y, where it is opened"
+);
 
 const fn restriction(polynomial: usize, x: usize, y: usize, helper: usize) -> Restriction {
     Restriction {
@@ -153,7 +156,7 @@ const fn restriction(polynomial: usize, x: usize, y: usize, helper: usize) -> Re
 
 /// The helpers' coordinates: the children's inherited $x$, then $r$, $x$,
 /// the decompressed proof's children's $x$ and $u$.
-const HELPERS: [Helper; slot::U - slot::HELPERS] = {
+const HELPERS: [Helper; slot::IPA - slot::HELPERS] = {
     let coordinates = [
         0,
         2,
@@ -166,7 +169,7 @@ const HELPERS: [Helper; slot::U - slot::HELPERS] = {
     let mut helpers = [Helper {
         polynomial: 0,
         x: 0,
-    }; slot::U - slot::HELPERS];
+    }; slot::IPA - slot::HELPERS];
     let mut i = 0;
     while i < helpers.len() {
         helpers[i] = Helper {
@@ -199,12 +202,6 @@ pub(crate) const MESH: Mesh = Mesh {
     helpers: &HELPERS,
     u: slot::U,
     outgoing: slot::OUTGOING,
-};
-
-pub(crate) const NATIVE_MESH: Mesh = Mesh {
-    u: native_slot(slot::U),
-    outgoing: native_slot(slot::OUTGOING),
-    ..MESH
 };
 
 /// The mesh's intersections, each one shared value wire: a restriction
@@ -306,18 +303,15 @@ impl Values {
         self.at_w_c() + 7
     }
 
-    /// The value wires: the mesh's intersections, then the evaluations.
-    pub(crate) const fn len(self) -> usize {
-        self.u_y() + 1 + self.native as usize
+    /// $s(y)$: the value of the IPA's challenge polynomial at the
+    /// enclosing step's $y$.
+    pub(crate) const fn ipa(self) -> usize {
+        self.u_y() + 1
     }
 
-    /// The evaluation of the host IPA's challenge polynomial at y.
-    pub(crate) const fn host_ipa(self) -> usize {
-        assert!(
-            self.native,
-            "only the native batch has the host IPA polynomial"
-        );
-        self.u_y() + 1
+    /// The value wires: the mesh's intersections, then the evaluations.
+    pub(crate) const fn len(self) -> usize {
+        self.ipa() + 1
     }
 
     /// The wires the query stage's wire binding expects, in the order the
@@ -528,20 +522,14 @@ const fn openings<const LEN: usize>(values: Values) -> [Opening; LEN] {
         value += 1;
         i += 1;
     }
-    if values.native {
-        let mut i = 0;
-        while i < next {
-            out[i].polynomial = native_slot(out[i].polynomial);
-            i += 1;
-        }
-        out[next] = Opening {
-            polynomial: HOST_IPA,
-            point: Point::Challenge(Challenge::Y),
-            value,
-        };
-        next += 1;
-        value += 1;
-    }
+    // The IPA's challenge polynomial, at the step's y.
+    out[next] = Opening {
+        polynomial: slot::IPA,
+        point: Point::Challenge(Challenge::Y),
+        value,
+    };
+    next += 1;
+    value += 1;
     assert!(next == LEN, "every opening is listed");
     assert!(value == values.len(), "every value has an opening");
     out
@@ -560,7 +548,7 @@ const NESTED_OPENINGS: [Opening; Values::NESTED.openings()] = openings(Values::N
 /// The native side's batch: the mesh's polynomials and the openings of
 /// the registry evaluations the circuit-field side's chunks read.
 pub(crate) const NATIVE: Layout = Layout {
-    polynomials: &NATIVE_POLYNOMIALS,
+    polynomials: &POLYNOMIALS,
     openings: &NATIVE_OPENINGS,
     inputs: input::NATIVE,
     points: 0,
@@ -709,9 +697,9 @@ mod tests {
 
     #[test]
     fn the_layouts_and_the_mesh_are_well_formed() -> Result<()> {
-        for (layout, mesh) in [(NATIVE, NATIVE_MESH), (NESTED, MESH)] {
-            mesh.check(layout)?;
-            let edges = mesh.edges(layout)?;
+        for layout in [NATIVE, NESTED] {
+            MESH.check(layout)?;
+            let edges = MESH.edges(layout)?;
             assert_eq!(edges.len(), EDGES);
             // The intersections come first, each on its own value wire.
             for (index, edge) in edges.iter().enumerate() {
@@ -755,6 +743,10 @@ mod tests {
             if values.native {
                 assert_eq!(opening(values.at_circuit()), (slot::XY, at(input::CIRCUIT)));
             }
+            assert_eq!(
+                opening(values.ipa()),
+                (slot::IPA, Point::Challenge(Challenge::Y))
+            );
             assert_eq!(layout.values, values.len());
         }
     }

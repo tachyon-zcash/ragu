@@ -27,11 +27,10 @@
 //! place the decompressed statement reaches a claim; and a
 //! [`BindingCircuit`] loads the stages a [`Circuit`] does and exposes, off
 //! the work stage, the other side's stage commitments the side absorbed or
-//! recomputed and what it took of the step's own online polynomials
-//! ([`Regions::exposed`](super::program::Regions::exposed) and
-//! [`Regions::exposed_elements`](super::program::Regions::exposed_elements))
+//! recomputed and the commitments it took of the step's own online
+//! polynomials ([`Regions::exposed`](super::program::Regions::exposed))
 //! as its public output, which the proof's consumer holds to those
-//! commitments and openings through the circuit's claim (see
+//! commitments through the circuit's claim (see
 //! [`Binding`](crate::profile::Binding)).
 //!
 //! Every chunk circuit runs its chunks through [`execute`], over the
@@ -430,16 +429,6 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
     }
 }
 
-/// Length type for the elements side `S`'s binding circuit exposes after
-/// its points: [`Side::EXPOSED_ELEMENTS`].
-pub(crate) struct ExposedElements<C, S>(PhantomData<fn() -> (C, S)>);
-
-impl<C: Cycle, S: Side<C>> Len for ExposedElements<C, S> {
-    fn len() -> usize {
-        S::EXPOSED_ELEMENTS
-    }
-}
-
 /// Length type for the points side `S`'s binding circuit exposes for a
 /// proof at rank `K`: [`Side::exposed`].
 pub(crate) struct Exposed<C, S, K>(PhantomData<fn() -> (C, S, K)>);
@@ -451,11 +440,10 @@ impl<C: Cycle, S: Side<C>, K: Rank> Len for Exposed<C, S, K> {
 }
 
 /// The binding circuit of side `S`: the circuit whose public output is the
-/// other side's stage commitments the side absorbed or recomputed and what
-/// it took of the step's own online polynomials, points then elements,
-/// read off the work stage where the chunks left them
-/// ([`Regions::exposed`](super::program::Regions::exposed) and
-/// [`Regions::exposed_elements`](super::program::Regions::exposed_elements)). The chunks
+/// other side's stage commitments the side absorbed or recomputed and the
+/// commitments it took of the step's own online polynomials, read off the
+/// work stage where the chunks left them
+/// ([`Regions::exposed`](super::program::Regions::exposed)). The chunks
 /// bind those slots to the values the side took from the other side, so a
 /// claim on this circuit's output at the $k(y)$ of the other side's actual
 /// stage commitments, which the proof's consumer computes, holds only if
@@ -498,16 +486,10 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
     MultiStageCircuit<S::F, R> for BindingCircuit<C, S, K, R, HEADER_SIZE>
 {
     type Last = WorkStage<C, S, K, R, HEADER_SIZE>;
-    /// The exposed points, then the exposed elements.
-    type Instance<'source> = (
-        FixedVec<S::P, Exposed<C, S, K>>,
-        FixedVec<S::F, ExposedElements<C, S>>,
-    );
+    /// The exposed points.
+    type Instance<'source> = FixedVec<S::P, Exposed<C, S, K>>;
     type Witness<'source> = &'source Prepared<C, S>;
-    type Output = Kind![S::F; (
-        FixedVec<Point<'_, _, S::P>, Exposed<C, S, K>>,
-        FixedVec<Element<'_, _>, ExposedElements<C, S>>,
-    )];
+    type Output = Kind![S::F; FixedVec<Point<'_, _, S::P>, Exposed<C, S, K>>];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
@@ -515,17 +497,7 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let points = FixedVec::try_from_fn(|i| {
-            Point::alloc(dr, instance.as_ref().map(|(points, _)| points[i]))
-        })?;
-        let elements = FixedVec::try_from_fn(|i| {
-            Element::alloc(
-                dr,
-                &mut (),
-                instance.as_ref().map(|(_, elements)| elements[i]),
-            )
-        })?;
-        Ok((points, elements))
+        FixedVec::try_from_fn(|i| Point::alloc(dr, instance.as_ref().map(|points| points[i])))
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
@@ -555,17 +527,7 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
             .iter()
             .map(|&slot| work.points[slot].clone())
             .collect::<alloc::vec::Vec<_>>();
-        let elements = self
-            .schedule
-            .regions
-            .exposed_elements
-            .iter()
-            .map(|&slot| work.elements[slot].clone())
-            .collect::<alloc::vec::Vec<_>>();
-        Ok(WithAux::new(
-            (FixedVec::try_from(exposed)?, FixedVec::try_from(elements)?),
-            D::unit(),
-        ))
+        Ok(WithAux::new(FixedVec::try_from(exposed)?, D::unit()))
     }
 }
 
@@ -954,18 +916,24 @@ where
             .iter()
             .map(|&slot| self.lift(slot))
             .collect();
-        // The batch opens the host IPA helper at y. The other side binds
-        // the helper's commitment to G' under the same flag.
+        // The step's batch of this field opens the IPA's s(X) at the
+        // step's y, and the query stage holds the point and the value.
+        // The polynomial the step committed takes the value of s(X)
+        // there, so its commitment, which the other side holds its G'
+        // to, is that of s(X).
+        let query = self.loaded.online_query.elements;
+        let point = &query[super::online::QUERY_Y];
+        let opening = &query[super::online::Values::value_at(S::ONLINE.ipa())];
+        let expected = ipa::s_at(dr, &rounds, point)?;
+        let gap = opening.sub(dr, &expected);
+        // The circuit-field side holds the host curve's under the
+        // decompression flag, as the other side holds the commitment to
+        // G' under it. The scalar-field side holds the nested curve's
+        // in every step, as the other side exposes its G' in every step.
         let step = self.schedule.layout.instance.step;
         if step.len != 0 {
             let elements = self.loaded.instance.elements;
             let flag = &elements[step.at(stages::step::FLAG)];
-            let query = self.loaded.online_query.elements;
-            let point = &query[super::online::QUERY_Y];
-            let opening =
-                &query[super::online::Values::value_at(super::online::Values::NATIVE.host_ipa())];
-            let expected = ipa::s_at(dr, &rounds, point)?;
-            let gap = opening.sub(dr, &expected);
             flag.mul(dr, &gap)?.enforce_zero(dr)?;
             // And the digest the step staged before its challenge is the
             // transcript's last squeeze: the round messages of both
@@ -977,15 +945,8 @@ where
             let staged = &elements[step.at(stages::step::DIGEST)];
             let gap = staged.sub(dr, &self.work(digest));
             flag.mul(dr, &gap)?.enforce_zero(dr)?;
-        }
-        // The same for the nested curve's G', in every step: the
-        // polynomial the step committed in its online Fq slot takes the
-        // value of s(X) at the point the step's nested `compute_v` opened
-        // it, so its commitment, which the other side holds its G' to, is
-        // that of s(X).
-        if let Some([x, y]) = regions.fq_opening {
-            let expected = ipa::s_at(dr, &rounds, &self.work(x))?;
-            self.work(y).enforce_equal(dr, &expected)?;
+        } else {
+            gap.enforce_zero(dr)?;
         }
         let scalars = ipa::verify(
             dr,

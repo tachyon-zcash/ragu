@@ -1,11 +1,11 @@
-verifier.transcript = 3864a3af55dec447a97bc89b825b830a620efce946605bae3b4a46b8ea6b6cef
-verifier.absorbed = cd850e0fe3d5e3025089c2dfc6b015914fd95a9c79da42ee236aa2c0ad561a8d
-verifier.absorbed.points = 113
-verifier.absorbed.scalars = 281
-verifier.squeezed = 01fbfafc2d5adadad27b251bd44bac8d3699693ffd8917a55ef876a16c9d630d
+verifier.transcript = ac9b533648e578b9b0b657855f73097610a07dc26b1737e5e789ff5cfd3b4731
+verifier.absorbed = f2d10f6c7512f6661a37db49d556e8b90dc9b53370315c099d21d5d0ebce2dd2
+verifier.absorbed.points = 112
+verifier.absorbed.scalars = 283
+verifier.squeezed = 7ce8e84ef5928e0e589afd555732ddfc6935e1230d73da003912d7cfb8fbe93b
 verifier.squeezed.challenges = 43
 verifier.msms = 1
-verifier.msm.native = 1460a53ea2fee76e5daf50b526cfbebca1f3ca60d87782741f455d8137740ef1
+verifier.msm.native = 1258ed3531d831446c7b731a6045a77bbf0095dcc39a112a79c7417b7af90d28
 verifier.msm.native.scalars = 32801
 verifier.msm.native.bases = 32
 verifier.msm.native.identity = false

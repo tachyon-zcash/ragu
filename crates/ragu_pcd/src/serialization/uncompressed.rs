@@ -111,10 +111,6 @@ codec! {
     // claim's step binding, for a profile with a statement circuit: nothing
     // on the wire for one without
     step_binding => serialization::FixedSequence<serialization::Scalar, native::online::StepBindingLen<C::Profile>>,
-    // What the step exports of its online Fq polynomials, for a profile
-    // whose bindings name any: nothing on the wire for one that names none
-    online_fq_commitments => serialization::FixedSequence<serialization::Point, nested::online::BoundCommitmentsLen<C::Profile>>,
-    online_fq_openings => serialization::FixedSequence<serialization::Scalar, nested::online::BoundOpeningsLen<C::Profile>>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     bridge_preamble_rx => serialization::DefaultEncoding,

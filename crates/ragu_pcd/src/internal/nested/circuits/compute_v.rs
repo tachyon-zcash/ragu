@@ -15,12 +15,6 @@
 //!   children's claim evaluations, in [`build`] order, exactly as the
 //!   prover folded the polynomials.
 //!
-//! ### Online Fq openings
-//! - Reads the value $y_q$ of each of the step's own online Fq polynomials
-//!   from the `query` stage, and folds it into $f_n$ below at $\zeta_q$,
-//!   the challenge stage's lift of $w$ (see [`online`]). No stage holds
-//!   the point, so the prover cannot choose it.
-//!
 //! ### $f_n(u_n)$ computation
 //! - Batch-inverts the denominators $(u_n - x_i)^{-1}$ of every opening.
 //! - Walks the openings in [`Batch::queries`] order, accumulating
@@ -45,7 +39,6 @@
 //! [`Batch::evaluated`]: crate::internal::nested::pcs::Batch::evaluated
 //! [`build`]: claims::build
 //! [`eval` stage]: crate::internal::nested::stages::eval
-//! [`online`]: crate::internal::nested::online
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -72,7 +65,6 @@ use crate::{
         nested::{
             InternalCircuitIndex, RevdotParameters, RxComponent, RxIndex,
             claims::{self, Processor},
-            online::{BoundOpeningsLen, bound_openings},
             pcs::{InternalLen, STATIC_F_QUERIES, StaticFQuery},
             stages::{self, challenges, eval as nested_eval, preamble as nested_preamble, query},
             unified,
@@ -86,21 +78,13 @@ use crate::{
 };
 
 /// The circuit's public output: the nested unified instance, then the
-/// openings of the step's online Fq polynomials its profile exports, the
-/// point then the value of each (see
-/// [`Binding::openings`](crate::profile::Binding::openings)), then the
 /// online helper's authenticated challenges and sums and the online batch's
-/// commitments. The parent holds the openings once for this claim and for
-/// the binding circuit's, so the opening the binding circuit exposes is the
-/// one this circuit folded. A profile that exports none of them has the
-/// unified instance alone.
+/// commitments. A profile that exports none of them has the unified
+/// instance alone.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
-    /// The exported online Fq openings, a point then a value per slot.
-    #[ragu(gadget)]
-    pub online_fq: FixedVec<Element<'dr, D>, BoundOpeningsLen<P>>,
     /// Lifted w, alpha and beta, then the helper's quotient and evaluation sums.
     #[ragu(gadget)]
     pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
@@ -175,12 +159,6 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let lift = |i: usize| &stages.challenges.pairs[i].lift;
         let query = &stages.query.nested;
         let eval = &stages.eval.nested;
-
-        // The step's own online Fq openings, which f_n folds below at
-        // zeta_q, the challenge stage's lift of w. This circuit does not
-        // constrain their values: it exports the openings the profile's
-        // nested binding names, and the profile's extension holds them to
-        // the polynomial it expects.
 
         // t(x_n z_n), the vanishing polynomial at x_n z_n.
         let x = lift(challenges::X).enforce_invertible(dr)?;
@@ -277,15 +255,6 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         unified.v.provide(computed_v);
 
         let (output, instance) = unified.finish(dr, allocator)?;
-        // The openings the profile exports: the point this circuit folded
-        // each at, zeta_q, and the value the query stage holds.
-        let zeta_q = lift(challenges::W);
-        let online_fq = FixedVec::try_from(
-            bound_openings::<P>()
-                .iter()
-                .flat_map(|&slot| [zeta_q.clone(), query.online_fq[slot as usize].clone()])
-                .collect::<Vec<_>>(),
-        )?;
         let online_values = FixedVec::from_fn(|i| match i {
             0 => lift(challenges::W).clone(),
             1 => lift(challenges::ALPHA).clone(),
@@ -304,7 +273,6 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                         .clone()
                 }),
                 unified: output,
-                online_fq,
                 online_values,
                 online_points: stages
                     .preamble
@@ -521,8 +489,7 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>>
 /// The openings $f_n$ covers, as $(p(u_n), v, (u_n - x_i)^{-1})$ triples in
 /// [`Batch::queries`](crate::internal::nested::pcs::Batch::queries) order:
 /// the static prefix, each child's rx polynomials at $x_n z_n$, then the
-/// current `registry_xy` at each internal circuit's $\omega^j$, then each
-/// online Fq polynomial at its point.
+/// current `registry_xy` at each internal circuit's $\omega^j$.
 #[rustfmt::skip]
 fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     eval: &'a nested_eval::EvaluationsOutput<'dr, D, P>,
@@ -594,9 +561,5 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     // The current registry_xy at each internal circuit's omega^j.
     .chain((0..InternalCircuitIndex::num::<P>()).map(move |j| {
         (&eval.registry_xy, &query.fixed_registry[j], &d.internal[j])
-    }))
-    // The step's own online Fq polynomials at zeta_q, the lift of w.
-    .chain(crate::internal::nested::online::openings(eval.online_fq.len()).map(move |opening| {
-        (&eval.online_fq[opening.polynomial], &query.online_fq[opening.value], &d.challenges.w)
     }))
 }

@@ -183,8 +183,7 @@ impl<const KIND: u8> Profile for Consumers<KIND> {
                 circuit: 2,
                 stages: vec![0],
                 online: alloc::vec::Vec::new(),
-                native_online: alloc::vec::Vec::new(),
-                openings: alloc::vec::Vec::new(),
+                batch: alloc::vec::Vec::new(),
             }),
         }
     }
@@ -484,7 +483,6 @@ fn nested_online_targets_bind_the_actual_helper_output_and_claim_order() -> Resu
             &y,
             &unified,
             &unified_ky,
-            &[],
             &online_values,
             &[],
             &[],
@@ -493,7 +491,6 @@ fn nested_online_targets_bind_the_actual_helper_output_and_claim_order() -> Resu
         let output = nested::circuits::compute_v::Output::<_, C, NestedOnly> {
             inherited_coordinates: FixedVec::new(vec![])?,
             unified: unified.clone(),
-            online_fq: FixedVec::from_fn(|_| unreachable!("no exported online Fq opening")),
             online_values: online_values.clone(),
             online_stages: FixedVec::from_fn(|_| unreachable!()),
             online_points: FixedVec::from_fn(|_| unreachable!()),
@@ -526,7 +523,6 @@ fn nested_online_targets_bind_the_actual_helper_output_and_claim_order() -> Resu
                 &y,
                 &unified,
                 &unified_ky,
-                &[],
                 &corrupt,
                 &[],
                 &[],
@@ -739,7 +735,7 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
             let (unified_ky, _) = inputs.unified_ky_values(dr, &y)?;
             let compute_target = inputs.compute_v_bridge_ky(dr, &y, &stages, &unified_ky)?;
             let helper_target = inputs.online_helper_ky(dr, &y)?.unwrap();
-            let points_target = inputs.bind_endoscalar_ky(dr, &y, &unified_ky, &[])?;
+            let points_target = inputs.bind_endoscalar_ky(dr, &y, &unified_ky)?;
             let output = native::circuits::compute_v::Output::<_, C> {
                 inherited_coordinates: FixedVec::new(vec![])?,
                 inherited_points: FixedVec::new(vec![])?,
@@ -768,7 +764,6 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
             );
             let output = native::circuits::bind_endoscalar::Output::<_, C> {
                 unified: inputs.unified.clone(),
-                online_fq: FixedVec::from_fn(|_| unreachable!("no exported online Fq commitment")),
                 online_points: inputs.online_points.clone(),
             };
             let mut actual = Horner::new(&y);
@@ -801,7 +796,7 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
             assert_ne!(
                 points_target.value().take(),
                 inputs
-                    .bind_endoscalar_ky(dr, &y, &unified_ky, &[])?
+                    .bind_endoscalar_ky(dr, &y, &unified_ky)?
                     .value()
                     .take()
             );
@@ -892,7 +887,6 @@ fn native_online_stage_targets_use_actual_extension_commitments() -> Result<()> 
             &unified,
             &base,
             &[],
-            &[],
             &stages,
             &online_points,
             &[],
@@ -901,7 +895,6 @@ fn native_online_stage_targets_use_actual_extension_commitments() -> Result<()> 
         let output = nested::circuits::compute_v::Output::<_, C, P> {
             inherited_coordinates: FixedVec::new(vec![])?,
             unified: unified.clone(),
-            online_fq: FixedVec::from_fn(|_| unreachable!("no exported online Fq opening")),
             online_values: FixedVec::from_fn(|_| unreachable!()),
             online_stages: stages.clone(),
             online_points: online_points.clone(),
@@ -917,7 +910,6 @@ fn native_online_stage_targets_use_actual_extension_commitments() -> Result<()> 
                 &y,
                 &unified,
                 &base,
-                &[],
                 &[],
                 &corrupt,
                 &online_points,
@@ -996,7 +988,6 @@ fn nested_online_targets_share_the_actual_foreign_commitments() -> Result<()> {
                 &y,
                 &unified,
                 &base,
-                &[],
                 &online_values,
                 &online_stages,
                 &points,
@@ -1005,7 +996,6 @@ fn nested_online_targets_share_the_actual_foreign_commitments() -> Result<()> {
             let output = nested::circuits::compute_v::Output::<_, C, P> {
                 inherited_coordinates: FixedVec::new(vec![])?,
                 unified: unified.clone(),
-                online_fq: FixedVec::from_fn(|_| unreachable!("no exported online Fq opening")),
                 online_values: online_values.clone(),
                 online_stages: online_stages.clone(),
                 online_points: points.clone(),
@@ -1031,7 +1021,6 @@ fn nested_online_targets_share_the_actual_foreign_commitments() -> Result<()> {
                 &y,
                 &unified,
                 &base,
-                &[],
                 &online_values,
                 &online_stages,
                 &changed,

@@ -593,8 +593,6 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         native_points_walk_rx,
         online_polynomials,
         step_binding,
-        online_fq_commitments,
-        online_fq_openings,
         bridge_preamble_rx,
         bridge_hash_rx,
         bridge_s_prime_rx,
@@ -738,14 +736,6 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
     // line for it.
     if !step_binding.is_empty() {
         lines.fields("step_binding", step_binding);
-    }
-    // What the step exports of its online Fq polynomials: nothing for a
-    // profile whose bindings name none, which has no line for them.
-    for (i, commitment) in online_fq_commitments.iter().enumerate() {
-        lines.point(&alloc::format!("online_fq_commitments[{i}]"), commitment);
-    }
-    if !online_fq_openings.is_empty() {
-        lines.fields("online_fq_openings", online_fq_openings);
     }
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
@@ -922,8 +912,6 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         native_p,
         online_commitments,
         step_binding,
-        online_fq_commitments,
-        online_fq_openings,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -972,25 +960,18 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     encode_messages(native, out);
     encode_messages(nested, out);
 
-    // What the step exposes for the step binding and exports of its online
-    // Fq polynomials, then its online batches' fields, last and only for a
-    // profile that has any, so that the encoding of a proof that carries
-    // none is what it was. A profile with batches writes its exports first,
-    // even if it has none.
+    // What the step exposes for the step binding, then its online batches'
+    // fields, last and only for a profile that has any, so that the
+    // encoding of a proof that carries none is what it was. A profile with
+    // batches writes its step binding first, even if it has none.
     let batches = !(nested_online_fold.is_empty()
         && native_mesh_claims.is_empty()
         && nested_mesh_claims.is_empty()
         && native_online_fold.is_empty()
         && nested_online_commitments.is_empty()
         && native_online_commitments.is_empty());
-    if batches
-        || !(step_binding.is_empty()
-            && online_fq_commitments.is_empty()
-            && online_fq_openings.is_empty())
-    {
+    if batches || !step_binding.is_empty() {
         out.fields(step_binding);
-        out.points(online_fq_commitments);
-        out.fields(online_fq_openings);
     }
     if batches {
         out.fields(nested_online_fold);
@@ -1090,10 +1071,10 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_b_at_u = cursor.field()?;
     let native = decode_messages(cursor)?;
     let nested = decode_messages(cursor)?;
-    let (step_binding, online_fq_commitments, online_fq_openings) = if cursor.finished() {
-        (Vec::new(), Vec::new(), Vec::new())
+    let step_binding = if cursor.finished() {
+        Vec::new()
     } else {
-        (cursor.fields()?, cursor.points()?, cursor.fields()?)
+        cursor.fields()?
     };
     let (
         nested_online_fold,
@@ -1127,8 +1108,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         native_p,
         online_commitments,
         step_binding,
-        online_fq_commitments,
-        online_fq_openings,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -1895,8 +1874,6 @@ fn random_compressed<C: Cycle>(shape: &CompressedProof<C>, tape: &mut Tape) -> C
         native_p: tape.point(),
         online_commitments: core::array::from_fn(|_| tape.point()),
         step_binding: tape.fields(lengths.step_binding.len()),
-        online_fq_commitments: tape.points(lengths.online_fq_commitments.len()),
-        online_fq_openings: tape.fields(lengths.online_fq_openings.len()),
         nested: tape.points(lengths.nested.len()),
         nested_registry_xy: tape.point(),
         nested_p: tape.point(),

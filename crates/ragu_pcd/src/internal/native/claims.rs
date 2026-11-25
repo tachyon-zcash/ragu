@@ -456,10 +456,10 @@ pub trait KySource {
 
     /// One value per proof for the `bind_endoscalar` circuit, after the
     /// unified circuits: the $k(y)$ of the unified instance followed by the
-    /// online Fq commitments the circuit exports for the profile's native
-    /// binding and the actual nested online walk points, as
+    /// actual nested online walk points, as
     /// [`bind_endoscalar_ky`](super::stages::preamble::ProofInputs::bind_endoscalar_ky)
-    /// computes it; the unified $k(y)$ for a profile that exports neither.
+    /// computes it; the unified $k(y)$ for a profile without a nested
+    /// online batch.
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// One value of $1$ per proof, for the endoscaling step checks.

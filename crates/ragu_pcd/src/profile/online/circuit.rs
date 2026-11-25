@@ -507,7 +507,7 @@ pub(crate) fn mul_pow<'dr, D: Driver<'dr>>(
 }
 
 /// Appends opening terms to a quotient fold in descriptor order.
-/// Used by both online helpers and the compatibility placement in compute-v.
+/// Used by both online helpers and by both `compute_v` circuits.
 pub(crate) fn append_quotients<'a, 'dr: 'a, D: Driver<'dr> + 'a>(
     dr: &mut D,
     horner: &mut Horner<'_, 'dr, D>,

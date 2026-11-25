@@ -396,7 +396,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &self.context,
             source,
             &builder.online_commitments(),
-            builder.online_fq_openings(),
             &self.nested_registry,
             online.as_ref(),
             builder.native_online().commitments(),

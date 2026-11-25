@@ -653,7 +653,8 @@ pub enum RxIndex {
     /// their native unified instances (see [`stages::points`]).
     PointsBinding,
     /// The points stage holding the rest of the children's commitments and
-    /// the step's own online Fq commitments.
+    /// the commitments of the step's nested online polynomials fixed
+    /// before $w$.
     PointsPreamble,
     /// The points stage holding the nested `registry_wx` commitments.
     PointsRegistryWx,

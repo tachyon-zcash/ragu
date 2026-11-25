@@ -19,14 +19,15 @@
 //! polynomials retained by the decider and copied by the next parent. The
 //! parent's `bind_beta` compares its walked copies against these slots.
 //!
-//! In a profile whose native binding circuit names online Fq polynomials
-//! of the step ([`Binding::online`](crate::profile::Binding::online)),
-//! the circuit's instance ends with their commitments, read off the
-//! preamble stage the walk takes them from: the parent holds them once
-//! for this claim and for the binding circuit's, so the point the
-//! binding circuit exposes is the one the step committed before $w$ and
-//! its walk folded. Any other profile's instance is the unified instance
-//! alone.
+//! In a profile with a nested online batch
+//! ([`NESTED_ONLINE`](crate::profile::Profile::NESTED_ONLINE)), the
+//! circuit's instance ends with the commitments of the batch's
+//! polynomials, read off the stages the walk takes them from. The
+//! parent holds them once, for this claim and for
+//! the native binding circuit's
+//! ([`Binding::batch`](crate::profile::Binding::batch)), so a point the
+//! binding circuit exposes is the one the step committed and its walk
+//! folded. Any other profile's instance is the unified instance alone.
 //!
 //! [`nested_p_commitment`]: unified::Output::nested_p_commitment
 
@@ -57,23 +58,17 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::{
-    internal::nested::online::{BoundCommitmentsLen, bound_commitments},
-    profile::{
-        Profile, ProfiledCycle,
-        online::stages::{Nested, PolynomialsLen},
-    },
+use crate::profile::{
+    ProfiledCycle,
+    online::stages::{Nested, PolynomialsLen},
 };
 
-/// The circuit's public output: the unified instance, then the
-/// commitments of the step's online Fq polynomials its profile exports,
-/// then the actual nested online walk points.
+/// The circuit's public output: the unified instance, then the actual
+/// nested online walk points.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
-    #[ragu(gadget)]
-    pub online_fq: FixedVec<Point<'dr, D, C::NestedCurve>, BoundCommitmentsLen<C::Profile>>,
     #[ragu(gadget)]
     pub online_points: FixedVec<Point<'dr, D, C::NestedCurve>, PolynomialsLen<C::Profile, Nested>>,
 }
@@ -174,18 +169,10 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .receive(dr, allocator)?;
         f.registry_xy.enforce_equal(dr, &registry_xy)?;
 
-        // The online Fq commitments the profile exports, as the walk
-        // takes them.
-        let online_fq = FixedVec::try_from(
-            bound_commitments::<C::Profile>()
-                .iter()
-                .map(|&slot| preamble.online_fq[slot as usize].clone())
-                .collect::<alloc::vec::Vec<_>>(),
-        )?;
+        // The nested online commitments, as the walk takes them.
         let online_points = preamble
-            .online_fq
+            .online_points
             .iter()
-            .skip(C::Profile::ONLINE_FQ_POLYS)
             .chain(registry_wx.online_points.iter())
             .chain(ab.online_points.iter())
             .chain(f.online_points.iter())
@@ -193,7 +180,6 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .collect_fixed()?;
         let (output, aux) = unified_output.finish_with(dr, allocator, |unified| Output {
             unified,
-            online_fq,
             online_points,
         })?;
         Ok(WithAux::new(output, aux))

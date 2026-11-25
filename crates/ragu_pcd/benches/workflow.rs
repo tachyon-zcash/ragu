@@ -68,10 +68,6 @@ fn ordinary<C: ProfiledCycle, R: Rank>(label: &str, proof: &Proof<C, R>) {
 fn compressed_shape<P: Profile, R: Rank>() -> (usize, usize, usize) {
     let shape = Shape::of::<P>();
     let native = P::native_extension();
-    let bound_commitments = native.binding.map_or(0, |binding| binding.online.len());
-    let bound_openings = P::nested_extension()
-        .binding
-        .map_or(0, |binding| binding.openings.len());
     let step_binding = if native.statement.is_some() {
         STEP_BINDING - 1
     } else {
@@ -80,11 +76,10 @@ fn compressed_shape<P: Profile, R: Rank>() -> (usize, usize, usize) {
 
     // Instance commitments: each rx, both a and b on each side, registry_xy
     // and p on each side, nested_challenges_partial, and the online slots.
-    let mut points =
-        shape.native_rx + shape.nested_rx + 4 + 5 + NUM_ONLINE_FP_POLYS + bound_commitments;
+    let mut points = shape.native_rx + shape.nested_rx + 4 + 5 + NUM_ONLINE_FP_POLYS;
     // Instance scalars: bridge_alpha, c and v on each side, four child (x, y)
-    // pairs, four a/b evaluations, and the step and exported opening values.
-    let mut scalars = 5 + 8 + 4 + step_binding + 2 * bound_openings;
+    // pairs, four a/b evaluations, and the step binding's values.
+    let mut scalars = 5 + 8 + 4 + step_binding;
 
     for (online, mesh) in [
         (P::NATIVE_ONLINE, P::NATIVE_MESH),

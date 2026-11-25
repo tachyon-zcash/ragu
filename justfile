@@ -54,12 +54,10 @@ test *ARGS:
 # `verifier::tests`, and others). `ci_test_all`, `backend_lane` and `ci_fixtures`
 # run the skipped ones.
 #
-# The last four are whole suites over custom online profiles and the base case.
-# Together they took 13 of the 15 minutes `just test` reached after they landed.
-# `profile::tests` still proves an online Fq polynomial end to end, about 30
-# `profile::online` unit tests cover the batch, layout, mesh, preparation and
-# claim targets without proving, and `verifier::tests` still confines the base
-# case to a bootstrap proof.
+# The last three are whole suites over custom online profiles and the base case.
+# About 30 `profile::online` unit tests cover the batch, layout, mesh,
+# preparation and claim targets without proving, and `verifier::tests` still
+# confines the base case to a bootstrap proof.
 _test_skip := (
   "--skip proof::profile_substitution_tests " +
   "--skip proof::backend_equivalence " +
@@ -81,7 +79,6 @@ _test_skip := (
   "--skip multiple_rerandomizations_all_verify " +
   "--skip both_profiles_prove_in_one_binary " +
   "--skip online_batch_tests " +
-  "--skip online_fq_oracles_tests " +
   "--skip source_mesh_tests " +
   "--skip proof::base_case_combinations_tests"
 )

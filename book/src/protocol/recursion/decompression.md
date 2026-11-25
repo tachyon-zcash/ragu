@@ -85,7 +85,7 @@ flowchart TB
     accTitle: Boundaries of a decompression
     accDescr: The compressed wallet proof supplies its circuit-field parts to the native chunks and its scalar-field parts to the nested chunks. The native chunks replay the wallet proof's Fuse and compression transcripts. The two sides exchange challenge bits, run commitments and the digits of full-width scalars, and each recomputes the commitments of the other's stages. The enclosing aggregator Fuse supplies the registry and IPA polynomial evaluations through its own online batches. The openings are batched into the step's accumulator with an outgoing source restriction, and the claims of the chunk, statement and binding circuits join the step's frontier. A consumer folds those claims at a fresh challenge of its own and inherits the restriction, or checks both at a root.
     W["Compressed wallet proof<br/>instance and messages;<br/>its Fuse and compression<br/>challenges are replayed"]
-    ON["Online batches of the step<br/>wallet registry restrictions,<br/>s(X) of each IPA;<br/>host s(X) opened at y_step"]
+    ON["Online batches of the step<br/>wallet registry restrictions,<br/>s(X) of each IPA,<br/>opened at y_step"]
     NA["Native chunks<br/>replay both transcripts,<br/>host scalar equations,<br/>nested point arithmetic"]
     NE["Nested chunks<br/>lift the same bits,<br/>nested scalar equations,<br/>host point arithmetic"]
     FR["Frontier of the step<br/>claims of the chunk,<br/>statement and<br/>binding circuits"]
@@ -95,7 +95,7 @@ flowchart TB
     W -->|"scalar-field parts"| NE
     NA <-->|"challenge bits,<br/>run commitments,<br/>digits of scalars"| NE
     ON -->|"registry values,<br/>s at y_step"| NA
-    ON -->|"registry values,<br/>s at the lift of w_step"| NE
+    ON -->|"registry values,<br/>s at the lift of y_step"| NE
     ON --> AC
     NA --> FR
     NE --> FR
@@ -272,7 +272,7 @@ For each wallet IPA, the folded generator is $G'=[s]$, where
 $s(X)=\prod_{i=0}^{k-1}(1+u_{k-1-i}X^{2^i})$ over that IPA's round challenges
 $u_i$. The decompression step binds the two supplied $G'$ points with one
 profile polynomial on each curve: the host $s$ in the native online batch,
-the nested $s$ in the step's online $\F_q$ polynomial.
+the nested $s$ in the nested online batch.
 
 1. **Fix the round challenges.** Before $w_{\rm step}$ the decompression
    step stages the raw squeeze for the nested IPA's last round challenge.
@@ -287,13 +287,11 @@ the nested $s$ in the step's online $\F_q$ polynomial.
    batch before $y_{\rm step}$ and opens it at $y_{\rm step}$. Under
    the flag, the native chunks check the opening against $s(y_{\rm step})$
    and the nested chunks hold the host $G'$ to that batch commitment.
-3. **Nested IPA.** Every step commits the nested $s$ as its
-   online polynomial for polynomial oracle access over $\F_q$ before
-   $w_{\rm step}$. Its nested `compute_v` folds the opening at the lift
-   $w_{{\rm step},q}$ into its batch. The consumer uses the commitment
-   exported by `bind_endoscalar` and the opening exported by `compute_v`.
-   The native chunks' $G'$ must equal that commitment, and the nested
-   chunks check the opening value against $s(w_{{\rm step},q})$.
+3. **Nested IPA.** Every step commits the nested $s$ in the nested online
+   batch before $y_{\rm step}$ and opens it at the lift
+   $y_{{\rm step},q}$. The nested chunks check the opening against
+   $s(y_{{\rm step},q})$, and the native chunks' $G'$ must equal that
+   batch commitment. Neither check is under the flag.
 
 For a decompression step, both polynomials in each equality are fixed
 before its opening challenge. If they differ, they agree only at a root of their
@@ -303,7 +301,7 @@ larger range of the raw challenge.
 
 In an ordinary step the flag disables the host IPA helper check. The nested
 opening check still runs, but the wallet IPA challenges can depend on
-$w_{\rm step}$ because the step stages no digest. The wallet statement in
+$y_{\rm step}$ because the step stages no digest. The wallet statement in
 this case is the unit header.
 
 ### Verifier checks {#4-claims}
@@ -333,13 +331,12 @@ then $y$ coordinate.
 2. **Native binding.** Match the run commitments absorbed in replay and the
    recomputed nested $[\mathrm{lifts}]$ and $[\mathrm{digits}]$ commitments
    against the nested stages. Match the nested IPA's $G'$ against the
-   step's exported $\F_q$ commitment.
+   commitment of the nested $s$ in the step's nested batch.
 3. **Nested binding.** Match the recomputed native $[\mathrm{digits}]$
    commitment against its stage. Match the next three points against the
    two application output commitments and the host IPA batch commitment.
    Under the flag the chunks equate the two application commitments with
    the wallet proof's slots and the batch commitment with the host $G'$.
-   Match the exposed $\F_q$ opening against the one nested `compute_v` folded.
 
 ### Output {#decompression-output}
 

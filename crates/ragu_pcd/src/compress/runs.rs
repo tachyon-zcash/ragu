@@ -52,8 +52,7 @@ pub(crate) enum Run {
     /// The host commitments the instance lists, its registry restriction's
     /// and $p$'s.
     Commitments,
-    /// The scalar field's instance values, then the online Fq openings
-    /// the proof exports, in a profile whose nested binding names any.
+    /// The scalar field's instance values.
     Scalars,
     /// The host reduction's inner error commitment.
     Inner,
@@ -112,9 +111,7 @@ impl Run {
         };
         match self {
             Run::Commitments => points(native_points_of::<P>()),
-            Run::Scalars => elements(
-                NESTED_SCALARS + crate::internal::nested::online::bound_openings::<P>().len() * 2,
-            ),
+            Run::Scalars => elements(NESTED_SCALARS),
             Run::Inner | Run::Outer | Run::F | Run::SCommitment => points(1),
             Run::Split | Run::Round(_) => points(2),
             Run::Epsilons => elements(2),
@@ -194,11 +191,11 @@ pub(crate) fn chain_skips(before: usize, shapes: &[StageShape]) -> Vec<usize> {
 /// the front of every circuit of that side of a proof's decompression,
 /// which the run stages follow: the online input stage's 19, then the
 /// online query stage's, which holds two evaluations of the wallet registry
-/// per internal circuit of the Standard profile's scalar-field side and 32
+/// per internal circuit of the Standard profile's scalar-field side and 33
 /// values besides. The decompression holds its layout to this count where
 /// the aggregator is compiled (`decompress::online`). Like the runs'
 /// shapes, it is part of the Standard profile's wire format.
-pub(crate) const ONLINE_PREFIX_GATES: usize = 19 + 16 + nested::InternalCircuitIndex::NUM;
+pub(crate) const ONLINE_PREFIX_GATES: usize = 19 + 17 + nested::InternalCircuitIndex::NUM;
 
 /// The generators each run's stage of the scalar-field side lands its
 /// values on at rank `R`, for a proof of profile `P` at rank `K`, by run,

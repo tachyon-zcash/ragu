@@ -132,8 +132,6 @@ fn check_batch<H: Header<Fp>>(
         randomizer_a: &randomizer.a,
         randomizer_b: &randomizer.b,
         mask: &randomizer.mask,
-        // The standard profile has no online Fq polynomial.
-        online_fq: &[],
     };
     let commit = |poly: &Poly| {
         ReferenceBackend::sparse_commit_to_affine(poly, C::nested_generators(app.params))
@@ -248,7 +246,7 @@ fn check_batch<H: Header<Fp>>(
         assert_eq!(point, *expected_point, "query point: {tag}");
     }
     let actual_evaluated: Vec<_> = batch.evaluated().collect();
-    let actual_commitments: Vec<_> = batch.commitments(current, &[]).collect();
+    let actual_commitments: Vec<_> = batch.commitments(current).collect();
     assert_eq!(actual_evaluated.len(), evaluated.len());
     assert_eq!(actual_commitments.len(), evaluated.len());
     assert_eq!(1 + evaluated.len(), pcs::NUM_BATCHED_POINTS);
