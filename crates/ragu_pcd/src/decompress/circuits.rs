@@ -751,11 +751,9 @@ where
     /// that holds them.
     fn endoscalar(&self, dr: &mut D, challenge: ChallengeRef) -> Result<Endoscalar<'dr, D>> {
         Ok(match challenge {
-            ChallengeRef::Raw(slot) => Endoscalar::extract(EndoscalarChallenge::from_element(
-                dr,
-                &mut (),
-                self.work(slot),
-            )?),
+            ChallengeRef::Raw(slot) => {
+                Endoscalar::extract(EndoscalarChallenge::from_element(dr, self.work(slot))?)
+            }
             ChallengeRef::Bits(id) => {
                 let endoscalar = self.bits(dr, id)?;
                 let slot = self.schedule.regions.bits_lifts[id];

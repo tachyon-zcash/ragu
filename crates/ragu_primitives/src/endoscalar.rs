@@ -57,7 +57,6 @@ use udon::{
 
 use crate::{
     Boolean, Element, Nonzero, NonzeroBank, Point,
-    allocator::Allocator,
     boolean::decompose,
     consistent::Consistent,
     promotion::Demoted,
@@ -245,10 +244,10 @@ impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     ///
     /// # Completeness
     ///
-    /// Honest proving succeeds only when `elem` is in range. The witness value
-    /// is checked directly as well, so the emulators — which compute witness
-    /// data without evaluating constraints — reject an out-of-range element
-    /// rather than returning a truncated endoscalar.
+    /// Honest proving succeeds only when `elem` is in range. The extraction
+    /// routine's prediction also checks the witness value, so the emulators —
+    /// which compute witness data without evaluating constraints — reject an
+    /// out-of-range element rather than returning a truncated endoscalar.
     ///
     /// # Errors
     ///
@@ -260,24 +259,8 @@ impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     /// unchanged.
     ///
     /// [`sample`]: EndoscalarChallenge::sample
-    pub fn from_element<A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        elem: Element<'dr, D>,
-    ) -> Result<Self> {
-        // Emulator drivers never evaluate the decomposition constraints, so
-        // also reject an out-of-range witness value directly; `try_just` runs
-        // only during witness generation and emits nothing, leaving circuit
-        // structure untouched.
-        D::try_just(|| {
-            if !endoscalar_in_range(*elem.value().take()) {
-                return Err(Error::InvalidWitness(Box::new(EndoscalarRangeError)));
-            }
-
-            Ok(())
-        })?;
-
-        let endoscalar = Endoscalar::extract_element(dr, allocator, &elem)?;
+    pub fn from_element(dr: &mut D, elem: Element<'dr, D>) -> Result<Self> {
+        let endoscalar = dr.routine(Extract, elem.clone())?;
 
         Ok(Self { elem, endoscalar })
     }
@@ -314,7 +297,7 @@ impl<'dr, F: Field> EndoscalarChallenge<'dr, NativeEmulator<F>> {
         dr: &mut NativeEmulator<F>,
         elem: Element<'dr, NativeEmulator<F>>,
     ) -> Result<Option<Self>> {
-        match Self::from_element(dr, &mut (), elem) {
+        match Self::from_element(dr, elem) {
             Ok(challenge) => Ok(Some(challenge)),
             Err(err)
                 if err
@@ -393,9 +376,10 @@ impl<'dr, F: Field> EndoscalarChallenge<'dr, NativeEmulator<F>> {
 /// decomposition is set, so it is `true` exactly when that in-circuit
 /// decomposition is satisfiable.
 ///
-/// An implementation detail of `from_element`, which reports an out-of-range
-/// value as a typed [`EndoscalarRangeError`] failure that rejection-sampling
-/// callers detect with [`Error::invalid_witness_source`].
+/// An implementation detail of the extraction routine's prediction, which
+/// reports an out-of-range value as a typed [`EndoscalarRangeError`] failure
+/// that rejection-sampling callers detect with
+/// [`Error::invalid_witness_source`].
 fn endoscalar_in_range<F: Field>(value: F) -> bool {
     !Field::to_le_bits(&value).as_ref()[F::CAPACITY as usize..]
         .iter()
@@ -455,29 +439,6 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// additional constraints.
     pub fn extract(challenge: EndoscalarChallenge<'dr, D>) -> Self {
         challenge.endoscalar
-    }
-
-    /// Constrains `elem` to its canonical decomposition and returns its low
-    /// [`ENDOSCALAR_BITS`] bits as an endoscalar.
-    fn extract_element<A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        elem: &Element<'dr, D>,
-    ) -> Result<Self> {
-        let bits = decompose(dr, allocator, elem)?;
-
-        let value = elem.value().map(|v| {
-            let le_bits = Field::to_le_bits(v);
-            Uendo::from_le_bits(le_bits.as_ref().iter().take(ENDOSCALAR_BITS).copied())
-        });
-
-        let bits = bits
-            .iter()
-            .take(ENDOSCALAR_BITS)
-            .map(|bit| Demoted::new(bit))
-            .try_collect_fixed()?;
-
-        Ok(Endoscalar { bits, value })
     }
 
     /// Scale a point by the endoscalar.
@@ -794,6 +755,66 @@ impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for HoistedEndoscalar<'dr, D> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         Self::alloc(dr, self.endoscalar.value.clone())?.enforce_conservative_equal(dr, self)
     }
+}
+
+/// [`Routine`] behind [`EndoscalarChallenge::from_element`]: constrains an
+/// element to its canonical decomposition and returns its low
+/// [`ENDOSCALAR_BITS`] bits as an endoscalar.
+///
+/// The body allocates the bits with the stateless allocator. A caller's
+/// allocator would make the emitted gates depend on its pool, and the
+/// spare wires the bits donate would leave the routine.
+///
+/// The prediction is the low bits of the witness value. It rejects an
+/// out-of-range value, for which the body's constraints are unsatisfiable.
+#[derive(Clone)]
+struct Extract;
+
+impl<F: Field> Routine<F> for Extract {
+    type Input = Kind![F; Element<'_, _>];
+    type Output = Kind![F; Endoscalar<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        elem: Bound<'dr, D, Self::Input>,
+        _: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let bits = decompose(dr, &mut (), &elem)?;
+        let value = elem.value().map(|v| low_bits(*v));
+        let bits = bits
+            .iter()
+            .take(ENDOSCALAR_BITS)
+            .map(|bit| Demoted::new(bit))
+            .try_collect_fixed()?;
+
+        Ok(Endoscalar { bits, value })
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = F, Wire = ()>>(
+        &self,
+        dr: &mut D,
+        elem: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        let value = D::try_just(|| {
+            let value = *elem.value().take();
+            if !endoscalar_in_range(value) {
+                return Err(Error::InvalidWitness(Box::new(EndoscalarRangeError)));
+            }
+
+            Ok(low_bits(value))
+        })?;
+
+        Ok(Prediction::Known(Endoscalar::alloc(dr, value)?, D::unit()))
+    }
+}
+
+/// The low [`ENDOSCALAR_BITS`] bits of the canonical decomposition of
+/// `value`.
+fn low_bits<F: Field>(value: F) -> Uendo {
+    let le_bits = Field::to_le_bits(&value);
+    Uendo::from_le_bits(le_bits.as_ref().iter().take(ENDOSCALAR_BITS).copied())
 }
 
 /// [`Routine`] behind [`Endoscalar::group_scale`]: scales a point on the
@@ -1139,7 +1160,7 @@ pub fn lift_endoscalar<F: Field>(endo: Uendo) -> F {
 pub fn extract_endoscalar<F: Field>(value: F) -> Result<Uendo> {
     Emulator::emulate_wireless(value, |dr, witness| {
         let elem = Element::alloc(dr, &mut (), witness)?;
-        let challenge = EndoscalarChallenge::from_element(dr, &mut (), elem)?;
+        let challenge = EndoscalarChallenge::from_element(dr, elem)?;
         let endo = Endoscalar::extract(challenge);
         Ok(*endo.value.snag())
     })
@@ -1238,7 +1259,7 @@ mod tests {
             let allocator = &mut Standard::new();
             let r = Element::alloc(dr, allocator, r)?;
             let constraints_before_challenge = dr.num_constraints();
-            let r = EndoscalarChallenge::from_element(dr, allocator, r)?;
+            let r = EndoscalarChallenge::from_element(dr, r)?;
             let constraints_after_challenge = dr.num_constraints();
             assert!(constraints_after_challenge > constraints_before_challenge);
             let my_extracted = Endoscalar::extract(r);
@@ -1270,7 +1291,7 @@ mod tests {
 
         let result = Simulator::<Fp>::simulate(-Fp::ONE, |dr, witness| {
             let elem = Element::alloc(dr, &mut (), witness)?;
-            EndoscalarChallenge::from_element(dr, &mut (), elem)?;
+            EndoscalarChallenge::from_element(dr, elem)?;
             Ok(())
         });
 
@@ -1291,7 +1312,7 @@ mod tests {
         let result =
             Emulator::<Wireless<Always<()>, Fp>>::emulate_wireless(-Fp::ONE, |dr, value| {
                 let elem = Element::alloc(dr, &mut (), value)?;
-                EndoscalarChallenge::from_element(dr, &mut (), elem)?;
+                EndoscalarChallenge::from_element(dr, elem)?;
                 Ok(())
             });
 
@@ -1459,6 +1480,26 @@ mod tests {
             dr.reset();
             assert_eq!(r.group_scale(dr, &p)?.value().take(), expected);
             assert_eq!(dr.num_gates(), 3 + 4 + 10 * super::ENDOSCALAR_DIGITS + 3);
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    /// The extraction routine's prediction, which the wireless emulator
+    /// returns without executing the body, equals the bits the body
+    /// constrains.
+    #[test]
+    fn test_extract_prediction_matches_execution() -> Result<()> {
+        let value = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let predicted = super::extract_endoscalar(value)?;
+
+        Simulator::simulate(value, |dr, witness| {
+            let elem = Element::alloc(dr, &mut (), witness)?;
+            let endoscalar = Endoscalar::extract(EndoscalarChallenge::from_element(dr, elem)?);
+            let executed = Uendo::from_le_bits(endoscalar.bits().map(|bit| *bit.wire() == Fp::ONE));
+            assert_eq!(executed, predicted);
 
             Ok(())
         })?;

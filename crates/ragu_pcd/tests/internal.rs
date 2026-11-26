@@ -238,13 +238,13 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes1Circuit,              mul = 1785, lin = 3018);
     check_constraints!(Hashes2Circuit,              mul = 1873, lin = 2991);
     check_constraints!(CollapseCircuit,             mul = 1599, lin = 2560);
-    check_constraints!(ComputeVCircuit,             mul = 1981, lin = 2986);
-    check_constraints!(BindChallengesCircuit(0),    mul = 2031, lin = 3061);
-    check_constraints!(BindChallengesCircuit(1),    mul = 2036, lin = 3071);
-    check_constraints!(BindChallengesCircuit(2),    mul = 2036, lin = 3071);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2043, lin = 3084);
-    check_constraints!(BindBetaCircuit,             mul = 1888, lin = 3125);
-    check_constraints!(BindEndoscalarCircuit,       mul = 970,  lin = 1809);
+    check_constraints!(ComputeVCircuit,             mul = 1985, lin = 2986);
+    check_constraints!(BindChallengesCircuit(0),    mul = 2036, lin = 3061);
+    check_constraints!(BindChallengesCircuit(1),    mul = 2041, lin = 3071);
+    check_constraints!(BindChallengesCircuit(2),    mul = 2041, lin = 3071);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2047, lin = 3084);
+    check_constraints!(BindBetaCircuit,             mul = 1894, lin = 3125);
+    check_constraints!(BindEndoscalarCircuit,       mul = 975,  lin = 1809);
     // Every native endoscaling step but the last walks four points and has
     // the same layout; the last walks the 107 inputs' remaining three.
     let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
@@ -914,7 +914,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x3862c3ddf6b46a5764377f8362f07831a7bc9f198d83d234b7a8172712c4d3e6"
+        "0x37f14db5a088bbac8faf7ee80890697b259f9c03e2a58edb0e8d7d3300b0f77f"
     ));
 
     assert_eq!(
@@ -1484,9 +1484,9 @@ fn test_extension_hooks_register_without_a_prover() {
 
     // The 143-bit challenge binders fill the last binder up to
     // the bound at the census header, and the fixture's extension stage
-    // costs it thirteen more; a smaller header makes room to reach the
-    // missing-prover check this test is about.
-    const FITTING_HEADER_SIZE: usize = HEADER_SIZE - 8;
+    // costs the binders thirteen more; a smaller header makes room to reach
+    // the missing-prover check this test is about.
+    const FITTING_HEADER_SIZE: usize = HEADER_SIZE - 11;
     let result = ApplicationBuilder::<C, R, FITTING_HEADER_SIZE>::new().finalize(params);
     assert!(
         matches!(result, Err(Error::Initialization(source))
@@ -1529,13 +1529,13 @@ fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
     let params = crate::pasta::baked();
-    let standard = ApplicationBuilder::<Pasta, R, 197>::new().finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 194>::new().finalize(params);
     assert!(
         standard.is_ok(),
-        "197 fields must fit: {:?}",
+        "194 fields must fit: {:?}",
         standard.err()
     );
-    let oversized = ApplicationBuilder::<Pasta, R, 198>::new().finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 195>::new().finalize(params);
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2047 })

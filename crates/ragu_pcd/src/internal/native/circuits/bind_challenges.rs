@@ -195,7 +195,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
 
         for i in 2 * K..2 * (K + 1) {
             let challenge = read_challenge(&mut unified_output, dr, allocator, i)?;
-            let challenge = EndoscalarChallenge::from_element(dr, allocator, challenge)?;
+            let challenge = EndoscalarChallenge::from_element(dr, challenge)?;
             let bits = Endoscalar::extract(challenge);
 
             let generator = generators.g()[native_eval::generator_index::<C, R>(i)];

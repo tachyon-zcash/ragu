@@ -161,7 +161,7 @@ fn endoscalar_group_scale(
 #[library_benchmark(setup = setup_emu)]
 #[bench::endoscalar_extract((alloc_endoscalar_elem,))]
 fn endoscalar_extract((mut emu, (elem,)): (BenchEmu, (Element<'static, BenchEmu>,))) {
-    let challenge = EndoscalarChallenge::from_element(&mut emu, &mut (), elem).unwrap();
+    let challenge = EndoscalarChallenge::from_element(&mut emu, elem).unwrap();
     black_box(Endoscalar::extract(challenge));
 }
 

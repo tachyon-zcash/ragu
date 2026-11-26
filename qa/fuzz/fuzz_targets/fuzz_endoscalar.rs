@@ -161,7 +161,7 @@ fuzz_target!(|input: Input| {
             let allocator = &mut Standard::new();
             let (r_val, _endo_val, p_val, p2_val, bool_vals) = witness.cast();
             let r_elem = Element::alloc(dr, allocator, r_val)?;
-            let r_elem = EndoscalarChallenge::from_element(dr, allocator, r_elem)?;
+            let r_elem = EndoscalarChallenge::from_element(dr, r_elem)?;
             let endo = Endoscalar::extract(r_elem);
 
             // Circuit lift must match native lift

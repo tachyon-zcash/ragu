@@ -258,7 +258,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         // spare D wire. Donating them to the pool lets subsequent reads
         // reuse those wires instead of allocating fresh gates.
         let pre_beta = unified_output.pre_beta.read(dr, allocator)?;
-        let pre_beta = EndoscalarChallenge::from_element(dr, allocator, pre_beta)?;
+        let pre_beta = EndoscalarChallenge::from_element(dr, pre_beta)?;
         let beta_endo = Endoscalar::extract(pre_beta);
 
         // Retrieve Fiat-Shamir challenges from the unified instance.
