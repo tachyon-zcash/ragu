@@ -83,3 +83,4 @@ RAGU005|crates/ragu_pcd/src/internal/shared/ky.rs|544|The nested mesh is fixed b
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|301|The native mesh is fixed by the profile at setup; its target always includes both inherited coordinate pairs from the common helper metadata.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|306|The nested mesh is fixed by the profile at setup; its carry target always includes both inherited walk commitments and cannot be disabled by a witness.
 RAGU005|crates/ragu_pcd/src/step/internal/decompress.rs|135|The profile fixes whether decompression opens the application output slots when the step circuit is registered.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|1055|The number of claims, fixed by the caller's layout, selects a group's fold or the randomizer's term alone.

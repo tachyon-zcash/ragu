@@ -1014,6 +1014,62 @@ impl<'dr, D: Driver<'dr>, P: Parameters> EvaluationFolder<'dr, D, P> {
         self.outer.linear(dr, &groups)
     }
 
+    /// The part of a folded evaluation that the groups `groups` hold,
+    /// none of them the last group: the sum, over those groups, of the
+    /// group's first-layer fold times the group's second-layer weight.
+    ///
+    /// `real` is the evaluations of the claims of those groups in claim
+    /// order, from the first claim of group `groups.start`. It is shorter
+    /// than the groups hold when the claims run out: a group without a
+    /// claim holds the randomizer's evaluation alone.
+    ///
+    /// The parts of ranges that cover every group but the last sum to
+    /// [`fold_b`](Self::fold_b), and with
+    /// [`fold_a_last`](Self::fold_a_last) to [`fold_a`](Self::fold_a). A
+    /// fold too large for one circuit is cut along these ranges.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `groups` reaches the last group or `real` holds more
+    /// claims than the groups do.
+    pub fn fold_groups(
+        &self,
+        dr: &mut D,
+        real: &[Element<'dr, D>],
+        groups: core::ops::Range<usize>,
+        randomizer: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        let size = P::GroupSize::len();
+        assert!(
+            groups.end < P::NumGroups::len(),
+            "the last group holds no claim"
+        );
+        assert!(
+            real.len() <= groups.len() * (size - 1),
+            "the groups do not hold every claim"
+        );
+        let randomizer = randomizer.mul(dr, &self.inner.weights[size - 1])?;
+        let mut chunks = real.chunks(size - 1);
+        let mut result = Element::zero(dr);
+        for group in groups {
+            let value = match chunks.next() {
+                Some(chunk) => self.inner.linear(dr, chunk)?.add(dr, &randomizer),
+                None => randomizer.clone(),
+            };
+            let term = value.mul(dr, &self.outer.weights[group])?;
+            result = result.add(dr, &term);
+        }
+        Ok(result)
+    }
+
+    /// The last group's part of the folded $A$: the randomizer's $a_r$ at
+    /// the group's first node. See [`fold_groups`](Self::fold_groups).
+    pub fn fold_a_last(&self, dr: &mut D, randomizer: &Element<'dr, D>) -> Result<Element<'dr, D>> {
+        randomizer
+            .mul(dr, &self.inner.weights[0])?
+            .mul(dr, &self.outer.weights[P::NumGroups::len() - 1])
+    }
+
     /// The first layer's fold of every group but the last, each holding its
     /// claims and then the randomizer's evaluation at its last node.
     fn groups(
@@ -1042,7 +1098,11 @@ impl<'dr, D: Driver<'dr>, P: Parameters> EvaluationFolder<'dr, D, P> {
 mod tests {
     use ragu_backend::ReferenceBackend;
     use ragu_circuits::polynomials::TestRank;
-    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe, pasta::Fp};
+    use ragu_core::{
+        drivers::emulator::Emulator,
+        maybe::{Always, Maybe},
+        pasta::Fp,
+    };
 
     use super::*;
 
@@ -1386,6 +1446,51 @@ mod tests {
             fold_inner::<_, _, P>(&a, Fp::from(17))[0]
                 .revdot(&fold_inner::<_, _, P>(&b, Fp::from(17))[0])
         );
+        Ok(())
+    }
+    /// A grid of five groups of four nodes: twelve claims in four groups
+    /// and the randomizer's half-claim in the fifth.
+    #[derive(Clone, Copy, Default)]
+    struct Wide;
+    impl Parameters for Wide {
+        type NumGroups = ConstLen<5>;
+        type GroupSize = ConstLen<4>;
+    }
+
+    /// The parts of [`EvaluationFolder::fold_groups`] over ranges that cover
+    /// every group but the last sum to `fold_b`, and with `fold_a_last` to
+    /// `fold_a`, whether the claims fill the grid, stop inside a group or
+    /// leave whole groups empty.
+    #[test]
+    fn the_parts_of_a_fold_sum_to_the_fold() -> Result<()> {
+        for claims in [12, 10, 7, 3, 0] {
+            for cut in 0..=4 {
+                type Run = Emulator<ragu_core::drivers::emulator::Wireless<Always<()>, Fp>>;
+                let dr = &mut Run::execute();
+                let element = |dr: &mut Run, value: u64| {
+                    Element::alloc(dr, &mut (), Run::just(|| Fp::from(value)))
+                };
+                let real = (0..claims)
+                    .map(|i| element(dr, 11 + 3 * i))
+                    .collect::<Result<Vec<_>>>()?;
+                let randomizer = element(dr, 5)?;
+                let (mu, mu_prime) = (element(dr, 1000)?, element(dr, 2000)?);
+                let folder = EvaluationFolder::<_, Wide>::new(dr, &mu, &mu_prime)?;
+
+                // The claims of the groups before the cut, then the rest.
+                let split = (cut * 3).min(real.len());
+                let low = folder.fold_groups(dr, &real[..split], 0..cut, &randomizer)?;
+                let high = folder.fold_groups(dr, &real[split..], cut..4, &randomizer)?;
+                let parts = low.add(dr, &high);
+
+                let b = folder.fold_b(dr, &real, &randomizer)?;
+                assert_eq!(parts.value().take(), b.value().take());
+
+                let last = folder.fold_a_last(dr, &randomizer)?;
+                let a = folder.fold_a(dr, &real, &randomizer)?;
+                assert_eq!(parts.add(dr, &last).value().take(), a.value().take());
+            }
+        }
         Ok(())
     }
 }
