@@ -84,7 +84,7 @@ use ragu_core::{
     maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_primitives::{
-    EndoscalarChallenge, GadgetExt, Point, extract_endoscalar,
+    GadgetExt, Point, Uendo, extract_endoscalar,
     vec::{CollectFixed, Len},
 };
 use rand::CryptoRng;
@@ -655,8 +655,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Mirrors `fuse`: `pre_beta` is ground rather than squeezed once, so
         // each attempt redraws the eval stages' alphas and re-derives it from a
         // fresh transcript clone until it lands in endoscalar range.
-        let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
-            EndoscalarChallenge::sample(&mut dr, |dr| {
+        let (pre_beta, beta_endo, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
+            Uendo::sample(|| {
                 let (eval_rx, bridge_eval_rx, bridge_eval_commitment) = self
                     .sample_eval_commitment(
                         rng,
@@ -668,24 +668,25 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     )?;
 
                 let mut transcript = transcript.clone();
-                let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
-                bridge_eval_commitment_point.write(dr, &mut transcript)?;
-                let pre_beta = transcript.challenge(dr)?;
+                let bridge_eval_commitment_point =
+                    Point::constant(&mut dr, bridge_eval_commitment)?;
+                bridge_eval_commitment_point.write(&mut dr, &mut transcript)?;
+                let pre_beta = transcript.challenge(&mut dr)?;
 
-                Ok((pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)))
+                Ok((
+                    *pre_beta.value().take(),
+                    (eval_rx, bridge_eval_rx, bridge_eval_commitment),
+                ))
             })?;
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
-        let nested_challenges = self.commit_nested_challenges(
-            nested_challenges_witness,
-            *pre_beta.element().value().take(),
-            &mut builder,
-        )?;
+        let nested_challenges =
+            self.commit_nested_challenges(nested_challenges_witness, pre_beta, &mut builder)?;
 
         let (points_witness, native_points, native_walk) = self.compute_p(
             rng,
-            &pre_beta,
+            beta_endo,
             &left,
             &right,
             &application,
@@ -707,7 +708,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_x(*x.value().take());
         builder.set_alpha(*alpha.value().take());
         builder.set_u(*u.value().take());
-        builder.set_pre_beta(*pre_beta.element().value().take());
+        builder.set_pre_beta(pre_beta);
 
         // Compute-v consumes the same helper sums as the real prover. Keep
         // the committed stages in state for capture; no extension rx needs

@@ -42,12 +42,9 @@ use core::marker::PhantomData;
 
 use ragu_core::{
     Coeff, Error, Result,
-    drivers::{
-        Driver, DriverValue,
-        emulator::{Emulator, Wireless},
-    },
+    drivers::{Driver, DriverValue, emulator::Emulator},
     gadgets::{Bound, Gadget, Kind},
-    maybe::{Always, Maybe},
+    maybe::Maybe,
     routines::{Prediction, Routine},
 };
 use udon::{
@@ -234,8 +231,8 @@ impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     /// It serves the in-circuit verifier path, where an honest prover has
     /// already ground the challenge into range and it is only re-derived
     /// (see the `compute_v` internal circuit). Native provers sampling a fresh
-    /// challenge must use [`sample`] instead, which owns the rejection-sampling
-    /// loop and so cannot be skipped.
+    /// challenge use [`Uendo::sample`] instead, which owns the
+    /// rejection-sampling loop and so cannot be skipped.
     ///
     /// # Soundness
     ///
@@ -258,8 +255,6 @@ impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     /// candidate challenges can detect with
     /// [`Error::invalid_witness_source`]. Any other error propagates
     /// unchanged.
-    ///
-    /// [`sample`]: EndoscalarChallenge::sample
     pub fn from_element(dr: &mut D, elem: Element<'dr, D>) -> Result<Self> {
         let endoscalar = dr.routine(Extract, elem.clone())?;
 
@@ -274,60 +269,28 @@ impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     }
 }
 
-type NativeEmulator<F> = Emulator<Wireless<Always<()>, F>>;
-
-impl<'dr, F: Field> EndoscalarChallenge<'dr, NativeEmulator<F>> {
-    /// Attempts to validate an element as an endoscalar challenge, reporting an
-    /// out-of-range element as `Ok(None)` rather than an error.
+impl Uendo {
+    /// Samples a transcript challenge in endoscalar range, retrying until one
+    /// is accepted, and returns it with its endoscalar.
     ///
-    /// The rejection-sampling primitive behind [`sample`], and the prover-side
-    /// counterpart to [`from_element`]: it delegates validation to
-    /// [`from_element`] — the single place the range rule is checked — and
-    /// translates its typed range failure ([`EndoscalarRangeError`]) into the
-    /// *expected* out-of-range outcome (`Ok(None)`, a retry signal). Every
-    /// other failure is a *genuine* error, to propagate, not retry.
+    /// `produce` draws fresh randomness and returns a candidate challenge with
+    /// a `payload` of side state derived from it. A candidate in range (below
+    /// $2^{\mathtt{CAPACITY}}$) is returned with its endoscalar and payload.
+    /// For an out-of-range candidate, `produce` is called again.
     ///
-    /// # Errors
+    /// The retry loop wraps the code that produces the candidate, so a prover
+    /// cannot retry only the final squeeze: each retry reruns `produce`, which
+    /// must redraw the randomness the candidate depends on. `produce` is
+    /// required to differ between calls. It runs during native witness
+    /// generation, never on a driver walk, so the determinism requirement on
+    /// circuit code does not apply.
     ///
-    /// An out-of-range element is reported as `Ok(None)` rather than as an
-    /// error; errors arise only while validating an in-range element.
-    ///
-    /// [`sample`]: EndoscalarChallenge::sample
-    /// [`from_element`]: EndoscalarChallenge::from_element
-    pub(crate) fn try_from_element(
-        dr: &mut NativeEmulator<F>,
-        elem: Element<'dr, NativeEmulator<F>>,
-    ) -> Result<Option<Self>> {
-        match Self::from_element(dr, elem) {
-            Ok(challenge) => Ok(Some(challenge)),
-            Err(err)
-                if err
-                    .invalid_witness_source::<EndoscalarRangeError>()
-                    .is_some() =>
-            {
-                Ok(None)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Produces a validated endoscalar challenge by rejection sampling.
-    ///
-    /// `produce` is invoked to (re)sample fresh randomness, returning a
-    /// candidate challenge [`Element`] together with a `payload` of side state
-    /// derived from it. The candidate is validated by `try_from_element`: on
-    /// acceptance the challenge and its payload are returned; on an
-    /// out-of-range candidate `produce` is called again with fresh randomness.
-    ///
-    /// Baking the loop into the constructor means a native prover cannot
-    /// obtain a challenge from a rejected sample: [`from_element`] refuses an
-    /// out-of-range element outright, so no [`EndoscalarChallenge`] can exist
-    /// whose element is out of range, and this is the only constructor that
-    /// retries rather than fails.
-    ///
-    /// `produce` is required to differ between calls rather than to agree with
-    /// itself: it runs during native witness generation, never on a driver
-    /// walk, so the determinism requirement on circuit code does not apply.
+    /// Validation goes through [`extract_endoscalar`], which emulates
+    /// [`EndoscalarChallenge::from_element`]. This check serves completeness
+    /// only: it keeps an honest prover from storing a challenge the circuits
+    /// cannot decompose. Soundness comes from the in-circuit decomposition,
+    /// when a circuit re-derives the challenge and passes it to
+    /// [`EndoscalarChallenge::from_element`].
     ///
     /// # Completeness
     ///
@@ -338,33 +301,40 @@ impl<'dr, F: Field> EndoscalarChallenge<'dr, NativeEmulator<F>> {
     /// # Errors
     ///
     /// An error from `produce`, or from validating an in-range candidate,
-    /// propagates immediately; the loop retries only on the expected
-    /// out-of-range condition and so cannot spin on a real error.
-    ///
-    /// [`from_element`]: EndoscalarChallenge::from_element
-    pub fn sample<T>(
-        dr: &mut NativeEmulator<F>,
-        mut produce: impl FnMut(&mut NativeEmulator<F>) -> Result<(Element<'dr, NativeEmulator<F>>, T)>,
-    ) -> Result<(Self, T)> {
+    /// propagates immediately. The loop retries only on an out-of-range
+    /// candidate, so it cannot spin on a real error.
+    pub fn sample<F: Field, T>(
+        mut produce: impl FnMut() -> Result<(F, T)>,
+    ) -> Result<(F, Self, T)> {
         loop {
-            let (elem, payload) = produce(dr)?;
-            if let Some(challenge) = Self::try_from_element(dr, elem)? {
-                return Ok((challenge, payload));
+            let (value, payload) = produce()?;
+            if let Some(endo) = Self::try_extract(value)? {
+                return Ok((value, endo, payload));
             }
         }
     }
 
-    /// Extracts the native endoscalar from this validated challenge.
+    /// Extracts the endoscalar of `value`, reporting an out-of-range value as
+    /// `Ok(None)` rather than an error.
     ///
-    /// Returns the low [`ENDOSCALAR_BITS`] bits of the challenge's canonical
-    /// bit decomposition, the native, wireless counterpart to
-    /// [`Endoscalar::extract`], intended for native provers that constructed the
-    /// challenge via [`sample`]. Because an [`EndoscalarChallenge`] already
-    /// contains the constrained extraction, this operation is infallible.
+    /// The rejection-sampling primitive behind [`sample`]. It translates the
+    /// typed range failure ([`EndoscalarRangeError`]) of
+    /// [`extract_endoscalar`] into `Ok(None)`, the retry signal. Every other
+    /// failure is a genuine error, to propagate, not retry.
     ///
-    /// [`sample`]: EndoscalarChallenge::sample
-    pub fn extract_native(&self) -> Uendo {
-        *self.endoscalar.value.snag()
+    /// [`sample`]: Uendo::sample
+    fn try_extract<F: Field>(value: F) -> Result<Option<Self>> {
+        match extract_endoscalar(value) {
+            Ok(endo) => Ok(Some(endo)),
+            Err(err)
+                if err
+                    .invalid_witness_source::<EndoscalarRangeError>()
+                    .is_some() =>
+            {
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -1133,11 +1103,10 @@ pub fn lift_endoscalar<F: Field>(endo: Uendo) -> F {
 /// Returns the low [`ENDOSCALAR_BITS`] bits of the element's canonical bit
 /// decomposition, the native counterpart to [`Endoscalar::extract`].
 ///
-/// A low-level helper: prefer [`EndoscalarChallenge::extract_native`], which
-/// upholds the precondition below as a type invariant. This function is exposed
-/// directly only for native setup paths with no [`EndoscalarChallenge`] in
-/// scope (e.g. the dummy proof construction over a constant that is in range
-/// by inspection).
+/// A low-level helper: a prover sampling a fresh challenge uses
+/// [`Uendo::sample`], which owns the rejection-sampling loop. This function is
+/// for native paths that check a given value instead (e.g. verifiers, and the
+/// dummy proof construction over a constant that is in range by inspection).
 ///
 /// # Completeness
 ///
@@ -1172,6 +1141,7 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::emulator::Wireless,
+        maybe::Always,
         pasta::{EpAffine, Fp},
     };
     use rand::{Rng, RngExt};
@@ -1181,7 +1151,7 @@ mod tests {
     };
 
     use super::{
-        Always, Boolean, Consistent, Demoted, Element, Emulator, Endoscalar, EndoscalarChallenge,
+        Boolean, Consistent, Demoted, Element, Emulator, Endoscalar, EndoscalarChallenge,
         EndoscalarRangeError, HoistedEndoscalar, Maybe, Point, Uendo,
     };
     use crate::{Simulator, allocator::Standard, vec::CollectFixed};
@@ -1376,37 +1346,27 @@ mod tests {
     }
 
     /// `sample` grinds an out-of-range candidate away and returns the accepted
-    /// candidate together with its payload; `extract_native` then matches the
+    /// candidate together with its payload; its endoscalar matches the
     /// in-circuit extraction.
     #[test]
     fn test_sample_grinds_until_in_range() -> Result<()> {
         // Feed one out-of-range candidate followed by an in-range one. `sample`
         // must reject the first, accept the second, and thread the payload
-        // through unchanged. The wireless emulator is the only driver `sample`
-        // accepts (native witness generation, `Wire = ()`).
+        // through unchanged.
         let in_range = Fp::from(0x0123_4567_89ab_cdefu64);
+        let candidates = [(-Fp::ONE, 7u32), (in_range, 9u32)];
+        let mut attempt = 0usize;
 
-        Emulator::<Wireless<Always<()>, Fp>>::emulate_wireless(in_range, |dr, in_range| {
-            let in_range = in_range.take();
-            let candidates = [(-Fp::ONE, 7u32), (in_range, 9u32)];
-            let mut attempt = 0usize;
-
-            let (challenge, payload) = EndoscalarChallenge::sample(dr, |dr| {
-                let (value, tag) = candidates[attempt];
-                attempt += 1;
-                let elem = Element::alloc(dr, &mut (), Always::<Fp>::just(|| value))?;
-                Ok((elem, tag))
-            })?;
-
-            assert_eq!(attempt, 2, "expected exactly one rejection");
-            assert_eq!(payload, 9, "accepted candidate's payload must be returned");
-            assert_eq!(
-                challenge.extract_native(),
-                super::extract_endoscalar(in_range)?,
-            );
-
-            Ok(())
+        let (value, endo, payload) = Uendo::sample(|| {
+            let candidate = candidates[attempt];
+            attempt += 1;
+            Ok(candidate)
         })?;
+
+        assert_eq!(attempt, 2, "expected exactly one rejection");
+        assert_eq!(value, in_range);
+        assert_eq!(endo, super::extract_endoscalar(in_range)?);
+        assert_eq!(payload, 9, "accepted candidate's payload must be returned");
 
         Ok(())
     }
@@ -1416,31 +1376,23 @@ mod tests {
     /// outcome, never on a real error.
     #[test]
     fn test_sample_propagates_produce_error() -> Result<()> {
-        // The wireless emulator is the sole driver `sample` accepts; the
-        // witness is unused here.
-        Emulator::<Wireless<Always<()>, Fp>>::emulate_wireless((), |dr, _| {
-            let mut calls = 0usize;
-            let outcome = EndoscalarChallenge::sample(dr, |_dr| {
-                calls += 1;
-                Result::<(Element<'_, _>, ())>::Err(ragu_core::Error::InvalidWitness(
-                    "produce failure".into(),
-                ))
-            });
+        let mut calls = 0usize;
+        let outcome = Uendo::sample(|| {
+            calls += 1;
+            Result::<(Fp, ())>::Err(ragu_core::Error::InvalidWitness("produce failure".into()))
+        });
 
-            assert!(outcome.is_err(), "produce error must surface as Err");
-            assert_eq!(calls, 1, "produce error must not be retried");
-
-            Ok(())
-        })?;
+        assert!(outcome.is_err(), "produce error must surface as Err");
+        assert_eq!(calls, 1, "produce error must not be retried");
 
         Ok(())
     }
 
-    /// `try_from_element` classifies an out-of-range element as `Ok(None)` (the
-    /// retry signal) and an in-range element as `Ok(Some(_))`, pinning the
-    /// acceptance boundary at `2^CAPACITY`.
+    /// `try_extract` classifies an out-of-range value as `Ok(None)` (the retry
+    /// signal) and an in-range value as `Ok(Some(_))`, pinning the acceptance
+    /// boundary at `2^CAPACITY`.
     #[test]
-    fn test_try_from_element_classifies_range() -> Result<()> {
+    fn test_try_extract_classifies_range() -> Result<()> {
         let largest_in_range = {
             let mut acc = Fp::ZERO;
             for _ in 0..(Fp::CAPACITY as usize) {
@@ -1450,12 +1402,7 @@ mod tests {
         };
 
         let check = |value: Fp, expect_in_range: bool| -> Result<()> {
-            Emulator::<Wireless<Always<()>, Fp>>::emulate_wireless(value, |dr, value| {
-                let elem = Element::alloc(dr, &mut (), value)?;
-                let classified = EndoscalarChallenge::try_from_element(dr, elem)?;
-                assert_eq!(classified.is_some(), expect_in_range);
-                Ok(())
-            })?;
+            assert_eq!(Uendo::try_extract(value)?.is_some(), expect_in_range);
             Ok(())
         };
 

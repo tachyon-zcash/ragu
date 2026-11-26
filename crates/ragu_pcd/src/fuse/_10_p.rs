@@ -25,13 +25,9 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::{MultiStage, StageExt},
 };
-use ragu_core::{
-    Cycle, Result,
-    drivers::emulator::{Emulator, Wireless},
-    maybe::Always,
-};
+use ragu_core::{Cycle, Result};
 use ragu_primitives::{
-    EndoscalarChallenge, Uendo, lift_endoscalar,
+    Uendo, lift_endoscalar,
     vec::{FixedVec, Len},
 };
 use udon::field::Field;
@@ -66,10 +62,6 @@ pub(super) type NativeInputs<C> = Inputs<<C as Cycle>::NestedCurve, <C as Profil
 /// The native walk stage's witness: the endoscalar and the walk's outputs.
 pub(super) type NativeWalk<C> =
     WalkWitness<<C as Cycle>::NestedCurve, <C as ProfiledCycle>::Profile>;
-
-/// The wireless emulator the fuse step's transcript runs in, which `pre_beta`
-/// is sampled from.
-type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 
 /// Collects the polynomials of an accumulation with their commitments.
 struct Accumulator<'a, 'c, C: Cycle, R: Rank> {
@@ -151,10 +143,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn compute_p<'dr, RNG: rand::CryptoRng>(
+    pub(super) fn compute_p<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        pre_beta: &EndoscalarChallenge<'dr, NativeFuseEmulator<C>>,
+        beta_endo: Uendo,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         application: &NativeApplication<C, R>,
@@ -171,12 +163,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         NativeInputs<C>,
         NativeWalk<C>,
     )> {
-        // Extract endoscalar from pre_beta and compute effective beta. Going
-        // through the validated `EndoscalarChallenge` makes the
-        // `value < 2^CAPACITY` precondition a type invariant rather than an
-        // unchecked argument to `extract_endoscalar`.
-        let beta_endo = pre_beta.extract_native();
-
         let points = self.compute_native_p(
             rng,
             beta_endo,
