@@ -242,7 +242,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(BindChallengesCircuit(0),    mul = 2031, lin = 3061);
     check_constraints!(BindChallengesCircuit(1),    mul = 2036, lin = 3071);
     check_constraints!(BindChallengesCircuit(2),    mul = 2036, lin = 3071);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2044, lin = 3086);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2043, lin = 3084);
     check_constraints!(BindBetaCircuit,             mul = 1888, lin = 3125);
     check_constraints!(BindEndoscalarCircuit,       mul = 970,  lin = 1809);
     // Every native endoscaling step but the last walks four points and has
@@ -914,7 +914,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x2293fbc9bf56c69619acd881948edc559b4a24dbbc01aff9c71a97e696ed09d7"
+        "0x3862c3ddf6b46a5764377f8362f07831a7bc9f198d83d234b7a8172712c4d3e6"
     ));
 
     assert_eq!(
@@ -1529,13 +1529,13 @@ fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
     let params = crate::pasta::baked();
-    let standard = ApplicationBuilder::<Pasta, R, 196>::new().finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 197>::new().finalize(params);
     assert!(
         standard.is_ok(),
-        "196 fields must fit: {:?}",
+        "197 fields must fit: {:?}",
         standard.err()
     );
-    let oversized = ApplicationBuilder::<Pasta, R, 197>::new().finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 198>::new().finalize(params);
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2047 })

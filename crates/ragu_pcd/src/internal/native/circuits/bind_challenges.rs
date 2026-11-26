@@ -220,9 +220,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
             let is_base_case = preamble.is_base_case(dr, allocator)?;
             let generator = generators.g()
                 [native_eval::generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)];
-            let generator = Point::constant(dr, generator)?;
             let negate = is_base_case.not(dr);
-            let term = generator.conditional_negate(dr, &negate)?;
+            let term = Point::constant_conditional_negate(dr, generator, &negate)?;
             let acc = NonzeroBank::scope(dr, |dr, bank| acc.add_incomplete(dr, &term, bank))?;
             unified_output.nested_challenges_partial.provide(acc);
         } else {

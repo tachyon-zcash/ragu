@@ -119,6 +119,42 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
         }
     }
 
+    /// Embeds the constant point `p`, negated iff the provided condition is
+    /// true.
+    ///
+    /// The y-coordinate is $(1 - 2c) y_p$, linear in the condition $c$, so
+    /// this costs no gates. [`conditional_negate`](Self::conditional_negate)
+    /// on a [`constant`](Self::constant) point costs one.
+    ///
+    /// # Soundness
+    ///
+    /// Any satisfying assignment makes the returned point represent `p`
+    /// when `condition` is false and `-p` when `condition` is true.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input error if `p` is the identity.
+    pub fn constant_conditional_negate(
+        dr: &mut D,
+        p: C,
+        condition: &Boolean<'dr, D>,
+    ) -> Result<Self> {
+        let (x, y) = p
+            .coordinates()
+            .ok_or_else(|| Error::InvalidWitness("point at infinity cannot be witnessed".into()))?;
+        let x = Element::constant(dr, x);
+        let y = Element::constant(dr, y).add_coeff(
+            dr,
+            &condition.element(),
+            Coeff::NegativeArbitrary(y.double()),
+        );
+
+        Ok(Point::new_unchecked(
+            Nonzero::new_unchecked(x),
+            Nonzero::new_unchecked(y),
+        ))
+    }
+
     /// Returns the point represented by this gadget.
     pub fn value(&self) -> DriverValue<D, C> {
         D::just(|| {
@@ -367,6 +403,25 @@ mod tests {
         };
 
         double(C::generator())?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_constant_conditional_negate() -> Result<()> {
+        let p = C::generator();
+        for condition in [false, true] {
+            let sim = Simulator::simulate(condition, |dr, condition| {
+                let condition = Boolean::alloc(dr, &mut (), condition)?;
+                dr.reset();
+                let q = Point::constant_conditional_negate(dr, p, &condition)?;
+                let expected = if condition.value().take() { -p } else { p };
+                assert_eq!(q.value().take(), expected);
+
+                Ok(())
+            })?;
+            assert_eq!(sim.num_gates(), 0);
+        }
 
         Ok(())
     }
