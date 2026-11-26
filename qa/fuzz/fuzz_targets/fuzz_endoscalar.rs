@@ -114,7 +114,7 @@ fuzz_target!(|input: Input| {
     // decomposition range fails extraction with a typed `EndoscalarRangeError`
     // source, so the prover must retry the sampled transcript state instead of
     // extracting it. Classifying on that error exercises the same path
-    // `EndoscalarChallenge::sample` grinds on; any other failure is a bug.
+    // `Uendo::sample` grinds on; any other failure is a bug.
     let extracted = match extract_endoscalar::<Fp>(r) {
         Ok(extracted) => extracted,
         Err(err) => {

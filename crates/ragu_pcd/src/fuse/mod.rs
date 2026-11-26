@@ -40,7 +40,7 @@ pub(crate) use _01_application::NativeApplication;
 use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{EndoscalarChallenge, GadgetExt, Point, vec::CollectFixed};
+use ragu_primitives::{GadgetExt, Point, Uendo, vec::CollectFixed};
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -531,15 +531,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // lands in range as an endoscalar challenge. Unlike the single-shot
         // challenges above, `pre_beta` must be ground: each attempt redraws the
         // eval stages' alphas and re-derives `pre_beta` from a fresh transcript
-        // clone, retrying until `EndoscalarChallenge::sample` accepts. Baking the
-        // grind into `sample` means a challenge cannot be produced without it.
+        // clone, retrying until `Uendo::sample` accepts. Baking the grind into
+        // `sample` means a challenge cannot be produced without it.
         //
         // `pre_beta` is the terminal native Fiat-Shamir challenge (`v` is
         // computed, not squeezed), so the accepted transcript clone is dropped
         // rather than threaded onward; the internal circuits re-derive every
         // challenge in-circuit from the values recorded on the builder.
-        let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
-            EndoscalarChallenge::sample(&mut dr, |dr| {
+        let (pre_beta, beta_endo, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
+            Uendo::sample(|| {
                 // Fresh eval-stage alphas each attempt: re-deriving the eval
                 // commitment is what makes `pre_beta` independent across
                 // retries.
@@ -554,11 +554,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     )?;
 
                 let mut transcript = transcript.clone();
-                let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
-                bridge_eval_commitment_point.write(dr, &mut transcript)?;
-                let pre_beta = transcript.challenge(dr)?;
+                let bridge_eval_commitment_point =
+                    Point::constant(&mut dr, bridge_eval_commitment)?;
+                bridge_eval_commitment_point.write(&mut dr, &mut transcript)?;
+                let pre_beta = transcript.challenge(&mut dr)?;
 
-                Ok((pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)))
+                Ok((
+                    *pre_beta.value().take(),
+                    (eval_rx, bridge_eval_rx, bridge_eval_commitment),
+                ))
             })?;
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
@@ -566,15 +570,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // Every nested challenge is now known: commit the nested challenge
         // stage with a zero alpha. Its expected commitment is computed by this
         // step's native binders and completed with beta by the parent's.
-        let nested_challenges = self.commit_nested_challenges(
-            nested_challenges_witness,
-            *pre_beta.element().value().take(),
-            &mut builder,
-        )?;
+        let nested_challenges =
+            self.commit_nested_challenges(nested_challenges_witness, pre_beta, &mut builder)?;
 
         let (points, native_points, native_walk) = self.compute_p(
             rng,
-            &pre_beta,
+            beta_endo,
             &left,
             &right,
             &application,
@@ -597,7 +598,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder.set_x(*x.value().take());
         builder.set_alpha(*alpha.value().take());
         builder.set_u(*u.value().take());
-        builder.set_pre_beta(*pre_beta.element().value().take());
+        builder.set_pre_beta(pre_beta);
 
         self.compute_native_internal_circuits(
             rng,
@@ -652,7 +653,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         self.compute_nested_internal_circuits(
             rng,
-            pre_beta.extract_native(),
+            beta_endo,
             &points,
             &nested_preamble,
             &nested_s_prime_witness,
