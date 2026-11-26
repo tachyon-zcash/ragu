@@ -13,8 +13,8 @@
 //! times the generator. The sum so far is checked against the running
 //! partial the [`eval`] stage witnessed; circuit $k$ continues from partial
 //! $k - 1$. The last circuit also adds the base-case sign's term, reading the
-//! base case off the [`preamble`] as the native circuits do, and enforces
-//! the sum equal to the instance's [`nested_challenges_partial`] slot: the
+//! base case off the [`preamble`] as the native circuits do, and provides
+//! the sum as the instance's [`nested_challenges_partial`] slot: the
 //! challenge stage's commitment without its $\beta$ term, which the nested
 //! side reads the base case from and which a parent's
 //! [`bind_beta`](super::bind_beta) completes with $\beta$'s term and holds
@@ -210,12 +210,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
             });
         }
 
-        let mut acc = acc.expect("two terms were added");
+        let acc = acc.expect("two terms were added");
 
         // The last circuit adds the base-case sign's term, plus or minus the
-        // generator of the challenge stage's sign value, and pins the sum to
-        // the instance; the others check it against the eval stage's next
-        // partial.
+        // generator of the challenge stage's sign value, and provides the sum
+        // as the instance's slot; the others check it against the eval
+        // stage's next partial.
         if K + 1 == NUM_BINDERS {
             let is_base_case = preamble.is_base_case(dr, allocator)?;
             let generator = generators.g()
@@ -223,11 +223,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
             let generator = Point::constant(dr, generator)?;
             let negate = is_base_case.not(dr);
             let term = generator.conditional_negate(dr, &negate)?;
-            acc = NonzeroBank::scope(dr, |dr, bank| acc.add_incomplete(dr, &term, bank))?;
-            let binding = unified_output
-                .nested_challenges_partial
-                .receive(dr, allocator)?;
-            acc.enforce_equal(dr, &binding)?;
+            let acc = NonzeroBank::scope(dr, |dr, bank| acc.add_incomplete(dr, &term, bank))?;
+            unified_output.nested_challenges_partial.provide(acc);
         } else {
             acc.enforce_equal(dr, &eval.partials[K])?;
         }

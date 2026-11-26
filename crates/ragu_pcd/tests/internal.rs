@@ -51,10 +51,11 @@ where
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
 //
-// The largest header the production rank fits: the challenge binders load
-// the preamble, query and eval stages, and with the step's own output header
+// A header near the largest the production rank fits (see
+// `test_header_capacity_at_finalize`): the challenge binders load the
+// preamble, query and eval stages, and with the step's own output header
 // and online openings in the preamble beside the children's bridge hashes
-// the last binder fills the gate budget here.
+// the last binder nearly fills the gate budget here.
 pub const HEADER_SIZE: usize = 194;
 const AGGREGATOR_HEADER_SIZE: usize = 195;
 
@@ -241,7 +242,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(BindChallengesCircuit(0),    mul = 2031, lin = 3061);
     check_constraints!(BindChallengesCircuit(1),    mul = 2036, lin = 3071);
     check_constraints!(BindChallengesCircuit(2),    mul = 2036, lin = 3071);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2047, lin = 3093);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2044, lin = 3086);
     check_constraints!(BindBetaCircuit,             mul = 1888, lin = 3125);
     check_constraints!(BindEndoscalarCircuit,       mul = 970,  lin = 1809);
     // Every native endoscaling step but the last walks four points and has
@@ -913,7 +914,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x0db4f6623b447917bc954d311d99b456be477e9004699ad0cbfb3ab94bef3ace"
+        "0x2293fbc9bf56c69619acd881948edc559b4a24dbbc01aff9c71a97e696ed09d7"
     ));
 
     assert_eq!(
@@ -1528,13 +1529,13 @@ fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
     let params = crate::pasta::baked();
-    let standard = ApplicationBuilder::<Pasta, R, 194>::new().finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 196>::new().finalize(params);
     assert!(
         standard.is_ok(),
-        "194 fields must fit: {:?}",
+        "196 fields must fit: {:?}",
         standard.err()
     );
-    let oversized = ApplicationBuilder::<Pasta, R, 195>::new().finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 197>::new().finalize(params);
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2047 })
