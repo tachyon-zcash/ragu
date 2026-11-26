@@ -998,17 +998,25 @@ fn encode_messages<P: Affine>(messages: &Messages<P>, out: &mut Writer) {
         p_at_inverse_r,
         q_at_r,
     } = reduction;
-    assert!(more.is_empty(), "a fixture's claims fold in one batch");
-    let Fold {
-        inner,
-        outer,
-        inner_epsilon,
-        outer_epsilon,
-    } = fold;
-    out.point(inner);
-    out.point(outer);
-    out.field(inner_epsilon);
-    out.field(outer_epsilon);
+    // The first batch's fold, then those of the batches past it, which a
+    // proof whose claims fold in one batch has none of.
+    let encode_fold = |fold: &Fold<P>, out: &mut Writer| {
+        let Fold {
+            inner,
+            outer,
+            inner_epsilon,
+            outer_epsilon,
+        } = fold;
+        out.point(inner);
+        out.point(outer);
+        out.field(inner_epsilon);
+        out.field(outer_epsilon);
+    };
+    encode_fold(fold, out);
+    out.u32(more.len());
+    for fold in more {
+        encode_fold(fold, out);
+    }
     out.point(p);
     out.point(q);
     out.fields(openings);
@@ -1136,15 +1144,21 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
 }
 
 fn decode_messages<P: Affine>(cursor: &mut Cursor<'_>) -> Option<Messages<P>> {
-    let fold = Fold {
-        inner: cursor.point()?,
-        outer: cursor.point()?,
-        inner_epsilon: cursor.field()?,
-        outer_epsilon: cursor.field()?,
-    };
+    fn decode_fold<P: Affine>(cursor: &mut Cursor<'_>) -> Option<Fold<P>> {
+        Some(Fold {
+            inner: cursor.point()?,
+            outer: cursor.point()?,
+            inner_epsilon: cursor.field()?,
+            outer_epsilon: cursor.field()?,
+        })
+    }
+    let fold = decode_fold(cursor)?;
+    let more = (0..cursor.u32()?)
+        .map(|_| decode_fold(cursor))
+        .collect::<Option<Vec<_>>>()?;
     let reduction = Reduction {
         fold,
-        more: Vec::new(),
+        more,
         p: cursor.point()?,
         q: cursor.point()?,
         openings: cursor.fields()?,
@@ -1921,15 +1935,18 @@ fn random_compressed<C: Cycle>(shape: &CompressedProof<C>, tape: &mut Tape) -> C
 }
 
 fn random_messages<P: Affine>(shape: &Messages<P>, tape: &mut Tape) -> Messages<P> {
+    let mut fold = || Fold {
+        inner: tape.point(),
+        outer: tape.point(),
+        inner_epsilon: tape.field(),
+        outer_epsilon: tape.field(),
+    };
+    let first = fold();
+    let more = (0..shape.reduction.more.len()).map(|_| fold()).collect();
     Messages {
         reduction: Reduction {
-            fold: Fold {
-                inner: tape.point(),
-                outer: tape.point(),
-                inner_epsilon: tape.field(),
-                outer_epsilon: tape.field(),
-            },
-            more: Vec::new(),
+            fold: first,
+            more,
             p: tape.point(),
             q: tape.point(),
             openings: tape.fields(shape.reduction.openings.len()),
