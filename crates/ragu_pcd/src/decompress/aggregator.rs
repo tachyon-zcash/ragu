@@ -275,50 +275,97 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // With the extension's polynomials no fuse circuit fits a polynomial of
     // the aggregator rank whole, and neither do the stages some reserve end
     // to end: every one is cut into pages, over stages laid side by side.
+    //
+    // The headers' stages, and the circuits that hash and collapse the
+    // headers, grow with the header size, and with them the polynomials
+    // every circuit reads. Past `WIDE` elements the circuits take the wide
+    // layouts, with more pages, or pages where they are whole. The layouts
+    // were checked to cut at the header sizes either side of `WIDE` and at
+    // a few between it and the widest, not at every size; a profile whose
+    // circuits do not cut is refused where it is registered.
     const PAGES: Pages = {
         use crate::profile::paging::{
             native_loads::{self as native, INPUTS, WALK},
             nested_loads::{ERRORS, EVAL, POINTS, PREAMBLE, QUERY, STEP_BITS as BITS},
         };
+        const WIDE: usize = 32;
+        let wide = HEADER_SIZE > WIDE;
         Pages {
-            hashes_1: Cut::WHOLE,
-            hashes_2: Cut::WHOLE,
-            collapse: Cut::pages(6),
+            hashes_1: if wide { Cut::pages(2) } else { Cut::WHOLE },
+            hashes_2: if wide { Cut::pages(2) } else { Cut::WHOLE },
+            collapse: if wide { Cut::pages(17) } else { Cut::pages(6) },
             // A page for the first two stages. Eight that load the query
-            // stage fold the evaluations, over a carry stage they share.
-            // Then two groups take the quotients: a page that loads the
-            // query stage and holds no gates hands four that load the
-            // eval stage what each reads of it. The last page sums the
-            // eval stage.
-            compute_v: Cut::loading(&[
-                native::PREAMBLE,
-                native::QUERY,
-                native::QUERY,
-                native::QUERY,
-                native::QUERY,
-                native::QUERY,
-                native::QUERY,
-                native::QUERY,
-                native::QUERY,
-                native::QUERY,
-                native::EVAL,
-                native::EVAL,
-                native::EVAL,
-                native::EVAL,
-                native::QUERY,
-                native::EVAL,
-                native::EVAL,
-                native::EVAL,
-                native::EVAL,
-                native::EVAL,
-            ])
-            .idling(&[9, 14])
-            .sharing(&[(1, 8), (9, 5), (14, 5)]),
+            // stage fold the evaluations, over a carry stage they share,
+            // eleven for wide headers. Then two groups take the
+            // quotients: a page that loads the query stage and holds no
+            // gates hands four that load the eval stage what each reads of
+            // it, five for wide headers. The last page sums the eval
+            // stage.
+            compute_v: if wide {
+                Cut::loading(&[
+                    native::PREAMBLE,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::QUERY,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                ])
+                .idling(&[12, 18])
+                .sharing(&[(1, 11), (12, 6), (18, 6)])
+            } else {
+                Cut::loading(&[
+                    native::PREAMBLE,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::QUERY,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::QUERY,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                    native::EVAL,
+                ])
+                .idling(&[9, 14])
+                .sharing(&[(1, 8), (9, 5), (14, 5)])
+            },
             // The binding circuits read little of their stages: a page that
             // loads the first two alone has most of one.
             bind_challenges: Cut::loading(&[native::PREAMBLE, native::EVAL]),
-            bind_beta: Cut::WHOLE,
-            bind_endoscalar: Cut::loading(&[INPUTS, INPUTS, INPUTS, INPUTS, INPUTS, WALK]),
+            bind_beta: if wide { Cut::pages(2) } else { Cut::WHOLE },
+            bind_endoscalar: if wide {
+                Cut::loading(&[INPUTS, INPUTS, INPUTS, INPUTS, INPUTS, INPUTS, WALK])
+            } else {
+                Cut::loading(&[INPUTS, INPUTS, INPUTS, INPUTS, INPUTS, WALK])
+            },
             // A page that loads the points and holds no gates, then
             // fifteen that load the endoscalar's bits and take four
             // endoscalings each.
@@ -330,26 +377,46 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
             native_branches: true,
             // Three pairs of pages apart hold the points the walk folds to
             // their copies in the `preamble` branch, which are most of
-            // them. Then the pages that load the points check each to be
+            // them, five for wide headers, whose points outgrow three. Then the pages that load the points check each to be
             // on the curve, and a page that holds no gates loads the
             // `query` stage for what the others read of it.
-            nested_collapse: Cut::loading(&[
-                POINTS, PREAMBLE, POINTS, PREAMBLE, POINTS, PREAMBLE, POINTS, POINTS, POINTS,
-                POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, PREAMBLE, PREAMBLE, ERRORS,
-                ERRORS, ERRORS, ERRORS, QUERY, EVAL,
-            ])
-            .apart(&[2, 2, 2])
-            .idling(&[22]),
+            nested_collapse: if wide {
+                Cut::loading(&[
+                    POINTS, PREAMBLE, POINTS, PREAMBLE, POINTS, PREAMBLE, POINTS, PREAMBLE, POINTS,
+                    PREAMBLE, POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, POINTS,
+                    POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, PREAMBLE, PREAMBLE,
+                    ERRORS, ERRORS, ERRORS, ERRORS, QUERY, EVAL,
+                ])
+                .apart(&[2, 2, 2, 2, 2])
+                .idling(&[31])
+            } else {
+                Cut::loading(&[
+                    POINTS, PREAMBLE, POINTS, PREAMBLE, POINTS, PREAMBLE, POINTS, POINTS, POINTS,
+                    POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, POINTS, PREAMBLE, PREAMBLE,
+                    ERRORS, ERRORS, ERRORS, ERRORS, QUERY, EVAL,
+                ])
+                .apart(&[2, 2, 2])
+                .idling(&[22])
+            },
             // Two pages that hold no gates, for the stages the circuit
             // reads little of, then as the native `compute_v`: seven pages
             // over the `query` stage and two groups of four over the `f`
             // branch, each handed what it reads of the `query` stage.
-            nested_compute_v: Cut::loading(&[
-                PREAMBLE, ERRORS, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, EVAL,
-                EVAL, EVAL, EVAL, QUERY, EVAL, EVAL, EVAL, EVAL, EVAL,
-            ])
-            .idling(&[0, 1, 9, 14])
-            .sharing(&[(2, 7), (9, 5), (14, 5)]),
+            nested_compute_v: if wide {
+                Cut::loading(&[
+                    PREAMBLE, ERRORS, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY,
+                    QUERY, EVAL, EVAL, EVAL, EVAL, QUERY, EVAL, EVAL, EVAL, EVAL, EVAL,
+                ])
+                .idling(&[0, 1, 10, 15])
+                .sharing(&[(2, 8), (10, 5), (15, 5)])
+            } else {
+                Cut::loading(&[
+                    PREAMBLE, ERRORS, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, QUERY, EVAL,
+                    EVAL, EVAL, EVAL, QUERY, EVAL, EVAL, EVAL, EVAL, EVAL,
+                ])
+                .idling(&[0, 1, 9, 14])
+                .sharing(&[(2, 7), (9, 5), (14, 5)])
+            },
             nested_endoscaling_step: Cut::loading(&[
                 POINTS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS, BITS,
                 BITS, BITS, BITS,

@@ -119,6 +119,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `Aggregator` profile proves at `AggregatorRank`, which is now `R<13>`,
+  the wallet rank, where it proved at `R<15>`: the fuse's internal circuits
+  that outgrow a rank-13 polynomial are cut into pages
+  (`ragu_circuits::paging`), declared by the profile's `Profile::PAGES`, and
+  the decompression's chunk circuits are fitted to rank-13 polynomials. Its
+  proofs carry 1,271 polynomials at header size 4, and its page layouts take
+  more pages for headers past 32 elements. A proof whose claims outgrow one
+  fold polynomial folds them in batches. The compression commits its runs at
+  the generators of the decompression at the new rank, so compressed proofs
+  from earlier versions do not verify, the Standard profile's included; the
+  Standard profile's proofs and circuits are otherwise unchanged.
 - `Application::rerandomize` fuses its input twice through the
   rerandomization step, each time with the application's bootstrap proof as
   the right child, and no longer keeps a seeded unit proof of its own for
@@ -167,11 +178,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregator rank, so that each challenge is a function of every message
   before it and a circuit over the circuit field absorbs the commitment as a
   point its verifier holds to that stage. The Standard fuse fixtures'
-  compressed digests and verifier fingerprints pin both. Those generators lie
-  past the Standard tables, so `baked()` carries the reach of them the runs
-  take (`pasta::STAGE_REACH`), through `IpaCycle::nested_generator`, and
-  serves a Standard application that compresses; the aggregator's own tables
-  hold the same points.
+  compressed digests and verifier fingerprints pin both. The aggregator rank
+  is the wallet's, so those generators lie in the Standard tables, and the
+  aggregator's own tables hold the same points.
 - The `Aggregator` profile's nested online batch holds the nested IPA's
   challenge polynomial, and its query stage that polynomial's opening, so the
   scalar field's online stages take one more gate at the front of every

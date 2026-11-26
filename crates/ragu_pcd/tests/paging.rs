@@ -345,6 +345,14 @@ fn census_aggregator() -> Result<()> {
     census!("aggregator", ragu_pcd::profile::Aggregator<4>, 4, &[])
 }
 
+/// Prints the aggregator profile's census at the widest header, whose
+/// circuits take the wide layouts.
+#[test]
+#[ignore = "prints the aggregator profile's census at the widest header"]
+fn census_aggregator_wide() -> Result<()> {
+    census!("aggregator", ragu_pcd::profile::Aggregator<195>, 195, &[])
+}
+
 /// Prints the chunk circuit counts the aggregator profile pins: those of
 /// the schedules that verify a wallet's compressed proof in chunk circuits
 /// at the aggregator rank.
