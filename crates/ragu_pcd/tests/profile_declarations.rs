@@ -703,7 +703,7 @@ fn aggregator_declares_the_decompression() {
     let batch = online::stages::RXS;
     // A paged circuit adds a polynomial for each page before its last and
     // for each carry stage, and a paged step takes that many more.
-    let expected = |native_circuits: usize| {
+    let expected = |native_circuits: usize, pages: crate::profile::Pages| {
         let mut shape = Shape::solve_with_online(
             native_circuits + 2 + 6 + batch + paging::rxs(&pages, false),
             115 + 1 + nested_stages + batch + paging::rxs(&pages, true),
@@ -715,8 +715,11 @@ fn aggregator_declares_the_decompression() {
         shape.source_polynomials = 2;
         shape
     };
-    assert_eq!(shape, expected(224));
-    assert_eq!(Shape::of::<Aggregator<195>>(), expected(237));
+    assert_eq!(shape, expected(224, pages));
+    assert_eq!(
+        Shape::of::<Aggregator<195>>(),
+        expected(237, Aggregator::<195>::PAGES)
+    );
     assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
     std::println!(
         "aggregator at header size 4: {shape:?}, {} polynomials",

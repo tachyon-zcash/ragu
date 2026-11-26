@@ -100,33 +100,21 @@ fn lifts_and_digits_stages_land_where_the_layout_says() {
     );
 }
 
-/// The Standard parameters reach every run's generators through the baked
-/// stage reach, at the same points as the aggregator's table, so a wallet
-/// over `baked()` and its aggregator over `baked_aggregator()` commit a
-/// run alike.
+/// At the aggregator rank, which is the wallet's, the Standard table holds
+/// every run's generators, at the same points as the aggregator's table,
+/// so a wallet over `baked()` and its aggregator over `baked_aggregator()`
+/// commit a run alike.
 #[test]
 fn standard_parameters_reach_the_runs_generators() {
-    let layout = Layout::nested::<Fq, Standard, K>();
-    // The runs follow the aggregator's online stages of the scalar field.
-    let gates: usize = crate::decompress::online::Values::NESTED.prefix_gates()
-        + nested_front::<K>(&layout)[..num_runs::<K>()]
-            .iter()
-            .map(|source| source.shape().gates())
-            .sum::<usize>();
-    assert!(
-        gates <= crate::pasta::STAGE_REACH,
-        "the online stages and the runs take {gates} gates, past the baked stage reach"
-    );
     let standard = run_bases::<Pasta, K>(crate::pasta::baked()).unwrap();
     let aggregator = run_bases::<Pasta, K>(crate::pasta::baked_aggregator()).unwrap();
     assert_eq!(standard, aggregator);
+    let held = Pasta::nested_generators(crate::pasta::baked()).g();
     let table = Pasta::nested_generators(crate::pasta::baked_aggregator()).g();
     for (bases, degrees) in standard.iter().zip(run_degrees::<Standard, K, R>()) {
         for (base, degree) in bases.iter().zip(degrees) {
-            assert!(
-                degree >= Pasta::nested_generators(crate::pasta::baked()).g().len(),
-                "the runs lie past the Standard table"
-            );
+            assert!(degree < held.len(), "a run lies past the Standard table");
+            assert_eq!(*base, held[degree]);
             assert_eq!(*base, table[degree]);
             assert!(!base.is_identity());
         }
