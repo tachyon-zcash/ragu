@@ -19,9 +19,10 @@ use core::ops::Range;
 use ragu_core::{
     Coeff, Error, Result,
     convert::WireMap,
-    drivers::{Driver, DriverTypes, LinearExpression},
-    gadgets::Gadget,
+    drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
+    gadgets::{Bound, Gadget},
     maybe::Empty,
+    routines::Routine,
 };
 use udon::field::Field;
 
@@ -36,8 +37,10 @@ use crate::{
     raw::{CircuitAdapterRef, RawCircuit},
 };
 
-/// The places among a circuit's gates at which a cut is looked for.
-const GRID: usize = 1024;
+/// The places among a circuit's gates at which a cut is looked for, at
+/// most: the circuit's gates are shared into as many stretches, and a cut
+/// may fall at one gate of each.
+pub(super) const GRID: usize = 1024;
 
 /// What a value on the circuit's carry stage, which every page loads,
 /// counts for against one on a carry stage that a group of pages shares,
@@ -57,11 +60,11 @@ const UNIT: u64 = 1 << 10;
 /// the same whatever the carry stages' sizes, so it is counted once and
 /// the cuts looked for under each size off it.
 struct Costs {
-    /// The gates of the circuit's own between two places a page may end
-    /// at.
-    step: usize,
-    /// Those places, the last included.
-    places: usize,
+    /// The places a page may end at, each as the gates of the circuit's
+    /// own before it: none, then one gate of each stretch of the
+    /// circuit's gates, the one fewest wires are named across among those
+    /// that split no routine, then all of them.
+    places: Vec<usize>,
     /// For each stage, what the gates before each place read of it.
     reads: Vec<Vec<u64>>,
     /// For each place, the wires of the circuit's own allocated before it
@@ -80,20 +83,13 @@ impl Costs {
     ) -> Self {
         let own_start = stages.own_start();
         let own = recording.num_gates.saturating_sub(own_start);
-        // The places a page may end at, as gates of the circuit's own
-        // before them: every `step`-th, and the last.
-        let step = own.div_ceil(GRID).max(1);
-        let places = own.div_ceil(step);
-
-        // What each stretch between two places reads of each stage, and
-        // for each place the wires of the circuit's own allocated before
-        // it that a constraint past it names. A stage's wire is carried
-        // once however many constraints name it, so it counts for one
-        // [`UNIT`] over all the stretches that read it.
-        let mut reads = vec![vec![0u64; places + 1]; stages.spans.len()];
-        let mut read: BTreeSet<(u32, usize)> = BTreeSet::new();
-        let mut named: BTreeMap<u32, usize> = BTreeMap::new();
         let place = |gate: usize| placement.place(gate).map(|place| place - own_start);
+
+        // For each wire of the circuit's own, the last gate a constraint
+        // that names it is homed at; and each wire of a stage with the
+        // gate a constraint that names it is homed at.
+        let mut read: Vec<(u32, usize)> = Vec::new();
+        let mut named: BTreeMap<u32, usize> = BTreeMap::new();
         for (index, (emitted, terms)) in recording.constraints.iter().enumerate() {
             if related.holds(index) {
                 continue;
@@ -110,9 +106,7 @@ impl Costs {
             };
             for &(wire, _) in terms {
                 match stages.stage_of((wire / 4) as usize) {
-                    Some(_) => {
-                        read.insert((wire, position / step + 1));
-                    }
+                    Some(_) => read.push((wire, position)),
                     None if wire >= 4 => {
                         let last = named.entry(wire).or_insert(position);
                         *last = (*last).max(position);
@@ -121,6 +115,58 @@ impl Costs {
                 }
             }
         }
+
+        // For a cut before each gate, the wires of the circuit's own
+        // allocated before it that a constraint past it names, and
+        // whether it splits a routine: falls after one of its gates and
+        // not after all of them.
+        let mut across = vec![0i64; own + 2];
+        for (&wire, &last) in &named {
+            let gate = place((wire / 4) as usize).expect("a gate of the circuit's own");
+            if gate < last {
+                across[gate + 1] += 1;
+                across[last + 1] -= 1;
+            }
+        }
+        let mut split = vec![0i64; own + 2];
+        for routine in &recording.routines {
+            let gates = routine.clone().filter_map(place);
+            if let (Some(first), Some(last)) = (gates.clone().min(), gates.max()) {
+                split[first + 1] += 1;
+                split[last + 1] -= 1;
+            }
+        }
+        for gate in 1..across.len() {
+            across[gate] += across[gate - 1];
+            split[gate] += split[gate - 1];
+        }
+
+        // The places a page may end at: of each stretch of `step` gates,
+        // the gate fewest wires are named across among those that split
+        // no routine, the last such gate if several do as well; and the
+        // end of the circuit's gates.
+        let step = own.div_ceil(GRID).max(1);
+        let mut places = vec![0];
+        for stretch in (0..own).step_by(step) {
+            let found = (stretch + 1..=(stretch + step).min(own.saturating_sub(1)))
+                .filter(|&gate| split[gate] == 0)
+                .min_by_key(|&gate| (across[gate], core::cmp::Reverse(gate)));
+            places.extend(found);
+        }
+        if own > 0 {
+            places.push(own);
+        }
+        let last = places.len() - 1;
+
+        // What each stretch between two places reads of each stage. A
+        // stage's wire is carried once however many constraints name it,
+        // so it counts for one [`UNIT`] over all the stretches that read
+        // it.
+        let read: BTreeSet<(u32, usize)> = read
+            .into_iter()
+            .map(|(wire, position)| (wire, places.partition_point(|&gates| gates <= position)))
+            .collect();
+        let mut reads = vec![vec![0u64; last + 1]; stages.spans.len()];
         let mut stretches: BTreeMap<u32, u64> = BTreeMap::new();
         for &(wire, _) in &read {
             *stretches.entry(wire).or_default() += 1;
@@ -129,29 +175,16 @@ impl Costs {
             let (stage, _) = stages
                 .stage_of((wire / 4) as usize)
                 .expect("a stage's wire");
-            reads[stage][stretch] += (UNIT / stretches[&wire]).max(1);
+            reads[stage][stretch.min(last)] += (UNIT / stretches[&wire]).max(1);
         }
         for stage in &mut reads {
-            for place in 1..=places {
+            for place in 1..=last {
                 stage[place] += stage[place - 1];
             }
         }
-        let mut crossing = vec![0i64; places + 2];
-        for (&wire, &last) in &named {
-            let gate = place((wire / 4) as usize).expect("a gate of the circuit's own");
-            // The places past the wire's gate and not past its last reader.
-            let (from, to) = (gate / step + 1, last / step);
-            if from <= to {
-                crossing[from] += 1;
-                crossing[to + 1] -= 1;
-            }
-        }
-        for place in 1..crossing.len() {
-            crossing[place] += crossing[place - 1];
-        }
+        let crossing = places.iter().map(|&gates| across[gates]).collect();
 
         Costs {
-            step,
             places,
             reads,
             crossing,
@@ -219,9 +252,10 @@ impl Layout {
     /// a carry stage of `carry_gates` gates that ends at gate `limit`, so
     /// that the pages carry little: a page ends where few of the wires
     /// before are named after, and holds the constraints that name little
-    /// of the stages it does not load. The cuts are looked for on a grid
-    /// of [`GRID`] places at most, and what a cut carries is counted with
-    /// repeats, so the layout is a good one rather than the best. The
+    /// of the stages it does not load. The cuts are looked for at
+    /// [`GRID`] places at most, none of which splits a routine the
+    /// circuit calls, and what a cut carries is counted with repeats, so
+    /// the layout is a good one rather than the best. The
     /// pages apart hold what `related` gives them, before carry stages of
     /// their own that end at gate `limit` too, and each group of pages
     /// that share a carry stage has one of `local_gates` gates right
@@ -262,15 +296,15 @@ impl Layout {
             .ok_or_else(short)?;
 
         // The places a page may end at, as gates of the circuit's own
-        // before them: every `step`-th, and the last.
+        // before them.
         let Costs {
-            step,
             places,
             reads,
             crossing,
         } = costs;
-        let (step, places) = (*step, *places);
-        let before = |place: usize| (place * step).min(own);
+        debug_assert_eq!(places.last().copied().unwrap_or(0), own);
+        let before = |place: usize| places[place];
+        let places = places.len() - 1;
 
         // The least a cut of the gates before each place into the pages so
         // far carries, and where the last of those pages then starts.
@@ -590,6 +624,10 @@ pub(super) struct Recording<F> {
     raw: Vec<(usize, Vec<(u32, F)>)>,
     /// Each wire of the public output as emitted, in traversal order.
     raw_outputs: Vec<u32>,
+    /// The gates each routine the circuit calls allocates, in the order
+    /// of the calls: those of a routine called within another are among
+    /// the outer one's.
+    pub(super) routines: Vec<Range<usize>>,
     /// Each constraint over the gates' wires, with the gates allocated
     /// when it was emitted: empty until the recording is
     /// [expanded](Self::expanded).
@@ -682,6 +720,11 @@ impl<F: Field> Recording<F> {
         for wire in &self.raw_outputs {
             state.update(&wire.to_le_bytes());
         }
+        state.update(&(self.routines.len() as u64).to_le_bytes());
+        for routine in &self.routines {
+            state.update(&(routine.start as u64).to_le_bytes());
+            state.update(&(routine.end as u64).to_le_bytes());
+        }
         let mut digest = [0; 32];
         digest.copy_from_slice(state.finalize().as_bytes());
         digest
@@ -695,9 +738,11 @@ impl<F: Field> Recording<F> {
                 derived: Vec::new(),
                 raw: Vec::new(),
                 raw_outputs: Vec::new(),
+                routines: Vec::new(),
                 constraints: Vec::new(),
                 outputs: Vec::new(),
             },
+            depth: 0,
         };
         walk(&mut dr, &CircuitAdapterRef(circuit))?;
         Ok(dr.recording)
@@ -1063,7 +1108,52 @@ impl Placement {
             placed as usize, own,
             "every gate feeds one that feeds nothing"
         );
-        Placement { own_start, rank }
+        let mut placement = Placement { own_start, rank };
+        placement.gather(&recording.routines);
+        placement
+    }
+
+    /// Brings the gates of each of `routines` together, in the order the
+    /// circuit allocates them, at the place of the last of them: a routine
+    /// is cut whole, and its last gates are beside what reads it.
+    fn gather(&mut self, routines: &[Range<usize>]) {
+        if routines.is_empty() {
+            return;
+        }
+        let own = self.rank.len();
+        let within = |routine: &Range<usize>| {
+            let start = routine.start.saturating_sub(self.own_start).min(own);
+            start..routine.end.saturating_sub(self.own_start).min(own)
+        };
+        // The routine each gate is of, and the last place of each
+        // routine's gates.
+        let mut of = vec![usize::MAX; own];
+        let mut last = vec![0u32; routines.len()];
+        for (index, routine) in routines.iter().enumerate() {
+            for gate in within(routine) {
+                of[gate] = index;
+                last[index] = last[index].max(self.rank[gate]);
+            }
+        }
+        let mut order = vec![0usize; own];
+        for (gate, &rank) in self.rank.iter().enumerate() {
+            order[rank as usize] = gate;
+        }
+        let mut rank = vec![u32::MAX; own];
+        let mut placed = 0;
+        for gate in order {
+            let gates = match of[gate] {
+                usize::MAX => gate..gate + 1,
+                index if self.rank[gate] == last[index] => within(&routines[index]),
+                _ => continue,
+            };
+            for gate in gates {
+                rank[gate] = placed;
+                placed += 1;
+            }
+        }
+        debug_assert_eq!(placed as usize, own, "every gate is placed once");
+        self.rank = rank;
     }
 
     /// The place of a gate counted over the whole circuit, counted from
@@ -1078,6 +1168,8 @@ impl Placement {
 /// combinations the circuit makes of them, each kept as made.
 struct Prober<F> {
     recording: Recording<F>,
+    /// The routines the walk is within.
+    depth: usize,
 }
 
 impl<F: Field> DriverTypes for Prober<F> {
@@ -1122,6 +1214,26 @@ impl<'dr, F: Field> Driver<'dr> for Prober<F> {
         let at = self.recording.num_gates;
         self.recording.raw.push((at, lc(Terms::new()).terms));
         Ok(())
+    }
+
+    fn routine<Ro: Routine<F> + 'dr>(
+        &mut self,
+        routine: Ro,
+        input: Bound<'dr, Self, Ro::Input>,
+    ) -> Result<Bound<'dr, Self, Ro::Output>> {
+        // Run where it is called, as a driver that knows no routines
+        // runs it, and noted for the gates it allocates: a page holds
+        // all of them or none.
+        let start = self.recording.num_gates;
+        self.depth += 1;
+        let output = Emulator::predict(&routine, &input)
+            .and_then(|predicted| routine.execute(self, input, predicted.into_aux()));
+        self.depth -= 1;
+        let gates = start..self.recording.num_gates;
+        if self.depth == 0 && !gates.is_empty() {
+            self.recording.routines.push(gates);
+        }
+        output
     }
 }
 

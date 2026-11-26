@@ -81,9 +81,9 @@ impl<F: Field> Program<F> {
         }
         // TODO(#503): a routine the circuit calls is replayed here as part
         // of the page's flat run, so its segment is not one a memo can
-        // key on. For that, the pager keeps the call's gates on one page,
-        // and the page calls the routine on `dr`, in a segment the floor
-        // planner places among the page's gates.
+        // key on. Its gates are all on this page, together and in order;
+        // what is left is for the page to call the routine on `dr`, in a
+        // segment the floor planner places among the page's gates.
         let one = D::ONE;
         let mut sums: Vec<D::Wire> = Vec::with_capacity(self.sums.len());
         for terms in &self.sums {

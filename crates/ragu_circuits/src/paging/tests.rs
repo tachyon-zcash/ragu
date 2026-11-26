@@ -5,6 +5,7 @@ use ragu_core::{
     gadgets::{Bound, Kind},
     maybe::Maybe,
     pasta::Fp,
+    routines::{Prediction, Routine},
 };
 use ragu_primitives::{
     Element,
@@ -1256,6 +1257,148 @@ fn the_masks_cover_the_layout() -> Result<()> {
     for page in 0..4 {
         let _: &dyn WiringObject<Fp, R> = &paged.own_mask::<R>(page)?.into_inner();
         assert_eq!(layout.window(page), layout.firsts[page]..layout.carry.start);
+    }
+    Ok(())
+}
+
+/// `BLOCKS` blocks of seven gates after the first: a block takes one value
+/// and gives one, and holds two between its gates.
+struct Blocks<const BLOCKS: usize>;
+
+impl<const BLOCKS: usize> Circuit<Fp> for Blocks<BLOCKS> {
+    type Instance<'source> = Fp;
+    type Witness<'source> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Fp>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Fp>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+        let mut acc = Element::alloc(dr, &mut Standard::new(), witness)?;
+        for _ in 0..BLOCKS {
+            let mut earlier = acc.clone();
+            let mut later = acc.square(dr)?;
+            for _ in 0..5 {
+                let next = earlier.mul(dr, &later)?;
+                earlier = core::mem::replace(&mut later, next);
+            }
+            acc = earlier.mul(dr, &later)?;
+        }
+        Ok(WithAux::new(acc, D::unit()))
+    }
+}
+
+#[test]
+fn a_cut_falls_between_blocks() -> Result<()> {
+    // Seven times as many gates as there are places a cut is looked for
+    // at, so one place for every seven gates, in blocks of seven: a cut
+    // between two blocks carries the one value that passes from block to
+    // block, and a cut within a block the two it holds. Every cut is
+    // found between two blocks, though the blocks start a gate past the
+    // sevens.
+    let circuit = Blocks::<1024>;
+    assert_eq!(own_gates(&circuit)?, 7 * GRID + 1);
+    let paged = Paged::cut(circuit, &Stages::whole(1).pages(20), 400)?;
+    paged.check()?;
+    let report = paged.report();
+    assert!(report.pages.iter().filter(|page| page.gates > 0).count() > 1);
+    assert!(
+        report.cuts.iter().all(|&carried| carried <= 1),
+        "{:?}",
+        report.cuts
+    );
+    Ok(())
+}
+
+/// Six squarings, as a routine.
+#[derive(Clone)]
+struct Squarings;
+
+impl Routine<Fp> for Squarings {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        (0..6).try_fold(input, |acc, _| acc.square(dr))
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp, Wire = ()>>(
+        &self,
+        _: &mut D,
+        _: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// `CALLS` calls of [`Squarings`], each on the square of the one before:
+/// a chain that carries one value wherever it is cut.
+struct Called<const CALLS: usize>;
+
+impl<const CALLS: usize> Circuit<Fp> for Called<CALLS> {
+    type Instance<'source> = Fp;
+    type Witness<'source> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Fp>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Fp>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+        let mut acc = Element::alloc(dr, &mut Standard::new(), witness)?;
+        for _ in 0..CALLS {
+            acc = dr.routine(Squarings, acc)?.square(dr)?;
+        }
+        Ok(WithAux::new(acc, D::unit()))
+    }
+}
+
+#[test]
+fn a_routine_is_not_cut() -> Result<()> {
+    // A cut carries as much within a call as between two, and a page has
+    // room left past the last call it holds whole: every call's gates are
+    // on one page all the same.
+    let routines = Recording::of(&Called::<30>)?.routines;
+    assert_eq!(routines.len(), 30);
+    let paged = Paged::cut(Called::<30>, &Stages::whole(1).pages(3), 100)?;
+    paged.check()?;
+    for routine in routines {
+        assert_eq!(routine.len(), 6);
+        let pages: Vec<usize> = routine
+            .map(|gate| {
+                paged
+                    .plan
+                    .place(gate)
+                    .expect("a gate of the circuit's own")
+                    .0
+            })
+            .collect();
+        assert!(pages.iter().all(|&page| page == pages[0]), "{pages:?}");
     }
     Ok(())
 }

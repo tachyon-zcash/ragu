@@ -49,7 +49,8 @@
 //! walks the circuit, on a driver that only counts what it emits, for the
 //! public output's shape and its witness. A page is one flat run of gates
 //! and constraints: a routine the circuit calls is not a routine of the
-//! page.
+//! page, though no cut falls within one, so its gates are on one page,
+//! together and in the order the circuit allocates them.
 //!
 //! The `ONE` wire is on every page and is never carried.
 //!
