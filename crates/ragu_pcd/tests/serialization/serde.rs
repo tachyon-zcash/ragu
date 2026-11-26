@@ -121,4 +121,21 @@ fn malformed_bytes_are_a_serde_error() {
         panic!("a short envelope must not decode")
     };
     assert!(error.to_string().contains("truncated"), "{error}");
+
+    // A complete compressed envelope with no IPA rounds must be rejected
+    // before serde asks the fold layout to size its payload.
+    let mut envelope = b"RAGUPCD\0".to_vec();
+    envelope.extend_from_slice(&[3, 0, 2, 0, 4, 0, 1, 0]);
+    envelope.extend_from_slice(&0u32.to_le_bytes());
+    envelope.extend_from_slice(&0u64.to_le_bytes());
+    let json = serde_json::to_string(&envelope).unwrap();
+    let Err(error) = serde_json::from_str::<CompressedProof<C>>(&json) else {
+        panic!("an unsupported compressed rank must not decode")
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported compressed proof rank"),
+        "{error}"
+    );
 }

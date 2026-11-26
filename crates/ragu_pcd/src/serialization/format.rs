@@ -7,7 +7,7 @@ use ragu_circuits::polynomials::Rank;
 use crate::{
     CompressedProof, Proof,
     profile::ProfiledCycle,
-    serialization::{Decode, Dimensions, Encode, Error, MAX_RANK, Reader},
+    serialization::{Decode, Dimensions, Encode, Error, MAX_RANK, MIN_COMPRESSED_RANK, Reader},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
@@ -152,7 +152,7 @@ impl<C: ProfiledCycle> CompressedProof<C> {
 
     /// The exact encoded length for the expected rank, including the
     /// envelope. Bound transport input to this size before buffering it.
-    /// Decoding admits any bounded rank, and
+    /// Decoding admits ranks from 7 to 32 (31 on 32-bit targets), and
     /// [`verify_compressed`](crate::Application::verify_compressed) rejects
     /// every shape but the application's.
     pub fn encoded_len<R: Rank>() -> usize {
@@ -200,7 +200,10 @@ fn encode<T: Encode + Decode>(
     payload: PayloadKind,
     dims: Dimensions,
 ) -> Result<Vec<u8>, Error<'static>> {
-    if dims.rank > MAX_RANK {
+    if dims.rank > MAX_RANK
+        || (payload == PayloadKind::Compressed
+            && (dims.rank < MIN_COMPRESSED_RANK || dims.rank >= usize::BITS))
+    {
         return Err(Error::Unencodable);
     }
     let mut bytes = Vec::with_capacity(ENVELOPE_SIZE + T::encoded_len(dims));
@@ -269,6 +272,9 @@ fn open<'a>(
         Some(expected) if rank != expected => Some("proof rank mismatch"),
         Some(_) if rank > MAX_RANK => Some("proof rank exceeds the limit"),
         None if rank > MAX_RANK => Some("compressed proof rank exceeds the limit"),
+        None if rank < MIN_COMPRESSED_RANK || rank >= usize::BITS => {
+            Some("unsupported compressed proof rank")
+        }
         _ => None,
     };
     if let Some(reason) = reason {

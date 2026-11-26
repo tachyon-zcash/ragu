@@ -36,8 +36,9 @@
 //!
 //! Decoding checks the envelope and its dimensions, then the exact total
 //! length those dimensions imply, before decoding the payload. Compressed
-//! ranks are limited to 32 and the header size must be zero, so hostile
-//! dimensions are rejected before allocating the payload. An ordinary proof's
+//! ranks range from 7 to 32 (or 31 on a 32-bit target), and the header size
+//! must be zero, so hostile dimensions are rejected before allocating the
+//! payload. An ordinary proof's
 //! declared rank must match its type. Unknown versions are never reinterpreted
 //! or downgraded. The caller selects the expected application, profile and
 //! cryptographic parameters through its deployment or consensus rules. They
@@ -107,6 +108,10 @@ pub(crate) use format::ENVELOPE_SIZE;
 pub use format::{PayloadKind, read_payload_kind};
 #[cfg(test)]
 pub(crate) use uncompressed::WIRE_FIELDS;
+
+/// Smallest rank admitted for compressed proofs. No supported circuit uses
+/// a smaller rank, whose capacity can make the fold's batch sizing panic.
+pub(crate) const MIN_COMPRESSED_RANK: u32 = 7;
 
 /// Largest compressed rank admitted by the byte formats.
 pub(crate) const MAX_RANK: u32 = 32;

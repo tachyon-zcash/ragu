@@ -116,6 +116,47 @@ fn envelope_rejects_mismatches_before_payload_decoding() {
 }
 
 #[test]
+fn compressed_envelope_rejects_unsupported_rank_before_sizing_payload() {
+    let mut bytes = b"RAGUPCD\0".to_vec();
+    bytes.extend_from_slice(&[3, 0, 2, 0, 4, 0, 1, 0]);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    assert_eq!(bytes.len(), ENVELOPE);
+
+    for rank in 0..7u32 {
+        bytes[16..20].copy_from_slice(&rank.to_le_bytes());
+        assert!(matches!(
+            TestCompressed::from_bytes(&bytes),
+            Err(Error::Invalid {
+                offset: 16,
+                reason: "unsupported compressed proof rank",
+                ..
+            })
+        ));
+    }
+    bytes[16..20].copy_from_slice(&7u32.to_le_bytes());
+    assert!(matches!(
+        TestCompressed::from_bytes(&bytes),
+        Err(Error::Length {
+            actual: ENVELOPE,
+            ..
+        })
+    ));
+    #[cfg(target_pointer_width = "32")]
+    {
+        bytes[16..20].copy_from_slice(&32u32.to_le_bytes());
+        assert!(matches!(
+            TestCompressed::from_bytes(&bytes),
+            Err(Error::Invalid {
+                offset: 16,
+                reason: "unsupported compressed proof rank",
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
 fn verification_uses_the_receiving_application() {
     use ragu_core::Cycle;
     use ragu_pcd::ApplicationBuilder;
