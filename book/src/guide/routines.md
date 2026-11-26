@@ -156,7 +156,8 @@ function, for example, is a natural memoization target but cannot predict its
 output; it would return [`Unknown`] from [`predict`] while optionally providing
 auxiliary data for [`execute`]. Endoscaling is a target for both: circuits
 scale by endoscalars many times, and the scaled point can be computed natively,
-so [`Endoscalar::group_scale`] returns [`Known`].
+so the routine behind [`Endoscalar::group_scale`] predicts its output as
+[`Known`]. [`HoistedEndoscalar::group_scale`] still emits its walk inline.
 ```
 
 [emulation]: drivers/concrete.md#emulator
@@ -170,6 +171,7 @@ so [`Endoscalar::group_scale`] returns [`Known`].
 [`routine`]: ragu_core::drivers::Driver::routine
 [`Known`]: ragu_core::routines::Prediction::Known
 [`Endoscalar::group_scale`]: ragu_primitives::Endoscalar::group_scale
+[`HoistedEndoscalar::group_scale`]: ragu_primitives::HoistedEndoscalar::group_scale
 [`Unknown`]: ragu_core::routines::Prediction::Unknown
 [`Driver`]: ragu_core::drivers::Driver
 [`Gadget`]: ragu_core::gadgets::Gadget

@@ -227,8 +227,9 @@ pub struct EndoscalarChallenge<'dr, D: Driver<'dr>> {
 impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     /// Validates an in-range element as an endoscalar challenge.
     ///
-    /// The single-attempt constructor, which emits the binding decomposition
-    /// directly.
+    /// The single-attempt constructor. It emits the binding decomposition
+    /// inside the extraction routine, which allocates with its own allocator,
+    /// so its constraints do not depend on the caller's allocator.
     ///
     /// It serves the in-circuit verifier path, where an honest prover has
     /// already ground the challenge into range and it is only re-derived

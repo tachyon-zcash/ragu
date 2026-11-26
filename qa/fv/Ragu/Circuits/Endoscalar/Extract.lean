@@ -13,16 +13,16 @@ in `crates/ragu_primitives/src/endoscalar.rs` — every challenge constructor
 (`sample` included) goes through it, and it is the only place constraints are
 emitted; `Endoscalar::extract` itself just projects the bits out.
 
-The Rust body is `Endoscalar::extract_element`: delegate to
+The Rust body is the `Extract` routine's `execute`: delegate to
 `boolean.rs::decompose`, then keep the first 143 bits. The reimpl delegates
 the same way — `Boolean.Decompose` emits every constraint, and this circuit
 only projects — so the decomposition's canonicity argument lives with
-`Decompose`. Taking 143 bits needs `143 ≤ n`, mirroring `extract_element`'s
+`Decompose`. Taking 143 bits needs `143 ≤ n`, mirroring `execute`'s
 `try_collect_fixed` over the first 143 decomposition bits.
 
-The native range check in `from_element` (`try_just`) runs only during witness
-generation and emits nothing, so it has no counterpart here;
-`ProverAssumptions` carries it.
+The native range check lives in the `Extract` routine's `predict`. It runs
+only during witness generation and emits nothing, so it has no counterpart
+here; `ProverAssumptions` carries it.
 
 Extraction instance: `qa/fv/extraction/src/instances/endoscalar_extract.rs`
 (drives the real gadget). Formal instance:
