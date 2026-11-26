@@ -155,6 +155,21 @@ macro_rules! define_unified_instance {
             pub fn assert_complete(self) {
                 self.coverage.assert_complete();
             }
+
+            /// A copy with the same values and coverage, for a circuit
+            /// that is traced once for each of its pages.
+            pub fn duplicate(&self) -> Self {
+                Instance {
+                    $(
+                        $field: self.$field,
+                    )+
+                    coverage: Coverage {
+                        $(
+                            $field: self.coverage.$field,
+                        )+
+                    },
+                }
+            }
         }
 
         /// Builder for constructing an [`Output`] gadget with flexible allocation.

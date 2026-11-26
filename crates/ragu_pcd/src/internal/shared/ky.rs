@@ -189,7 +189,7 @@ pub fn native_bound<P: Profile, T>(
     commitment: impl Fn(nested::RxIndex) -> T,
     batch: impl Fn(usize) -> T,
 ) -> Vec<T> {
-    let binding = crate::profile::native_extension::<P>().binding;
+    let binding = crate::profile::native_extension::<P>().binding.clone();
     let mut points = bound(binding.as_ref(), |j| {
         commitment(nested::RxIndex::ExtensionStage(j))
     });
@@ -209,7 +209,7 @@ pub fn nested_bound<P: Profile, T>(
     online: impl Fn(usize) -> T,
     batch: impl Fn(usize) -> T,
 ) -> Vec<T> {
-    let binding = crate::profile::nested_extension::<P>().binding;
+    let binding = crate::profile::nested_extension::<P>().binding.clone();
     let mut points = bound(binding.as_ref(), |j| {
         commitment(native::RxIndex::ExtensionStage(j))
     });

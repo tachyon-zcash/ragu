@@ -597,7 +597,7 @@ fn extension_entries_take_their_places() {
 
 #[test]
 fn shape_follows_the_declared_extension() {
-    assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2, 0, 4, 4));
+    assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2, 0, 8, 8));
     assert_ne!(Shape::of::<Wider>(), Shape::of::<Standard>());
     assert_eq!(
         native::RxIndex::num::<Wider>(),
@@ -615,17 +615,17 @@ fn standard_is_the_crate_layout() {
     assert_eq!(
         shape,
         Shape {
-            native_rx: 48,
-            nested_points: 122,
-            nested_steps: 31,
-            nested_rx: 45,
+            native_rx: 30,
+            nested_points: 86,
+            nested_steps: 11,
+            nested_rx: 25,
             nested_online: 0,
-            native_points: 108,
-            native_steps: 27,
+            native_points: 68,
+            native_steps: 9,
             source_polynomials: 0,
         }
     );
-    assert_eq!(shape.polynomials(), 103);
+    assert_eq!(shape.polynomials(), 65);
 }
 
 #[test]
@@ -645,9 +645,9 @@ fn a_nested_online_polynomial_is_a_native_walk_point() {
 
 #[test]
 fn a_nested_online_polynomial_alone_fills_the_native_walk() {
-    // The standard layout with one nested online polynomial. Its native
-    // walk has room for one more point, so the point adds no step and no
-    // rx polynomial.
+    // The layout at four endoscalings a step, the standard one at rank 13,
+    // with one nested online polynomial. Its native walk has room for one
+    // more point, so the point adds no step and no rx polynomial.
     let shape = Shape::solve(0, 0, 1, 4, 4);
     assert_eq!(
         shape,
@@ -683,37 +683,43 @@ fn a_nested_online_polynomial_alone_fills_the_native_walk() {
     );
 }
 
-/// The aggregator's shape follows its pinned circuits and its online
-/// batches, and grows with the header size through the transcript
+/// The aggregator's shape follows its pinned circuits, its online
+/// batches and the pages it cuts the fuse's circuits into, and grows with
+/// the header size through the transcript
 /// circuits.
 #[test]
 fn aggregator_declares_the_decompression() {
+    use crate::profile::paging;
+
     let shape = Shape::of::<Aggregator<4>>();
     let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
+    let pages = Aggregator::<4>::PAGES;
     let nested_stages = aggregator::nested_stages(num_runs::<WalletRank>());
-    assert_eq!(nested_stages, 27, "a stage per run, then four");
+    assert_eq!(nested_stages, 28, "a stage per run, then four");
     // Each field's online batch: its three stages and its helper among
     // the side's polynomials, the mesh's twenty polynomials and the IPA's
     // challenge polynomial among the points the other side's walk folds,
     // and the outgoing restriction the proof retains.
     let batch = online::stages::RXS;
-    let expected = |native_circuits: usize| {
+    // A paged circuit adds a polynomial for each page before its last and
+    // for each carry stage, and a paged step takes that many more.
+    let expected = |native_circuits: usize, pages: crate::profile::Pages| {
         let mut shape = Shape::solve_with_online(
-            native_circuits + 2 + 6 + batch,
-            19 + 1 + nested_stages + batch,
+            native_circuits + 2 + 6 + batch + paging::rxs(&pages, false),
+            34 + 1 + nested_stages + batch + paging::rxs(&pages, true),
             21,
             21,
-            per_step,
-            per_step,
+            (per_step, 1 + paging::added(pages.endoscaling_step)),
+            (per_step, 1 + paging::added(pages.nested_endoscaling_step)),
         );
         shape.source_polynomials = 2;
         shape
     };
-    assert_eq!(shape, expected(32));
-    assert_eq!(Shape::of::<Aggregator<195>>(), expected(34));
-    // The knob: at the wallet rank's four per step the walks are
-    // far longer.
-    assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 1, 4, 4).polynomials());
+    assert_eq!(shape, expected(63, pages));
+    assert_eq!(
+        Shape::of::<Aggregator<195>>(),
+        expected(70, Aggregator::<195>::PAGES)
+    );
     assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
     std::println!(
         "aggregator at header size 4: {shape:?}, {} polynomials",
@@ -726,25 +732,25 @@ fn aggregator_declares_the_decompression() {
 #[test]
 fn aggregator_hooks_refuse_other_parameters() {
     let params = crate::pasta::baked();
-    let at_wallet_rank = Aggregator::<4>::register_native_circuit::<Pasta, WalletRank, 4>(
+    let at_another_rank = Aggregator::<4>::register_native_circuit::<Pasta, R<13>, 4>(
         0,
         CircuitSlot::new(RegistryBuilder::new()),
         params,
     );
-    assert!(matches!(at_wallet_rank, Err(Error::Initialization(_))));
+    assert!(matches!(at_another_rank, Err(Error::Initialization(_))));
     let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 195>(
         0,
         CircuitSlot::new(RegistryBuilder::new()),
         params,
     );
     assert!(matches!(other_header, Err(Error::Initialization(_))));
-    let nested_at_wallet_rank = Aggregator::<4>::register_nested_circuit::<Pasta, WalletRank>(
+    let nested_at_another_rank = Aggregator::<4>::register_nested_circuit::<Pasta, R<13>>(
         0,
         CircuitSlot::new(RegistryBuilder::new()),
         params,
     );
     assert!(matches!(
-        nested_at_wallet_rank,
+        nested_at_another_rank,
         Err(Error::Initialization(_))
     ));
 }
@@ -773,8 +779,8 @@ fn solve_finds_a_fixed_point_for_wider_profiles() {
             nested_extension,
             0,
             0,
-            4,
-            4,
+            (4, 1),
+            (4, 1),
         );
         assert_eq!(
             again, shape,

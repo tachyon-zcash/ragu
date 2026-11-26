@@ -52,8 +52,9 @@
 //! register different circuits have different tags.
 
 pub mod online;
+pub mod paging;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{
     any::{TypeId, type_name},
     fmt,
@@ -62,9 +63,9 @@ use core::{
 };
 
 use ragu_circuits::{
-    Circuit, WithAux,
+    Circuit, CircuitExt, WithAux,
     polynomials::{Rank, sparse},
-    registry::{Registry, RegistryBuilder},
+    registry::{CircuitIndex, Registry, RegistryBuilder},
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
 // Without `baked` the module docs are its only use.
@@ -89,6 +90,100 @@ use crate::{
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
 };
+
+/// How a profile cuts one of the fuse's internal circuits into pages, each
+/// loading every stage the circuit reserves. Experimental.
+///
+/// The count sizes the proof, and the circuits a profile pages work on
+/// every polynomial of a proof, the pages' among them, so a profile states
+/// its count and no circuit is cut into fewer or more pages than it says.
+/// The fewest a circuit cuts in are found by cutting it: the `paging`
+/// census does, with the crate's `test-utils` feature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cut {
+    pages: usize,
+}
+
+impl Cut {
+    /// The circuit whole.
+    pub const WHOLE: Self = Cut::pages(1);
+
+    /// `pages` pages that each load every stage the circuit reserves.
+    pub const fn pages(pages: usize) -> Self {
+        Cut { pages }
+    }
+
+    /// The pages.
+    pub const fn num_pages(&self) -> usize {
+        self.pages
+    }
+}
+
+/// The pages a profile cuts each of the fuse's internal circuits into.
+/// Experimental.
+///
+/// A circuit with more than one page is cut into that many circuits, which
+/// pass values to one another through a carry stage as large as they turn
+/// out to need (see [`ragu_circuits::paging`]). Every page loads every
+/// stage its circuit reserves. The profile says how many pages; the pager
+/// chooses where the cuts fall: where the fewest values pass from page to
+/// page, among the places that leave every page room past the stages. The
+/// pages before the last are registered as circuits of the profile's
+/// extension and the carry stage as one of its stages, after what the
+/// profile declares; the last page takes the circuit's own slot. The cuts
+/// are declared because they size the proof; the registration fails if the
+/// pages do not have the room.
+///
+/// A walk's steps are all cut alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pages {
+    /// The native `hashes_1` circuit's.
+    pub hashes_1: Cut,
+    /// The native `hashes_2` circuit's.
+    pub hashes_2: Cut,
+    /// The native `collapse` circuit's.
+    pub collapse: Cut,
+    /// The native `compute_v` circuit's.
+    pub compute_v: Cut,
+    /// Each native `bind_challenges` circuit's.
+    pub bind_challenges: Cut,
+    /// The native `bind_beta` circuit's.
+    pub bind_beta: Cut,
+    /// The native `bind_endoscalar` circuit's.
+    pub bind_endoscalar: Cut,
+    /// The nested `collapse` circuit's.
+    pub nested_collapse: Cut,
+    /// The nested `compute_v` circuit's.
+    pub nested_compute_v: Cut,
+    /// Each step's of the native walk.
+    pub endoscaling_step: Cut,
+    /// Each step's of the nested walk.
+    pub nested_endoscaling_step: Cut,
+}
+
+impl Pages {
+    /// Every circuit whole.
+    pub const WHOLE: Self = Pages::uniform(1);
+
+    /// Every circuit in `pages` pages, each loading every stage its circuit
+    /// reserves, with the walks' steps whole.
+    pub const fn uniform(pages: usize) -> Self {
+        let cut = Cut::pages(pages);
+        Pages {
+            hashes_1: cut,
+            hashes_2: cut,
+            collapse: cut,
+            compute_v: cut,
+            bind_challenges: cut,
+            bind_beta: cut,
+            bind_endoscalar: cut,
+            nested_collapse: cut,
+            nested_compute_v: cut,
+            endoscaling_step: Cut::WHOLE,
+            nested_endoscaling_step: Cut::WHOLE,
+        }
+    }
+}
 
 /// The internal circuits a proof carries beyond the fuse's own: an
 /// [`Extension`] on each side of the cycle, and the rx polynomials it adds
@@ -201,6 +296,67 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = native::ENDOSCALINGS_PER_STEP;
     /// The endoscalings a nested endoscaling step performs, likewise.
     const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
+
+    /// The pages the profile cuts each of the fuse's internal circuits
+    /// into (see [`Pages`]). Experimental; the default leaves every circuit
+    /// whole. A profile that cuts any also takes the pager's hooks
+    /// ([`paged_internal_circuits!`](crate::paged_internal_circuits)).
+    const PAGES: Pages = Pages::WHOLE;
+
+    /// Registers one of the fuse's internal circuits. The default registers
+    /// it whole, and so compiles nothing of the pager into a profile that
+    /// pages nothing; a profile that pages takes the pager's
+    /// ([`paged_internal_circuits!`](crate::paged_internal_circuits)).
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from registering the circuit.
+    #[doc(hidden)]
+    fn register_internal<'params, F, R, S>(
+        pages: &mut paging::Registrar<'params, F, R>,
+        registry: RegistryBuilder<'params, F, R>,
+        which: paging::Circuit,
+        circuit: MultiStage<F, R, S>,
+    ) -> Result<RegistryBuilder<'params, F, R>>
+    where
+        F: Field,
+        R: Rank,
+        S: MultiStageCircuit<F, R>,
+        MultiStage<F, R, S>: 'params,
+    {
+        let _ = (pages, which);
+        registry.register_internal_circuit(circuit)
+    }
+
+    /// Traces one of the fuse's internal circuits and assembles its
+    /// polynomial at registry index `own`. The default traces it whole, as
+    /// [`register_internal`](Self::register_internal) registers it.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from tracing or assembling the circuit.
+    #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)]
+    fn prove_internal<'source, F, R, S, RNG>(
+        pages: &mut paging::Prover<F, R>,
+        which: paging::Circuit,
+        circuit: MultiStage<F, R, S>,
+        registry: &Registry<'_, F, R>,
+        own: CircuitIndex,
+        extension: impl Fn(u32) -> CircuitIndex,
+        witness: impl Fn() -> S::Witness<'source>,
+        rng: &mut RNG,
+    ) -> Result<(sparse::Polynomial<F, R>, S::Aux<'source>)>
+    where
+        F: Field,
+        R: Rank,
+        S: MultiStageCircuit<F, R>,
+        RNG: CryptoRng,
+    {
+        let _ = (pages, which, extension);
+        let (trace, aux) = circuit.trace(witness())?.into_parts();
+        Ok((registry.assemble(&trace, own, rng)?, aux))
+    }
 
     /// What the profile's prover holds across proofs beyond the proof
     /// under construction: the extension's witness source, which an
@@ -698,13 +854,17 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                 ));
             }
         }
-        // Each added step contributes two points to the other side's walk.
-        // A full pass must shrink that contribution for a fixed point to exist.
+        // Each of a step's polynomials contributes two points to the other
+        // side's walk: the step's own, and those paging adds to it. A full
+        // pass must shrink that contribution for a fixed point to exist.
+        let step_rxs = (1 + paging::added(Self::PAGES.endoscaling_step))
+            * (1 + paging::added(Self::PAGES.nested_endoscaling_step));
         if Self::NATIVE_ENDOSCALINGS_PER_STEP.saturating_mul(Self::NESTED_ENDOSCALINGS_PER_STEP)
-            <= 4
+            <= 4 * step_rxs
         {
             return Err(Error::Initialization(
-                "the profile's endoscaling counts must be nonzero and their product exceed four"
+                "the profile's endoscaling counts must be nonzero and their product exceed four \
+                 for each pair of polynomials a native and a nested step take"
                     .into(),
             ));
         }
@@ -810,14 +970,65 @@ impl BuiltIn {
     }
 }
 
+/// One side's registered extension of a profile, and where its paged
+/// circuits' entries sit in it.
+#[derive(Debug)]
+pub(crate) struct Extended {
+    extension: Extension,
+    pub(crate) slots: Vec<paging::Slot>,
+}
+
+impl core::ops::Deref for Extended {
+    type Target = Extension;
+
+    fn deref(&self) -> &Extension {
+        &self.extension
+    }
+}
+
 /// The registered native extension, including the online batch helper.
-pub(crate) fn native_extension<P: Profile>() -> Extension {
-    online::stages::layout::<P, online::stages::Native>()
+pub(crate) fn native_extension<P: Profile>() -> Arc<Extended> {
+    extended::<P>(false)
 }
 
 /// The registered nested extension, including the online batch helper.
-pub(crate) fn nested_extension<P: Profile>() -> Extension {
-    online::stages::layout::<P, online::stages::Nested>()
+pub(crate) fn nested_extension<P: Profile>() -> Arc<Extended> {
+    extended::<P>(true)
+}
+
+/// One side's registered extension of profile `P`, the nested when `nested`
+/// is set.
+///
+/// It is a function of the profile alone, and the circuits ask for it at
+/// every index they take into a proof's polynomials. With `std` each thread
+/// builds it once per profile; without, every call builds it.
+pub(crate) fn extended<P: Profile>(nested: bool) -> Arc<Extended> {
+    let build = || {
+        let mut extension = if nested {
+            online::stages::layout::<P, online::stages::Nested>()
+        } else {
+            online::stages::layout::<P, online::stages::Native>()
+        };
+        let slots = paging::extend::<P>(&mut extension, nested);
+        Arc::new(Extended { extension, slots })
+    };
+    #[cfg(feature = "std")]
+    {
+        type Built = BTreeMap<(TypeId, bool), Arc<Extended>>;
+        std::thread_local! {
+            static BUILT: core::cell::RefCell<Built> =
+                const { core::cell::RefCell::new(BTreeMap::new()) };
+        }
+        let key = (TypeId::of::<P>(), nested);
+        if let Some(found) = BUILT.with(|built| built.borrow().get(&key).cloned()) {
+            return found;
+        }
+        let made = build();
+        BUILT.with(|built| built.borrow_mut().insert(key, made.clone()));
+        made
+    }
+    #[cfg(not(feature = "std"))]
+    build()
 }
 
 /// Whether `P`'s decompression step carries the source proof's online
@@ -987,6 +1198,9 @@ pub(crate) enum Registration {
     StageMask(Range<usize>),
     /// A final mask, from a gate on ([`MaskSlot::register_final_mask`]).
     FinalMask(usize),
+    /// The mask of a page's own polynomial, over the page's own gates
+    /// (see [`paging`]).
+    Window(Range<usize>),
 }
 
 /// A circuit with a constant zero appended to its public output; see
@@ -1344,7 +1558,7 @@ impl Extension {
                 Registration::StageMask(gates) if j < self.stages => {
                     stage_masks.push(gates.clone())
                 }
-                Registration::FinalMask(_) if j >= self.stages => {}
+                Registration::FinalMask(_) | Registration::Window(_) if j >= self.stages => {}
                 _ if j < self.stages => {
                     return refuse(alloc::format!(
                         "registers mask {j} as something other than stage {j}'s mask"
@@ -1394,7 +1608,19 @@ impl Extension {
             else {
                 return refuse(alloc::format!("names circuit {k} in no final mask"));
             };
-            if masks[self.stages + mask] != Registration::FinalMask(last.end) {
+            // A page's own gates are a window apart from every stage it
+            // loads, rather than the gates past the last of them.
+            let apart = |own: &Range<usize>| {
+                loaded
+                    .iter()
+                    .all(|stage| stage.end <= own.start || own.end <= stage.start)
+            };
+            let held = match &masks[self.stages + mask] {
+                Registration::FinalMask(gate) => *gate == last.end,
+                Registration::Window(own) => apart(own),
+                _ => false,
+            };
+            if !held {
                 return refuse(alloc::format!(
                     "registers circuit {k}'s final mask elsewhere than at gate {}, where its last stage ends",
                     last.end
@@ -1577,8 +1803,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle 
 /// point the nested walk folds, the nested walk's steps are nested rx
 /// polynomials, every nested rx polynomial is a point the native walk folds,
 /// and the native walk's steps are native rx polynomials. Going once around
-/// at four endoscalings per step, a native step adds about a quarter of a
-/// native step, so the map from a step count to the count the batch then
+/// at eight endoscalings per step, a native step adds about a sixteenth of
+/// a native step, so the map from a step count to the count the batch then
 /// needs converges to a fixed point, which [`Shape::solve`] finds by
 /// iteration from one step; more endoscalings per step converge faster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1623,17 +1849,25 @@ impl Shape {
                     0
                 } else {
                     online::stages::RXS
-                },
+                }
+                + paging::rxs(&P::PAGES, false),
             P::NESTED_EXTENSION
                 + if P::NESTED_ONLINE.is_empty() {
                     0
                 } else {
                     online::stages::RXS
-                },
+                }
+                + paging::rxs(&P::PAGES, true),
             P::NESTED_ONLINE.polynomials.len(),
             P::NATIVE_ONLINE.polynomials.len(),
-            P::NATIVE_ENDOSCALINGS_PER_STEP,
-            P::NESTED_ENDOSCALINGS_PER_STEP,
+            (
+                P::NATIVE_ENDOSCALINGS_PER_STEP,
+                1 + paging::added(P::PAGES.endoscaling_step),
+            ),
+            (
+                P::NESTED_ENDOSCALINGS_PER_STEP,
+                1 + paging::added(P::PAGES.nested_endoscaling_step),
+            ),
         );
         shape.source_polynomials =
             P::NATIVE_MESH.is_some() as usize + P::NESTED_MESH.is_some() as usize;
@@ -1660,18 +1894,22 @@ impl Shape {
             nested_extension,
             nested_online,
             0,
-            native_endoscalings,
-            nested_endoscalings,
+            (native_endoscalings, 1),
+            (nested_endoscalings, 1),
         )
     }
 
+    /// As [`solve`](Self::solve), with the step's online Fp polynomials,
+    /// and each walk given as the endoscalings a step performs and the
+    /// polynomials a step takes: one, or one more for each page a paged
+    /// step adds and for its carry stage.
     const fn solve_with_online(
         native_extension: usize,
         nested_extension: usize,
         nested_online: usize,
         native_online: usize,
-        native_endoscalings: usize,
-        nested_endoscalings: usize,
+        native_walk: (usize, usize),
+        nested_walk: (usize, usize),
     ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
@@ -1682,14 +1920,14 @@ impl Shape {
                 nested_extension,
                 nested_online,
                 native_online,
-                native_endoscalings,
-                nested_endoscalings,
+                native_walk,
+                nested_walk,
             );
             if shape.native_steps == native_steps {
                 return shape;
             }
             rounds += 1;
-            assert!(rounds < 64, "the walk sizes did not converge");
+            assert!(rounds < 256, "the walk sizes did not converge");
             native_steps = shape.native_steps;
         }
     }
@@ -1702,13 +1940,13 @@ impl Shape {
         nested_extension: usize,
         nested_online: usize,
         native_online: usize,
-        native_endoscalings: usize,
-        nested_endoscalings: usize,
+        (native_endoscalings, native_step_rxs): (usize, usize),
+        (nested_endoscalings, nested_step_rxs): (usize, usize),
     ) -> Self {
-        let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
+        let native_rx = native::NUM_FIXED_RX + native_steps * native_step_rxs + native_extension;
         let nested_points = nested::num_endoscaling_points(native_rx) + native_online;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
-        let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
+        let nested_rx = nested::NUM_FIXED_RX + nested_steps * nested_step_rxs + nested_extension;
         let native_points = nested::pcs::num_batched_points(nested_rx, nested_online);
         let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {
