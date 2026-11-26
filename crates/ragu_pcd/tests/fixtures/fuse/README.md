@@ -34,6 +34,11 @@ its context: the fixtures' own wallet application, its bootstrap proof
 compressed under a fixed seed. Each profile reproduces its snapshots and checks
 its verifier fingerprints, tampered proofs and random strings.
 
+The aggregator's fuse circuits are cut into pages where its registry is built,
+and where the cuts fall is searched for there, not stored. Its snapshots
+therefore also pin the pager: a change to it that moves a cut changes the
+registered circuits and fails them, as a change to a circuit does.
+
 ## Scenarios
 
 Six fixtures from a fixed tree of fuses over the harness's own steps
