@@ -51,6 +51,37 @@ const SHARED: u64 = 4;
 /// out to hold before they only grow.
 const SETTLING: usize = 24;
 
+/// How far a carry stage's size moves toward what its cuts held, while the
+/// sizes settle: a part of the way, which shrinks each time the size turns
+/// from too small to too large or back.
+#[derive(Clone, Copy, Debug)]
+struct Damping {
+    /// The part of the way the size moves: a half, a quarter or an eighth.
+    parts: usize,
+    /// The smallest part it moves: a half where the sizes are not damped.
+    most: usize,
+    /// Whether the cuts last held more than the size, if they have held
+    /// anything other than it.
+    short: Option<bool>,
+}
+
+impl Damping {
+    /// Halfway at first, and at most `most` parts of the way.
+    fn new(most: usize) -> Self {
+        Damping {
+            parts: 2,
+            most,
+            short: None,
+        }
+    }
+
+    /// Notes whether the cuts now hold more than the size, and whether
+    /// that turned since the last time.
+    fn turned(&mut self, short: bool) -> bool {
+        self.short.replace(short).is_some_and(|was| was != short)
+    }
+}
+
 /// What a carried value counts for where the cuts are looked for: a
 /// stage's wire that several stretches of the circuit read counts for a
 /// part of it in each.
@@ -1704,11 +1735,27 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
             // room a smaller stage leaves them and then read more off it,
             // so the size that holds is between the two. If the sizes do
             // not settle so, they only grow, by an eighth at least.
-            let sized = |rounds: usize, needed: usize, gates: usize| {
+            //
+            // The sizes of two groups that share carry stages can swing
+            // instead, each round's cuts moving work from one group to the
+            // other and back. Where they do not settle, the cuts are looked
+            // for again with each size moving a smaller part of the way
+            // each time it turns: a half, then a quarter, down to an
+            // eighth ([`Damping`]).
+            let sized = |rounds: usize, needed: usize, gates: usize, damping: &mut Damping| {
                 if rounds <= SETTLING {
-                    match (needed + gates).div_ceil(2) {
-                        0 => 0,
-                        halfway => halfway + 1,
+                    let short = needed > gates;
+                    if damping.turned(short) {
+                        damping.parts = (2 * damping.parts).min(damping.most);
+                    }
+                    let step = gates.abs_diff(needed) / damping.parts;
+                    match (damping.parts, short) {
+                        (2, _) => match (needed + gates).div_ceil(2) {
+                            0 => 0,
+                            halfway => halfway + 1,
+                        },
+                        (_, true) => gates + step + 1,
+                        (_, false) => gates - step,
                     }
                 } else if needed > gates {
                     needed.max(gates + gates / 8 + 1)
@@ -1716,55 +1763,67 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
                     gates
                 }
             };
-            let mut rounds = 0;
-            let mut carry_gates = 0;
-            let mut local_gates = vec![0; stages.local.len()];
-            loop {
-                let sizes = (carry_gates, &local_gates[..]);
-                let fit = Layout::fit(&costs, recording.num_gates, stages, limit, sizes, &related);
-                let layout = match fit {
-                    Err(Error::GateBoundExceeded { .. })
-                        if carry_gates > 0 || local_gates.iter().any(|&gates| gates > 0) =>
-                    {
-                        return refuse(format!(
-                            "the pages carry values a carry stage of {carry_gates} gates holds, \
+            let settle = |damped: bool| -> Result<(Plan<F>, PagingReport)> {
+                let damping = Damping::new(if damped { 8 } else { 2 });
+                let mut rounds = 0;
+                let mut carry_gates = 0;
+                let mut local_gates = vec![0; stages.local.len()];
+                let mut carry_damping = damping;
+                let mut local_damping = vec![damping; stages.local.len()];
+                loop {
+                    let sizes = (carry_gates, &local_gates[..]);
+                    let fit =
+                        Layout::fit(&costs, recording.num_gates, stages, limit, sizes, &related);
+                    let layout = match fit {
+                        Err(Error::GateBoundExceeded { .. })
+                            if carry_gates > 0 || local_gates.iter().any(|&gates| gates > 0) =>
+                        {
+                            return refuse(format!(
+                                "the pages carry values a carry stage of {carry_gates} gates holds, \
                              which leaves them less room than the circuit's {own} gates take in \
                              polynomials of {limit} gates"
-                        ));
-                    }
-                    layout => layout?,
-                };
-                let mut planned = arrange(&recording, placement, stages, layout, &related)?;
-                let needed = planned.0.slots.len().div_ceil(2);
-                let needed_local: Vec<usize> = planned
-                    .0
-                    .local
-                    .iter()
-                    .map(|slots| slots.len().div_ceil(2))
-                    .collect();
-                if needed <= carry_gates
-                    && needed_local
+                            ));
+                        }
+                        layout => layout?,
+                    };
+                    let mut planned = arrange(&recording, placement, stages, layout, &related)?;
+                    let needed = planned.0.slots.len().div_ceil(2);
+                    let needed_local: Vec<usize> = planned
+                        .0
+                        .local
                         .iter()
-                        .zip(&local_gates)
-                        .all(|(needed, gates)| needed <= gates)
-                {
-                    // The cuts may have settled on less than the carry
-                    // stages they were looked for under: each takes what
-                    // its slots do, and the pages keep their gates.
-                    let start = limit - needed;
-                    planned.0.layout.carry.start = start;
-                    for ((_, gates), needed) in planned.0.layout.local.iter_mut().zip(&needed_local)
+                        .map(|slots| slots.len().div_ceil(2))
+                        .collect();
+                    if needed <= carry_gates
+                        && needed_local
+                            .iter()
+                            .zip(&local_gates)
+                            .all(|(needed, gates)| needed <= gates)
                     {
-                        *gates = start - needed..start;
+                        // The cuts may have settled on less than the carry
+                        // stages they were looked for under: each takes what
+                        // its slots do, and the pages keep their gates.
+                        let start = limit - needed;
+                        planned.0.layout.carry.start = start;
+                        for ((_, gates), needed) in
+                            planned.0.layout.local.iter_mut().zip(&needed_local)
+                        {
+                            *gates = start - needed..start;
+                        }
+                        return Ok(planned);
                     }
-                    return Ok(planned);
+                    rounds += 1;
+                    carry_gates = sized(rounds, needed, carry_gates, &mut carry_damping);
+                    for ((gates, &needed), damping) in local_gates
+                        .iter_mut()
+                        .zip(&needed_local)
+                        .zip(&mut local_damping)
+                    {
+                        *gates = sized(rounds, needed, *gates, damping);
+                    }
                 }
-                rounds += 1;
-                carry_gates = sized(rounds, needed, carry_gates);
-                for (gates, &needed) in local_gates.iter_mut().zip(&needed_local) {
-                    *gates = sized(rounds, needed, *gates);
-                }
-            }
+            };
+            settle(false).or_else(|_| settle(true))
         };
         // Each order is cut on its own, so the three are cut at once.
         let (first, (second, third)) = maybe_rayon::join(
