@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `Rank` support for `R<14>` and `R<15>`, and the `AggregatorRank`
-  alias for `R<15>`, for extension circuits that exceed the wallet rank's
-  capacity. `WalletRank` remains `R<13>`.
+  alias, which is `R<14>` as `WalletRank` now is: circuits that exceed that
+  rank's capacity are cut into pages (`paging`) rather than proven at a
+  larger rank.
 - Added `Blind`, the three coefficients of an rx polynomial that no wiring
   polynomial reads: `a[0]` of the SYSTEM gate, and `a[n - 1]` and `d[n - 1]`
   of the blind gate (`Rank::blind_gate`), the last gate of the rank.
@@ -31,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `WalletRank` is now `R<14>`, where it was `R<13>`: $2^{14}$ coefficients
+  and up to 4,095 gates.
 - The last gate of every rank is reserved as the blind gate. A circuit, a
   trace and a stage hold `n - 1` gates where they held `n`, and
   `Error::GateBoundExceeded` reports that limit. Stage masks and final masks

@@ -56,10 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MaskSlot::register_stage_mask` and `register_final_mask`; a mask of another
   shape cannot be registered.
 - Added optional `baked-aggregator` parameters through
-  `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank
-  the aggregator profile proves at. Standard's `baked()` keeps its original
-  `R<13>` tables and adds the stage reach past them (`pasta::STAGE_REACH`),
-  including when the additional Aggregator parameters are enabled and loaded.
+  `pasta::baked_aggregator()`, sized for `R<15>`. The aggregator profile
+  proves at `AggregatorRank`, which is `R<14>`, and does not need them.
+  Standard's `baked()` tables are sized for `R<14>`, the wallet rank, and
+  carry the stage reach (`pasta::STAGE_REACH`) beside them, including when
+  the additional Aggregator parameters are enabled and loaded.
 - Added sealed, static computational-backend selection between Ragu's reference
   and accelerated implementations, defaulting to
   `ragu_acceleration::AcceleratedBackend` for both proving and verification.
@@ -118,6 +119,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The wallet rank, `WalletRank`, is now `R<14>`, where it was `R<13>`. The
+  Standard profile's walk steps take eight endoscalings where they took
+  four, and `pasta::baked()` loads $2^{14}$ vector generators per curve.
+  Its walks take 9 native and 11 nested steps where they took 27 and 31,
+  and its fold 59 native and 42 nested claims where it took 95 and 82.
+- The `Aggregator` profile proves at `AggregatorRank`, which is now `R<14>`,
+  the wallet rank, where it proved at `R<15>`: the fuse's internal circuits
+  that outgrow a rank-14 polynomial are cut into pages
+  (`ragu_circuits::paging`), declared by the profile's `Profile::PAGES`, and
+  the decompression's chunk circuits are fitted to rank-14 polynomials.
+  Every page loads every stage of its circuit.
+- Proofs from earlier versions do not verify under either profile,
+  compressed or not: both ranks changed, and with them the circuits and the
+  generators the compression commits its runs at.
 - `Application::rerandomize` fuses its input twice through the
   rerandomization step, each time with the application's bootstrap proof as
   the right child, and no longer keeps a seeded unit proof of its own for
@@ -166,11 +181,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregator rank, so that each challenge is a function of every message
   before it and a circuit over the circuit field absorbs the commitment as a
   point its verifier holds to that stage. The Standard fuse fixtures'
-  compressed digests and verifier fingerprints pin both. Those generators lie
-  past the Standard tables, so `baked()` carries the reach of them the runs
-  take (`pasta::STAGE_REACH`), through `IpaCycle::nested_generator`, and
-  serves a Standard application that compresses; the aggregator's own tables
-  hold the same points.
+  compressed digests and verifier fingerprints pin both. The aggregator rank
+  is the wallet's, so those generators lie in the Standard tables, and the
+  aggregator's own tables hold the same points.
 - The `Aggregator` profile's nested online batch holds the nested IPA's
   challenge polynomial, and its query stage that polynomial's opening, so the
   scalar field's online stages take one more gate at the front of every

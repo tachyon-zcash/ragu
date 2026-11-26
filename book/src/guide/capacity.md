@@ -4,18 +4,20 @@ Designing a PCD application means answering two separate questions: how much
 work fits inside a step, and how that work affects proving time. The answers
 are not interchangeable, and the second is less intuitive than the first.
 
-The figures below were measured under `WalletRank` (`R<13>`), which permitted
-2,048 gates and 8,192 constraints at the time. The capacity sweeps used a
+The figures below were measured under `R<13>`, the wallet rank at the time,
+which permitted 2,048 gates and 8,192 constraints. The capacity sweeps used a
 two-element header; the proving-time and witness sweeps used a four-element
 header. Gate tables report complete registered-circuit counts, including fixed
 synthesis overhead, so differences between rows isolate the added operation.
 
-The sweeps predate two changes and have not been repeated. A circuit may now
-use 2,047 gates of that rank, since the last gate is
-[reserved](../protocol/construction/wiring.md#blind-gate). And every fuse now
-draws, commits and opens
-[randomizers](../protocol/construction/claims.md#randomizer) of its own, so
-the timings below are lower than a current build's.
+The sweeps predate three changes and have not been repeated. The wallet rank
+is now `R<14>`, which holds twice the gates and constraints: the marginal
+counts below still apply, and the limits they are measured against do not.
+The last gate of a rank is
+[reserved](../protocol/construction/wiring.md#blind-gate), so a circuit may
+use 4,095 gates of the wallet rank. And every fuse now draws, commits and
+opens [randomizers](../protocol/construction/claims.md#randomizer) of its
+own, so the timings below are lower than a current build's.
 
 Structural counts do not depend on the machine that ran them, though they do
 depend on the circuit implementation and configuration. The wall-clock figures
