@@ -1658,6 +1658,33 @@ macro_rules! fuse_gates {
                 Nested::EndoscalingStep(step) => gates(&MultiStage::new(
                     nested::EndoscalingStep::<Host, $R, $P>::new(step as usize),
                 )),
+                Nested::Collapse if nested::paged::<$P>() => gates(&MultiStage::new(
+                    nested::circuits::paged::instance::Circuit::<Host, $R, $P>::new(),
+                )),
+                Nested::ComputeV if nested::paged::<$P>() => gates(&MultiStage::new(
+                    nested::circuits::paged::export::Circuit::<Host, $R, $P>::new(),
+                )),
+                Nested::Step(step) => {
+                    use nested::circuits::paged::{
+                        Branch, OnErrors, OnEval, OnPreamble, OnQuery, StepCircuit, schedule,
+                    };
+                    let scheduled = schedule::<$P>()[step as usize];
+                    macro_rules! on {
+                        ($branch:ty) => {
+                            gates(&MultiStage::new(StepCircuit::<Host, $R, $P, $branch>::new(
+                                step as usize,
+                            )))
+                        };
+                    }
+                    let gates = match scheduled.branch() {
+                        Branch::Preamble => on!(OnPreamble),
+                        Branch::Errors => on!(OnErrors),
+                        Branch::Query => on!(OnQuery),
+                        Branch::Eval => on!(OnEval),
+                    };
+                    nested_gates.push((alloc::format!("{scheduled:?}"), gates));
+                    continue;
+                }
                 Nested::Collapse => gates(&MultiStage::new(nested::circuits::collapse::Circuit::<
                     Host,
                     $R,
@@ -1702,6 +1729,57 @@ fn report_fuse_gates(
         .filter(|(_, gates)| *gates > budget)
         .cloned()
         .collect()
+}
+
+/// Every nested circuit of a paged profile fits the wallet rank: with the
+/// standard profile's polynomials alone, and with as many polynomials as
+/// an extension the size of the aggregator's adds, where the program's
+/// pages are several. The native circuits of such a profile are not cut
+/// yet and are reported without a bound.
+#[test]
+fn test_paged_nested_fuse_fits_the_wallet_rank() {
+    use ragu_circuits::polynomials::WalletRank;
+
+    use crate::{
+        internal::nested,
+        profile::{
+            Profiled,
+            testing::{Grouped, Sized},
+        },
+    };
+
+    let budget = WalletRank::blind_gate();
+    let mut over = alloc::vec::Vec::new();
+    {
+        type C = Profiled<Pasta, Grouped>;
+        let (native, nested) = fuse_gates!(C, WalletRank, 4, Grouped);
+        report_fuse_gates("native, standard size", &native, budget);
+        over.extend(report_fuse_gates("nested, standard size", &nested, budget));
+    }
+    // The program's steps are pinned by the profile, and the pin is part of
+    // the sizes the schedule follows from: the candidate that pins its own
+    // schedule's count is the profile to measure.
+    let mut measured = 0;
+    macro_rules! at_pin {
+        ($($pin:literal)*) => {$({
+            type P = Sized<176, 134, $pin>;
+            type C = Profiled<Pasta, P>;
+            if nested::circuits::paged::num_fixed_steps::<P>() == $pin {
+                measured += 1;
+                let shape = crate::profile::Shape::of::<P>();
+                std::println!(
+                    "aggregator size: {} native and {} nested polynomials, {} pinned steps",
+                    shape.native_rx, shape.nested_rx, $pin
+                );
+                let (native, nested) = fuse_gates!(C, WalletRank, 4, P);
+                report_fuse_gates("native, aggregator size", &native, budget);
+                over.extend(report_fuse_gates("nested, aggregator size", &nested, budget));
+            }
+        })*};
+    }
+    at_pin!(12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
+    assert_eq!(measured, 1, "one candidate pins its own schedule");
+    assert!(over.is_empty(), "over the budget: {over:?}");
 }
 
 /// Every fuse circuit of the aggregator profile fits the aggregator rank's

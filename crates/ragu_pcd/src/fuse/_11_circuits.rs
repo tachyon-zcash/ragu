@@ -6,7 +6,11 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
+use ragu_circuits::{
+    Blind, CircuitExt,
+    polynomials::{Rank, sparse},
+    staging::{MultiStage, StageExt},
+};
 use ragu_core::{Error, Result};
 use ragu_primitives::Uendo;
 use rand::CryptoRng;
@@ -272,6 +276,91 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         Ok(())
     }
 
+    /// Traces the nested circuits of a paged profile: the program's memory
+    /// and its step circuits, then the two instance circuits. Sets the
+    /// memory stage's and the steps' polynomials and returns the instance
+    /// circuits' with the instance they covered.
+    ///
+    /// The memory's values come from a run of the program's steps over the
+    /// stage witnesses ([`memory`](nested::circuits::paged::memory)), so the
+    /// circuits traced after it read what the steps themselves computed.
+    #[allow(clippy::type_complexity)]
+    fn trace_nested_program<'w, RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        witness: &dyn Fn(
+            nested::unified::Instance<C::HostCurve>,
+        )
+            -> nested::circuits::common::Witness<'w, C::HostCurve, C::Profile>,
+        instance: nested::unified::Instance<C::HostCurve>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<(
+        sparse::Polynomial<C::ScalarField, R>,
+        sparse::Polynomial<C::ScalarField, R>,
+        nested::unified::Instance<C::HostCurve>,
+    )> {
+        use nested::circuits::paged;
+
+        let memory = paged::memory::<C::HostCurve, R, C::Profile>(&witness(instance.clone()))?;
+        builder.push_nested_memory_rx(
+            <nested::MemoryStage<C::HostCurve, R, C::Profile> as StageExt<C::ScalarField, R>>::rx(
+                Blind::random(rng),
+                &memory,
+            )?,
+        );
+        let witness = |instance| paged::Witness {
+            stages: witness(instance),
+            memory: &memory,
+        };
+
+        // The steps expose nothing, so each takes a copy of the instance
+        // and covers none of it.
+        let mut step_rxs = Vec::new();
+        for (position, step) in paged::schedule::<C::Profile>().into_iter().enumerate() {
+            macro_rules! trace {
+                ($branch:ty) => {
+                    MultiStage::new(
+                        paged::StepCircuit::<C::HostCurve, R, C::Profile, $branch>::new(position),
+                    )
+                    .trace(witness(instance.clone()))?
+                    .into_output()
+                };
+            }
+            let trace = match step.branch() {
+                paged::Branch::Preamble => trace!(paged::OnPreamble),
+                paged::Branch::Errors => trace!(paged::OnErrors),
+                paged::Branch::Query => trace!(paged::OnQuery),
+                paged::Branch::Eval => trace!(paged::OnEval),
+            };
+            step_rxs.push(self.nested_registry.assemble(
+                &trace,
+                nested::InternalCircuitIndex::Step(position as u32).circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?);
+        }
+        builder.set_nested_step_rxs(step_rxs);
+
+        let (instance_trace, instance) =
+            MultiStage::new(paged::instance::Circuit::<C::HostCurve, R, C::Profile>::new())
+                .trace(witness(instance))?
+                .into_parts();
+        let instance_rx = self.nested_registry.assemble(
+            &instance_trace,
+            nested::InternalCircuitIndex::Collapse.circuit_index::<C::Profile>(),
+            &mut *rng,
+        )?;
+        let (export_trace, instance) =
+            MultiStage::new(paged::export::Circuit::<C::HostCurve, R, C::Profile>::new())
+                .trace(witness(instance))?
+                .into_parts();
+        let export_rx = self.nested_registry.assemble(
+            &export_trace,
+            nested::InternalCircuitIndex::ComputeV.circuit_index::<C::Profile>(),
+            &mut *rng,
+        )?;
+        Ok((instance_rx, export_rx, instance))
+    }
+
     /// Traces this step's nested internal instance circuits, assembles their
     /// Rx polynomials, and stores them in the proof builder.
     ///
@@ -340,11 +429,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             },
             rng,
         )?;
+        let bridge_hash = builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1];
         let witness = |instance| nested::circuits::common::Witness {
             instance,
             online_fold: online_fold.clone(),
             endoscalar: nested_endoscalar,
-            bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
+            bridge_hash,
             walk: nested_walk,
             preamble: nested_preamble_witness,
             s_prime: nested_s_prime_witness,
@@ -357,61 +447,43 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             challenges: nested_challenges_witness,
         };
 
-        // A grouped walk's check circuits, one per group, over the same
-        // stage witnesses. They expose nothing, so each takes a copy of the
-        // instance and covers none of it. A walk in one stage has none and
-        // draws nothing here.
-        let mut group_check_rxs = Vec::new();
-        let grouping = nested::walk_grouping::<C::Profile>();
-        if grouping.is_grouped() {
-            for group in 0..grouping.groups() {
-                let trace = MultiStage::new(nested::circuits::group_check::Circuit::<
+        let (collapse_rx, compute_v_rx, instance) = if nested::paged::<C::Profile>() {
+            self.trace_nested_program(rng, &witness, instance, builder)?
+        } else {
+            let (collapse_trace, instance) =
+                MultiStage::new(nested::circuits::collapse::Circuit::<
                     C::HostCurve,
                     R,
                     C::Profile,
-                >::new(group))
-                .trace(witness(instance.clone()))?
-                .into_output();
-                group_check_rxs.push(
-                    self.nested_registry.assemble(
-                        &trace,
-                        nested::InternalCircuitIndex::GroupCheck(group as u32)
-                            .circuit_index::<C::Profile>(),
-                        &mut *rng,
-                    )?,
-                );
-            }
-        }
-        let (collapse_trace, instance) = MultiStage::new(nested::circuits::collapse::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new())
-        .trace(witness(instance))?
-        .into_parts();
-        let collapse_rx = self.nested_registry.assemble(
-            &collapse_trace,
-            nested::InternalCircuitIndex::Collapse.circuit_index::<C::Profile>(),
-            &mut *rng,
-        )?;
+                >::new())
+                .trace(witness(instance))?
+                .into_parts();
+            let collapse_rx = self.nested_registry.assemble(
+                &collapse_trace,
+                nested::InternalCircuitIndex::Collapse.circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?;
 
-        let (compute_v_trace, instance) = MultiStage::new(nested::circuits::compute_v::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new())
-        .trace(witness(instance))?
-        .into_parts();
-        let compute_v_rx = self.nested_registry.assemble(
-            &compute_v_trace,
-            nested::InternalCircuitIndex::ComputeV.circuit_index::<C::Profile>(),
-            &mut *rng,
-        )?;
+            let (compute_v_trace, instance) =
+                MultiStage::new(nested::circuits::compute_v::Circuit::<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >::new())
+                .trace(witness(instance))?
+                .into_parts();
+            let compute_v_rx = self.nested_registry.assemble(
+                &compute_v_trace,
+                nested::InternalCircuitIndex::ComputeV.circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?;
+            builder.set_nested_step_rxs(Vec::new());
+            (collapse_rx, compute_v_rx, instance)
+        };
 
         // As for the native instance: every slot covered exactly once.
         instance.assert_complete();
 
-        builder.set_nested_group_check_rxs(group_check_rxs);
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
 

@@ -17,13 +17,11 @@
 //!   bits and the products of those bits.
 //!
 //! A profile can cut its walk into groups
-//! ([`Profile::NESTED_WALK_GROUP`]),
-//! each in its own points stage polynomial, and then no one circuit can
-//! load every point. Each group's [`group_check`](super::group_check)
-//! circuit enforces the walked points and the points' curve membership for
-//! its group and holds the group to the links stage. This circuit then
-//! holds the first link to the commitment of $f$, reads the walk's result
-//! off the last link, and keeps the endoscalar stage's contract.
+//! ([`Profile::NESTED_WALK_GROUP`]), each in its own points stage
+//! polynomial, and then no one circuit can load every point, nor every
+//! stage. Such a profile registers the circuits of [`paged`](super::paged)
+//! in this circuit's place, which share this module's lists of the walked
+//! points ([`held_inputs`]) and of the exported commitments ([`Exported`]).
 //!
 //! `compute_v` ties that endoscalar's lift to the challenge stage's beta
 //! lift and computes v_n.
@@ -128,6 +126,41 @@ use crate::{
     profile::Profile,
 };
 
+/// The stages that hold a copy of an input of the walk, and from the
+/// `inner_error` and `query` stages the copies alone.
+///
+/// A circuit that loads every stage reads all of them off the stages
+/// ([`Held::of`]). A circuit of a profile whose stages are laid side by
+/// side loads the `preamble` stage, and takes the copies of the stages it
+/// cannot load from the memory a step that loads them stored them in.
+pub(super) struct Held<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    pub preamble: &'a stages::preamble::Output<'dr, D, C, P>,
+    pub s_prime: &'a stages::s_prime::Output<'dr, D, C, P>,
+    pub ab: &'a stages::ab::Output<'dr, D, C, P>,
+    pub f: &'a stages::f::Output<'dr, D, C>,
+    /// The `inner_error` stage's `registry_wy`.
+    pub registry_wy: &'a Point<'dr, D, C>,
+    /// The `query` stage's `registry_xy`.
+    pub registry_xy: &'a Point<'dr, D, C>,
+    /// The `query` stage's `online_points`.
+    pub query_online_points: &'a [Point<'dr, D, C>],
+}
+
+impl<'a, 'dr, D: Driver<'dr, F = C::Base>, C: Affine, P: Profile> Held<'a, 'dr, D, C, P> {
+    /// The copies of a circuit that loaded every stage.
+    pub fn of(stages: &'a common::Loaded<'dr, D, C, P>) -> Self {
+        Held {
+            preamble: &stages.preamble,
+            s_prime: &stages.s_prime,
+            ab: &stages.ab,
+            f: &stages.f,
+            registry_wy: &stages.inner_error.registry_wy,
+            registry_xy: &stages.query.registry_xy,
+            query_online_points: &stages.query.online_points,
+        }
+    }
+}
+
 /// The copy a bridge stage holds of every input of the walk, in the order
 /// `compute_p` (`_10_p`) accumulates the points.
 ///
@@ -135,22 +168,22 @@ use crate::{
 /// folds under, and commits the points stages after it. An input held
 /// equal to its copy here is fixed before that challenge.
 pub(super) fn held_inputs<'a, 'dr, D, C, P>(
-    stages: &'a common::Loaded<'dr, D, C, P>,
+    held: &Held<'a, 'dr, D, C, P>,
 ) -> Vec<&'a Point<'dr, D, C>>
 where
     D: Driver<'dr, F = C::Base>,
     C: Affine,
     P: Profile,
 {
-    let common::Loaded {
+    let &Held {
         preamble,
         s_prime,
-        inner_error,
         ab,
-        query,
         f,
-        ..
-    } = stages;
+        registry_wy,
+        registry_xy,
+        query_online_points,
+    } = held;
     let mut held: Vec<&Point<'dr, D, C>> = Vec::new();
     for child in [&preamble.left, &preamble.right] {
         held.extend(RxIndex::all::<P>().into_iter().map(|id| &child[id]));
@@ -166,10 +199,10 @@ where
         &s_prime.registry_wx1,
         &s_prime.native_application,
         &preamble.application_stage,
-        &inner_error.registry_wy,
+        registry_wy,
         &ab.a,
         &ab.b,
-        &query.registry_xy,
+        registry_xy,
         &s_prime.randomizer_a,
         &s_prime.randomizer_b,
         &f.native_mask,
@@ -186,9 +219,59 @@ where
             .iter()
             .chain(s_prime.online_points.iter())
             .chain(ab.online_points.iter())
-            .chain(query.online_points.iter()),
+            .chain(query_online_points.iter()),
     );
     held
+}
+
+/// The stage copies of the commitments the nested unified instance
+/// exports, which a parent endoscales.
+///
+/// As for [`Held`], a circuit that loads every stage reads the copies off
+/// the stages, and a circuit of a profile whose stages are laid side by
+/// side takes the copies of the stages it cannot load from the memory.
+pub(super) struct Exported<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    pub preamble: &'a stages::preamble::Output<'dr, D, C, P>,
+    pub s_prime: &'a stages::s_prime::Output<'dr, D, C, P>,
+    pub ab: &'a stages::ab::Output<'dr, D, C, P>,
+    pub f: &'a stages::f::Output<'dr, D, C>,
+    /// The `inner_error` stage's `native_inner_error`.
+    pub native_inner_error: &'a Point<'dr, D, C>,
+    /// The `outer_error` stage's `native_outer_error`.
+    pub native_outer_error: &'a Point<'dr, D, C>,
+    /// The `query` stage's `native_query`.
+    pub native_query: &'a Point<'dr, D, C>,
+    /// The `eval` stage's `native_eval`.
+    pub native_eval: &'a Point<'dr, D, C>,
+    /// The `query` stage's `registry_xy`.
+    pub registry_xy: &'a Point<'dr, D, C>,
+    /// The walk's result: its last interstitial.
+    pub walked: &'a Point<'dr, D, C>,
+}
+
+impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Exported<'a, 'dr, D, C, P> {
+    /// The copies, in the order of the unified instance's exported
+    /// commitments.
+    pub fn copies(&self) -> [&'a Point<'dr, D, C>; unified::NUM_EXPORTED] {
+        [
+            &self.s_prime.native_preamble,
+            self.native_inner_error,
+            self.native_outer_error,
+            self.native_query,
+            self.native_eval,
+            &self.ab.a,
+            &self.ab.b,
+            self.registry_xy,
+            self.walked,
+            &self.preamble.native_points_binding,
+            &self.preamble.native_points_preamble,
+            &self.s_prime.native_points_registry_wx,
+            &self.ab.native_points_ab,
+            &self.f.native_points_f,
+            &self.preamble.online_commitments[0],
+            &self.preamble.online_commitments[1],
+        ]
+    }
 }
 
 /// Enforces every input of the points stage of a walk in one stage, and its
@@ -207,7 +290,7 @@ where
     C: Affine,
     P: Profile,
 {
-    let held = held_inputs(stages);
+    let held = held_inputs(&Held::of(stages));
     assert_eq!(
         held.len(),
         points.inputs.len(),
@@ -254,37 +337,21 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
-        let (dr, stages) = common::load_all(dr, &witness, common::whole_walk::<P>())?;
+        let (dr, stages) = common::load_all(dr, &witness)?;
 
         // The walk's contracts: points on the curve, and the endoscalar
         // stage's bit wires bits with its product wires the products of those
-        // bits, each gadget re-emitted on the stage's wires. A grouped
-        // walk's check circuits hold each group's points to the curve.
-        if let Some(points) = &stages.points {
-            points.enforce_consistent(dr)?;
-        }
+        // bits, each gadget re-emitted on the stage's wires.
+        stages.points.enforce_consistent(dr)?;
         stages.endoscalar.enforce_consistent(dr)?;
 
-        // The walked points: each one is the copy a bridge stage holds. A
-        // grouped walk's check circuits hold each group's inputs, and the
-        // walk's initial point is the first link.
-        let result = match &stages.points {
-            Some(points) => {
-                enforce_walked_points(dr, &stages, points)?;
-                points
-                    .interstitials
-                    .last()
-                    .expect("every walk has at least one interstitial")
-            }
-            None => {
-                let links = &stages.links.states;
-                links
-                    .first()
-                    .expect("a grouped walk has links")
-                    .enforce_equal(dr, &stages.f.native_f)?;
-                links.last().expect("a grouped walk has links")
-            }
-        };
+        // The walked points: each one is the copy a bridge stage holds.
+        enforce_walked_points(dr, &stages, &stages.points)?;
+        let result = stages
+            .points
+            .interstitials
+            .last()
+            .expect("every walk has at least one interstitial");
 
         let allocator = &mut Standard::new();
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
@@ -305,25 +372,19 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .enforce_equal(dr, &pairs[stages::challenges::U].lift)?;
 
         // The commitments a parent endoscales, in `unified` order.
-        let last_interstitial = result;
-        let held = [
-            &stages.s_prime.native_preamble,
-            &stages.inner_error.native_inner_error,
-            &stages.outer_error.native_outer_error,
-            &stages.query.native_query,
-            &stages.eval.native_eval,
-            &stages.ab.a,
-            &stages.ab.b,
-            &stages.query.registry_xy,
-            last_interstitial,
-            &stages.preamble.native_points_binding,
-            &stages.preamble.native_points_preamble,
-            &stages.s_prime.native_points_registry_wx,
-            &stages.ab.native_points_ab,
-            &stages.f.native_points_f,
-            &stages.preamble.online_commitments[0],
-            &stages.preamble.online_commitments[1],
-        ];
+        let held = Exported {
+            preamble: &stages.preamble,
+            s_prime: &stages.s_prime,
+            ab: &stages.ab,
+            f: &stages.f,
+            native_inner_error: &stages.inner_error.native_inner_error,
+            native_outer_error: &stages.outer_error.native_outer_error,
+            native_query: &stages.query.native_query,
+            native_eval: &stages.eval.native_eval,
+            registry_xy: &stages.query.registry_xy,
+            walked: result,
+        }
+        .copies();
         // The bridge-hash stage holds the step's own last online commitment,
         // the one the preamble holds and w absorbed.
         stages.bridge_hash.o1.enforce_equal(

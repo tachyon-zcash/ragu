@@ -249,6 +249,14 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type Witness<'source> = &'source Witness<C, P>;
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
+    /// The stage's position in the profile's layout (see
+    /// [`layout`](crate::internal::nested::layout)).
+    fn skip_gates() -> usize {
+        crate::internal::nested::layout::skip_gates::<C, R, P, Self>(
+            crate::internal::nested::layout::Slot::Eval,
+        )
+    }
+
     fn values() -> usize {
         // (x, y) per point + 2 children + current step elements (9)
         2 * <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len() + NUM * 2 + 2 * (OwnRxLen::<P>::len() + 4) + 9

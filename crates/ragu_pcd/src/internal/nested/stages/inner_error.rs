@@ -86,6 +86,14 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type Witness<'source> = &'source Witness<C, P>;
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
+    /// The stage's position in the profile's layout (see
+    /// [`layout`](crate::internal::nested::layout)).
+    fn skip_gates() -> usize {
+        crate::internal::nested::layout::skip_gates::<C, R, P, Self>(
+            crate::internal::nested::layout::Slot::InnerError,
+        )
+    }
+
     fn values() -> usize {
         // (x, y) per point + N * (M - 1) quotient coefficients + the
         // randomizer's target

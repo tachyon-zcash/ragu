@@ -120,7 +120,7 @@ where
                 }
             }
             // The instance circuits: each one's rx and every stage it
-            // reserves, which is every nested stage.
+            // loads.
             Collapse | ComputeV => {
                 let own = RxIndex::INSTANCE[InternalCircuitIndex::INSTANCE
                     .iter()
@@ -140,11 +140,14 @@ where
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
-            // A group's check circuit: its rx, every nested stage with the
-            // group's own points stage, and the links stage (k(y) = 1).
-            GroupCheck(group) => {
-                let loaded = once(RxIndex::GroupCheck(group))
-                    .chain(RxIndex::group_check_stages(group as usize));
+            // A step of a paged profile's program: its rx and the stages
+            // its circuit loads (k(y) = 1).
+            Step(step) => {
+                let scheduled = super::circuits::paged::schedule::<P>()[step as usize];
+                let loaded = once(RxIndex::Step(step)).chain(RxIndex::loaded_stages(
+                    scheduled.branch(),
+                    scheduled.group(),
+                ));
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in loaded {
                     for (i, rx) in source.rx(Rx(index)).enumerate() {
@@ -207,20 +210,27 @@ where
                     .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step as u32))));
                 processor.mask_claim(id, final_rxs)?;
             }
-            // The final mask of the circuits whose last stage is the
-            // challenge stage: the instance circuits and a grouped walk's
-            // check circuits.
+            // The final mask of the instance circuits, and in a paged
+            // profile of the steps that end on the `preamble` stage as they
+            // do.
             ChallengeFinalStaged => {
-                let grouping = super::walk_grouping::<P>();
-                let checks = if grouping.is_grouped() {
-                    grouping.groups()
-                } else {
-                    0
-                };
+                use super::circuits::paged::Branch;
                 let owners = RxIndex::INSTANCE
                     .into_iter()
-                    .chain((0..checks as u32).map(RxIndex::GroupCheck));
+                    .chain(RxIndex::steps_on::<P>(Branch::Preamble));
                 let final_rxs = owners.flat_map(|own| source.rx(Rx(own)));
+                processor.mask_claim(id, final_rxs)?;
+            }
+            // A paged profile's other final masks, each over the steps
+            // that end on its stage.
+            ErrorsFinalStaged | QueryFinalStaged | EvalFinalStaged => {
+                use super::circuits::paged::Branch;
+                let branch = match id {
+                    ErrorsFinalStaged => Branch::Errors,
+                    QueryFinalStaged => Branch::Query,
+                    _ => Branch::Eval,
+                };
+                let final_rxs = RxIndex::steps_on::<P>(branch).flat_map(|own| source.rx(Rx(own)));
                 processor.mask_claim(id, final_rxs)?;
             }
             // Every other entry is a stage's mask, over the stage's rx.
@@ -321,16 +331,8 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 }
             })
         })
-        // A grouped walk's check circuits, which expose nothing.
-        .chain({
-            let grouping = super::walk_grouping::<P>();
-            let checks = if grouping.is_grouped() {
-                grouping.groups()
-            } else {
-                0
-            };
-            core::iter::repeat_n(source.ones(), checks).flatten()
-        })
+        // The steps of a paged profile's program, which expose nothing.
+        .chain(core::iter::repeat_n(source.ones(), super::NumProgramSteps::<P>::len()).flatten())
 }
 
 /// [`KySource`] for the two child proofs of a fuse step, inside a driver.

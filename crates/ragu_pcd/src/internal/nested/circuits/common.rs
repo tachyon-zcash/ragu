@@ -24,7 +24,7 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::{
     internal::{
         endoscalar::EndoscalarStage,
-        nested::{Links, LinksStage, Points, PointsStage, WalkWitness, stages, unified},
+        nested::{LinksStage, Points, PointsStage, WalkWitness, stages, unified},
     },
     profile::{
         Profile,
@@ -56,10 +56,7 @@ pub struct Witness<'a, C: Affine, P: Profile> {
 pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub endoscalar: HoistedEndoscalar<'dr, D>,
     pub bridge_hash: stages::bridge_hash::Output<'dr, D, C>,
-    /// The points stage of the walk's group the circuit loaded, if it
-    /// loaded one.
-    pub points: Option<Points<'dr, D, C, P>>,
-    pub links: Links<'dr, D, C, P>,
+    pub points: Points<'dr, D, C, P>,
     pub preamble: stages::preamble::Output<'dr, D, C, P>,
     pub s_prime: stages::s_prime::Output<'dr, D, C, P>,
     pub inner_error: stages::inner_error::Output<'dr, D, C, P>,
@@ -71,20 +68,15 @@ pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub challenges: stages::challenges::Output<'dr, D>,
 }
 
-/// The group of the walk an instance circuit loads: the one group of a
-/// walk in one stage, and none of a grouped walk, whose groups the check
-/// circuits load.
-pub fn whole_walk<P: Profile>() -> Option<usize> {
-    (!crate::internal::nested::walk_grouping::<P>().is_grouped()).then_some(0)
-}
-
-/// Reserves the whole stage chain and loads every stage, unenforced. The
-/// points stage is loaded with the polynomial of the walk's group `group`,
-/// or reserved and not loaded for `None`.
+/// Reserves the whole stage chain and loads every stage, unenforced.
+///
+/// The chain is the layout of a profile whose walk is in one points stage,
+/// and whose links stage is then empty. A profile that cuts its walk into
+/// groups lays its stages side by side and loads them with
+/// [`paged`](super::paged).
 pub fn load_all<'a, 'dr, 'source: 'dr, D, C, R, P>(
     dr: StageBuilder<'a, 'dr, D, R, (), stages::challenges::Stage<C, R, P>>,
     witness: &DriverValue<D, Witness<'source, C, P>>,
-    group: Option<usize>,
 ) -> Result<(&'a mut D, Loaded<'dr, D, C, P>)>
 where
     D: Driver<'dr, F = C::Base>,
@@ -94,14 +86,9 @@ where
 {
     let (endoscalar, dr) = dr.add_stage::<EndoscalarStage>()?;
     let (bridge_hash, dr) = dr.add_stage::<stages::bridge_hash::Stage<C>>()?;
-    let (points, dr) = match group {
-        Some(group) => {
-            let (points, dr) = dr.add_stage::<PointsStage<C, P>>()?;
-            (Some((group, points)), dr)
-        }
-        None => (None, dr.skip_stage::<PointsStage<C, P>>()?),
-    };
-    let (links, dr) = dr.add_stage::<LinksStage<C, P>>()?;
+    let (points, dr) = dr.add_stage::<PointsStage<C, P>>()?;
+    // The links stage of a walk in one points stage holds nothing.
+    let dr = dr.skip_stage::<LinksStage<C, P>>()?;
     let (preamble, dr) = dr.add_stage::<stages::preamble::Stage<C, R, P>>()?;
     let (s_prime, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, P>>()?;
     let (inner_error, dr) = dr.add_stage::<stages::inner_error::Stage<C, R, P>>()?;
@@ -116,13 +103,7 @@ where
     let loaded = Loaded {
         endoscalar: endoscalar.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?,
         bridge_hash: bridge_hash.unenforced(dr, witness.as_ref().map(|w| w.bridge_hash))?,
-        points: match points {
-            Some((group, points)) => {
-                Some(points.unenforced(dr, witness.as_ref().map(|w| &w.walk.groups[group]))?)
-            }
-            None => None,
-        },
-        links: links.unenforced(dr, witness.as_ref().map(|w| &w.walk.links))?,
+        points: points.unenforced(dr, witness.as_ref().map(|w| &w.walk.groups[0]))?,
         preamble: preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble))?,
         s_prime: s_prime.unenforced(dr, witness.as_ref().map(|w| w.s_prime))?,
         inner_error: inner_error.unenforced(dr, witness.as_ref().map(|w| w.inner_error))?,

@@ -111,12 +111,7 @@ mod shared {
     pub mod revdot;
     pub mod transcript;
 }
-#[expect(
-    unused_imports,
-    reason = "no circuit is a program yet: only the module's own tests use it"
-)]
-pub use shared::program;
-pub use shared::{endoscalar, inverter, ky, paging, revdot, transcript};
+pub use shared::{endoscalar, inverter, ky, paging, program, revdot, transcript};
 
 /// Position `index` among a profile's `count` variants of one kind, for
 /// either side's arithmetic index lookups.

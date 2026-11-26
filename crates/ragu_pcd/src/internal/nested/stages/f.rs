@@ -56,6 +56,14 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
+    /// The stage's position in the profile's layout (see
+    /// [`layout`](crate::internal::nested::layout)).
+    fn skip_gates() -> usize {
+        crate::internal::nested::layout::skip_gates::<C, R, P, Self>(
+            crate::internal::nested::layout::Slot::F,
+        )
+    }
+
     fn values() -> usize {
         NUM * 2
     }

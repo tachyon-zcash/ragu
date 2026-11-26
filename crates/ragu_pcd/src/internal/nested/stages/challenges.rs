@@ -187,6 +187,14 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type Witness<'source> = &'source Witness<C::Base>;
     type OutputKind = Kind![C::Base; Output<'_, _>];
 
+    /// The stage's position in the profile's layout (see
+    /// [`layout`](crate::internal::nested::layout)).
+    fn skip_gates() -> usize {
+        crate::internal::nested::layout::skip_gates::<C, R, P, Self>(
+            crate::internal::nested::layout::Slot::Challenges,
+        )
+    }
+
     fn values() -> usize {
         // One lift and one zero per challenge, then the base-case sign and
         // beta with theirs: every value at an a-wire.

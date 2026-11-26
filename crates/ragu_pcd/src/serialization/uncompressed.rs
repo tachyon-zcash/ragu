@@ -129,8 +129,8 @@ codec! {
     nested_endoscaling_step_rxs => serialization::FixedSequence<serialization::DefaultEncoding, nested::NumSteps<C::Profile>>,
     nested_extension_circuit_rxs => serialization::FixedSequence<serialization::DefaultEncoding, nested::NumExtensionCircuits<C::Profile>>,
     nested_extension_stage_rxs => serialization::FixedSequence<serialization::DefaultEncoding, nested::NumExtensionStages<C::Profile>>,
-    nested_walk_stage_rxs => serialization::FixedSequence<serialization::DefaultEncoding, nested::NumWalkStages<C::Profile>>,
-    nested_group_check_rxs => serialization::FixedSequence<serialization::DefaultEncoding, nested::NumGroupChecks<C::Profile>>,
+    nested_paged_stage_rxs => serialization::FixedSequence<serialization::DefaultEncoding, nested::NumPagedStages<C::Profile>>,
+    nested_step_rxs => serialization::FixedSequence<serialization::DefaultEncoding, nested::NumProgramSteps<C::Profile>>,
     nested_endoscalar_rx => serialization::DefaultEncoding,
     nested_points_rx => serialization::DefaultEncoding,
 
@@ -164,8 +164,8 @@ codec! {
     nested_endoscaling_step_commitments => serialization::FixedSequence<CachedPoint, nested::NumSteps<C::Profile>>,
     nested_extension_circuit_commitments => serialization::FixedSequence<CachedPoint, nested::NumExtensionCircuits<C::Profile>>,
     nested_extension_stage_commitments => serialization::FixedSequence<CachedPoint, nested::NumExtensionStages<C::Profile>>,
-    nested_walk_stage_commitments => serialization::FixedSequence<CachedPoint, nested::NumWalkStages<C::Profile>>,
-    nested_group_check_commitments => serialization::FixedSequence<CachedPoint, nested::NumGroupChecks<C::Profile>>,
+    nested_paged_stage_commitments => serialization::FixedSequence<CachedPoint, nested::NumPagedStages<C::Profile>>,
+    nested_step_commitments => serialization::FixedSequence<CachedPoint, nested::NumProgramSteps<C::Profile>>,
     nested_endoscalar_commitment => CachedPoint,
     nested_points_commitment => CachedPoint,
 

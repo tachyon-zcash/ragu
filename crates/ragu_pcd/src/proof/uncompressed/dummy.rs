@@ -159,11 +159,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder
             .set_nested_extension_circuit_rxs(vec![ones_nested.clone(); extension.circuits.len()]);
         builder.set_nested_extension_stage_rxs(vec![ones_nested.clone(); extension.stages]);
-        // A grouped walk's check circuits; its stages come from
-        // `compute_endoscaling` below.
-        builder.set_nested_group_check_rxs(vec![
+        // A paged profile's step circuits; the walk's stages come from
+        // `compute_endoscaling` below, and the memory stage after them.
+        builder.set_nested_step_rxs(vec![
             ones_nested.clone();
-            nested::NumGroupChecks::<C::Profile>::len()
+            nested::NumProgramSteps::<C::Profile>::len()
         ]);
 
         // Native rx polynomials (all trivial ones)
@@ -467,6 +467,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 .expect("trivial endoscaling");
             (poly, commitment)
         };
+        // A paged profile's memory stage, after the walk's stages.
+        if nested::paged::<C::Profile>() {
+            builder.push_nested_memory_rx(ones_nested.clone());
+        }
 
         // Set native_p_poly with the real accumulated commitment.
         builder.set_native_p_poly(p_poly, p_commitment);

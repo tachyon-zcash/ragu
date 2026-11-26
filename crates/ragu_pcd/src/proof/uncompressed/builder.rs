@@ -311,8 +311,8 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
-    nested_walk_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
-    nested_group_check_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    nested_paged_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    nested_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_endoscalar_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_points_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
 
@@ -336,8 +336,8 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     nested_endoscaling_step_commitments: OnceCell<Vec<C::NestedCurve>>,
     nested_extension_circuit_commitments: OnceCell<Vec<C::NestedCurve>>,
     nested_extension_stage_commitments: OnceCell<Vec<C::NestedCurve>>,
-    nested_walk_stage_commitments: OnceCell<Vec<C::NestedCurve>>,
-    nested_group_check_commitments: OnceCell<Vec<C::NestedCurve>>,
+    nested_paged_stage_commitments: OnceCell<Vec<C::NestedCurve>>,
+    nested_step_commitments: OnceCell<Vec<C::NestedCurve>>,
     nested_endoscalar_commitment: OnceCell<C::NestedCurve>,
     nested_points_commitment: OnceCell<C::NestedCurve>,
 
@@ -635,8 +635,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_endoscaling_step_rxs: None,
             nested_extension_circuit_rxs: None,
             nested_extension_stage_rxs: None,
-            nested_walk_stage_rxs: None,
-            nested_group_check_rxs: None,
+            nested_paged_stage_rxs: None,
+            nested_step_rxs: None,
             nested_endoscalar_rx: None,
             nested_points_rx: None,
             nested_a_poly: None,
@@ -650,8 +650,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_endoscaling_step_commitments: OnceCell::new(),
             nested_extension_circuit_commitments: OnceCell::new(),
             nested_extension_stage_commitments: OnceCell::new(),
-            nested_walk_stage_commitments: OnceCell::new(),
-            nested_group_check_commitments: OnceCell::new(),
+            nested_paged_stage_commitments: OnceCell::new(),
+            nested_step_commitments: OnceCell::new(),
             nested_endoscalar_commitment: OnceCell::new(),
             nested_points_commitment: OnceCell::new(),
             nested_a_commitment: OnceCell::new(),
@@ -1131,15 +1131,33 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Vec<sparse::Polynomial<C::ScalarField, R>>
     );
     setter!(
-        set_nested_walk_stage_rxs,
-        nested_walk_stage_rxs,
+        set_nested_paged_stage_rxs,
+        nested_paged_stage_rxs,
         Vec<sparse::Polynomial<C::ScalarField, R>>
     );
     setter!(
-        set_nested_group_check_rxs,
-        nested_group_check_rxs,
+        set_nested_step_rxs,
+        nested_step_rxs,
         Vec<sparse::Polynomial<C::ScalarField, R>>
     );
+
+    /// Appends the memory stage's rx polynomial to a paged profile's stage
+    /// polynomials, after the walk's.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the walk's stage polynomials are not set, or if the
+    /// stages' commitments were computed.
+    pub(crate) fn push_nested_memory_rx(&mut self, rx: sparse::Polynomial<C::ScalarField, R>) {
+        assert!(
+            self.nested_paged_stage_commitments.get().is_none(),
+            "the memory stage is set before the stages are committed"
+        );
+        self.nested_paged_stage_rxs
+            .as_mut()
+            .expect("nested_paged_stage_rxs not set")
+            .push(rx);
+    }
 
     /// Lazily computes and caches the commitments of the nested extension
     /// circuits' rx polynomials. Returns the cached slice.
@@ -1168,24 +1186,24 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// Lazily computes and caches the commitments of a grouped nested
     /// walk's later points stages and links stage. Returns the cached
     /// slice.
-    pub(crate) fn nested_walk_stage_commitments(&self) -> &[C::NestedCurve] {
-        self.nested_walk_stage_commitments.get_or_init(|| {
+    pub(crate) fn nested_paged_stage_commitments(&self) -> &[C::NestedCurve] {
+        self.nested_paged_stage_commitments.get_or_init(|| {
             self.nested.commit_many(
-                self.nested_walk_stage_rxs
+                self.nested_paged_stage_rxs
                     .as_ref()
-                    .expect("nested_walk_stage_rxs not set"),
+                    .expect("nested_paged_stage_rxs not set"),
             )
         })
     }
 
     /// Lazily computes and caches the commitments of a grouped nested
     /// walk's check circuits' rx polynomials. Returns the cached slice.
-    pub(crate) fn nested_group_check_commitments(&self) -> &[C::NestedCurve] {
-        self.nested_group_check_commitments.get_or_init(|| {
+    pub(crate) fn nested_step_commitments(&self) -> &[C::NestedCurve] {
+        self.nested_step_commitments.get_or_init(|| {
             self.nested.commit_many(
-                self.nested_group_check_rxs
+                self.nested_step_rxs
                     .as_ref()
-                    .expect("nested_group_check_rxs not set"),
+                    .expect("nested_step_rxs not set"),
             )
         })
     }
@@ -1416,8 +1434,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.nested_endoscaling_step_commitments();
         self.nested_extension_circuit_commitments();
         self.nested_extension_stage_commitments();
-        self.nested_walk_stage_commitments();
-        self.nested_group_check_commitments();
+        self.nested_paged_stage_commitments();
+        self.nested_step_commitments();
         self.nested_endoscalar_commitment();
         self.nested_points_commitment();
 
@@ -1571,8 +1589,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_endoscaling_step_rxs: take!(nested_endoscaling_step_rxs),
             nested_extension_circuit_rxs: take!(nested_extension_circuit_rxs),
             nested_extension_stage_rxs: take!(nested_extension_stage_rxs),
-            nested_walk_stage_rxs: take!(nested_walk_stage_rxs),
-            nested_group_check_rxs: take!(nested_group_check_rxs),
+            nested_paged_stage_rxs: take!(nested_paged_stage_rxs),
+            nested_step_rxs: take!(nested_step_rxs),
             nested_endoscalar_rx: take!(nested_endoscalar_rx),
             nested_points_rx: take!(nested_points_rx),
             nested_a_poly: take!(nested_a_poly),
@@ -1605,17 +1623,17 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .into_iter()
                 .map(Cached)
                 .collect(),
-            nested_walk_stage_commitments: self
-                .nested_walk_stage_commitments
+            nested_paged_stage_commitments: self
+                .nested_paged_stage_commitments
                 .take()
-                .expect("nested_walk_stage_commitments not set")
+                .expect("nested_paged_stage_commitments not set")
                 .into_iter()
                 .map(Cached)
                 .collect(),
-            nested_group_check_commitments: self
-                .nested_group_check_commitments
+            nested_step_commitments: self
+                .nested_step_commitments
                 .take()
-                .expect("nested_group_check_commitments not set")
+                .expect("nested_step_commitments not set")
                 .into_iter()
                 .map(Cached)
                 .collect(),

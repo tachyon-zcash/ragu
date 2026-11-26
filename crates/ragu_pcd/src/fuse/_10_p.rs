@@ -432,15 +432,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // A grouped walk's later points stages, then its links stage. A
         // walk in one stage has neither and draws nothing here.
-        let mut walk_stage_rxs = Vec::new();
+        let mut paged_stage_rxs = Vec::new();
         if grouping.is_grouped() {
             for group in &witness.groups[1..] {
-                walk_stage_rxs.push(<PointsStage<C::HostCurve, C::Profile> as StageExt<
+                paged_stage_rxs.push(<PointsStage<C::HostCurve, C::Profile> as StageExt<
                     C::ScalarField,
                     R,
                 >>::rx(Blind::random(rng), group)?);
             }
-            walk_stage_rxs.push(<LinksStage<C::HostCurve, C::Profile> as StageExt<
+            paged_stage_rxs.push(<LinksStage<C::HostCurve, C::Profile> as StageExt<
                 C::ScalarField,
                 R,
             >>::rx(Blind::random(rng), &witness.links)?);
@@ -449,7 +449,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_endoscaling_step_rxs(step_rxs);
         builder.set_nested_endoscalar_rx(endoscalar_rx);
         builder.set_nested_points_rx(points_rx);
-        builder.set_nested_walk_stage_rxs(walk_stage_rxs);
+        builder.set_nested_paged_stage_rxs(paged_stage_rxs);
 
         let p_commitment = witness.result();
         Ok((p_commitment, witness))

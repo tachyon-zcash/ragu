@@ -9,16 +9,17 @@
 //!   current step, and verifies both layers of the children's nested fold.
 //! - **Compute v**: recomputes the nested batch evaluation $v_n$, the mirror
 //!   of the native `compute_v`.
-//! - **Group check**: for a profile whose walk is cut into groups
-//!   ([`walk_grouping`]), holds one group's points to the curve, its
-//!   inputs to the bridge stages and its two ends to the links stage. A
-//!   profile whose walk is in one stage has none, and collapse does this.
 //!
 //! The collapse and compute-v circuits share the [`unified`]
 //! instance as their public input, each constraining the slots it owns.
-//! Both load every nested stage, but for a grouped walk's points stage,
-//! which they reserve and do not load. A relation between two stages belongs in
+//! Both load every nested stage. A relation between two stages belongs in
 //! collapse, which also holds the stages' contracts.
+//!
+//! A profile with a large extension cannot load every stage in one circuit
+//! ([`paged`]). It lays the stages side by side ([`layout`]), cuts its walk
+//! into groups ([`walk_grouping`]) and checks what collapse and compute-v
+//! check with a program of step circuits and two instance circuits
+//! ([`circuits::paged`]).
 //!
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
@@ -41,11 +42,11 @@ pub mod circuits {
     pub mod collapse;
     pub mod common;
     pub mod compute_v;
-    pub mod group_check;
+    pub mod paged;
 }
 
 use crate::{
-    internal::{endoscalar, paging, revdot::Parameters},
+    internal::{endoscalar, paging, program, revdot::Parameters},
     profile::{CircuitSlot, MaskSlot, Profile, ProfiledCycle, Shape},
 };
 
@@ -164,38 +165,68 @@ pub fn walk_grouping<P: Profile>() -> paging::Grouping {
     endoscalar::grouping::<NumPoints<P>, Endoscalings<P>, WalkGroup<P>>()
 }
 
-/// The rx polynomials a grouped walk of `steps` steps adds at `per_group`
-/// steps a group: a points stage for every group after the first, the links
-/// stage, and a check circuit for every group. None for a walk in one
-/// stage.
-pub const fn num_walk_extras(steps: usize, per_group: usize) -> usize {
+/// Whether profile `P` lays its nested stages side by side ([`layout`])
+/// and checks its instance with a program of step circuits
+/// ([`circuits::paged`]): a profile that cuts its walk into groups
+/// ([`Profile::NESTED_WALK_GROUP`]).
+pub fn paged<P: Profile>() -> bool {
+    P::NESTED_WALK_GROUP != 0
+}
+
+/// The stage polynomials a paged profile adds for a walk of `steps` steps
+/// at `per_group` steps a group: a points stage for every group after the
+/// first, the links stage and the memory stage. None for a profile that
+/// is not paged.
+pub const fn num_paged_stages(steps: usize, per_group: usize) -> usize {
     if per_group == 0 {
         0
     } else {
-        2 * steps.div_ceil(per_group)
+        steps.div_ceil(per_group) + 1
     }
 }
 
-/// Length type for the stage polynomials the grouped nested walk adds in
-/// profile `P`: a points stage for every group after the first, then the
-/// links stage. None for a walk in one stage.
-pub struct NumWalkStages<P: Profile>(PhantomData<P>);
+/// The step circuits of a paged profile's program for a walk of `steps`
+/// steps at `per_group` steps a group: the `fixed` steps the profile pins
+/// ([`Profile::NESTED_STEPS`]) and a step for every group of the walk. None
+/// for a profile that is not paged.
+pub const fn num_paged_steps(steps: usize, per_group: usize, fixed: usize) -> usize {
+    if per_group == 0 {
+        0
+    } else {
+        fixed + steps.div_ceil(per_group)
+    }
+}
 
-impl<P: Profile> Len for NumWalkStages<P> {
+/// Length type for the stage polynomials profile `P` adds if it is paged
+/// ([`num_paged_stages`]).
+pub struct NumPagedStages<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumPagedStages<P> {
     fn len() -> usize {
-        num_walk_extras(NumSteps::<P>::len(), P::NESTED_WALK_GROUP) / 2
+        num_paged_stages(NumSteps::<P>::len(), P::NESTED_WALK_GROUP)
     }
 }
 
-/// Length type for the check circuits of the grouped nested walk in profile
-/// `P`: one per group. None for a walk in one stage.
-pub struct NumGroupChecks<P: Profile>(PhantomData<P>);
+/// Length type for the step circuits of the program of profile `P`
+/// ([`num_paged_steps`]): the length of
+/// [`schedule`](circuits::paged::schedule), which [`register_all`] checks.
+pub struct NumProgramSteps<P: Profile>(PhantomData<P>);
 
-impl<P: Profile> Len for NumGroupChecks<P> {
+impl<P: Profile> Len for NumProgramSteps<P> {
     fn len() -> usize {
-        num_walk_extras(NumSteps::<P>::len(), P::NESTED_WALK_GROUP) / 2
+        num_paged_steps(NumSteps::<P>::len(), P::NESTED_WALK_GROUP, P::NESTED_STEPS)
     }
 }
+
+/// The masks a paged profile adds: the links and memory stages' masks and
+/// the final masks of the circuits whose last stage is the `outer_error`,
+/// the `query` or the `eval` stage.
+pub const NUM_PAGED_MASKS: usize = 5;
+
+/// The memory stage of a paged profile's program, the last stage of the
+/// layout's trunk.
+pub type MemoryStage<C, R, P> =
+    program::MemoryStage<circuits::paged::Cells<P>, C, stages::challenges::Stage<C, R, P>>;
 
 /// The nested points stage, over the native batch's commitments, for host
 /// curve `C` in profile `P`: one group of the walk, the whole walk for a
@@ -275,14 +306,9 @@ pub const FOLD_GROUP_SIZE: usize = 9;
 /// claim across both.
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(true);
-    let grouping = walk_grouping::<P>();
-    let (checks, links) = if grouping.is_grouped() {
-        (grouping.groups(), 1)
-    } else {
-        (0, 0)
-    };
-    let circuits = 2 + NumSteps::<P>::len() + extension.circuits + checks;
-    let masks = NUM_FIXED_MASKS + extension.masks + links;
+    let paged_masks = if paged::<P>() { NUM_PAGED_MASKS } else { 0 };
+    let circuits = 2 + NumSteps::<P>::len() + extension.circuits + NumProgramSteps::<P>::len();
+    let masks = NUM_FIXED_MASKS + extension.masks + paged_masks;
     2 + 2 * circuits + masks
 }
 
@@ -411,9 +437,9 @@ pub enum InternalCircuitIndex {
     /// A circuit of the profile's nested extension (see
     /// [`Extension`](crate::profile::Extension)).
     ExtensionCircuit(u32),
-    /// The check circuit of a group of a grouped walk (see
-    /// [`group_check`](circuits::group_check)).
-    GroupCheck(u32),
+    /// A step circuit of a paged profile's program, at its position in
+    /// [`schedule`](circuits::paged::schedule).
+    Step(u32),
     /// `EndoscalarStage` stage mask.
     EndoscalarStage,
     /// `PointsStage` stage mask.
@@ -440,18 +466,39 @@ pub enum InternalCircuitIndex {
     BridgeEval,
     /// Challenge stage mask.
     ChallengeStage,
-    /// Final staged mask of the circuits whose last stage is the challenge
-    /// stage.
+    /// Final staged mask of the instance circuits and of the circuits
+    /// that end on the same stage: the challenge stage, or the `preamble`
+    /// stage in a paged profile.
     ChallengeFinalStaged,
     /// A mask of the profile's nested extension, a stage mask or a final
     /// mask, in [`Extension::masks`](crate::profile::Extension::masks)
     /// order.
     ExtensionMask(u32),
-    /// The links stage's mask, for a grouped walk.
+    /// The links stage's mask, in a paged profile.
     LinksStage,
+    /// The memory stage's mask, in a paged profile.
+    MemoryStage,
+    /// Final staged mask of a paged profile's circuits whose last stage is
+    /// the `outer_error` stage.
+    ErrorsFinalStaged,
+    /// Final staged mask of a paged profile's circuits whose last stage is
+    /// the `query` stage.
+    QueryFinalStaged,
+    /// Final staged mask of a paged profile's circuits whose last stage is
+    /// the `eval` stage.
+    EvalFinalStaged,
 }
 
 impl InternalCircuitIndex {
+    /// The masks a paged profile adds, in registration order.
+    pub const PAGED_MASKS: [Self; NUM_PAGED_MASKS] = [
+        Self::LinksStage,
+        Self::MemoryStage,
+        Self::ErrorsFinalStaged,
+        Self::QueryFinalStaged,
+        Self::EvalFinalStaged,
+    ];
+
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
     pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_FIXED_INTERNAL;
@@ -505,35 +552,28 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        // A grouped walk adds a check circuit per group and the links
-        // stage's mask.
-        let grouping = walk_grouping::<P>();
-        let walk = if grouping.is_grouped() {
-            grouping.groups() + 1
+        // A paged profile adds its program's steps and its masks.
+        let paged = if paged::<P>() {
+            NumProgramSteps::<P>::len() + NUM_PAGED_MASKS
         } else {
             0
         };
         NumSteps::<P>::len()
             + NUM_FIXED_INTERNAL
             + crate::profile::nested_extension::<P>().internal()
-            + walk
+            + paged
     }
 
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
     /// profile's extension circuits after the instance circuits and its
-    /// masks last. A grouped walk's check circuits follow the extension's
-    /// circuits and its links stage's mask follows the extension's masks.
+    /// masks last. A paged profile's step circuits follow the extension's
+    /// circuits and its masks follow the extension's masks.
     /// The index tests compare this order with [`Self::circuit_index`].
     pub fn all<P: Profile>() -> Vec<Self> {
         let num_steps = NumSteps::<P>::len();
         let extension = crate::profile::nested_extension::<P>();
-        let grouping = walk_grouping::<P>();
-        let checks = if grouping.is_grouped() {
-            grouping.groups()
-        } else {
-            0
-        };
+        let program_steps = NumProgramSteps::<P>::len();
         let mut all = Vec::with_capacity(Self::num::<P>());
         for &id in &Self::ALL {
             match id {
@@ -544,14 +584,14 @@ impl InternalCircuitIndex {
                 Self::ComputeV => {
                     all.push(id);
                     all.extend((0..extension.circuits.len() as u32).map(Self::ExtensionCircuit));
-                    all.extend((0..checks as u32).map(Self::GroupCheck));
+                    all.extend((0..program_steps as u32).map(Self::Step));
                 }
                 id => all.push(id),
             }
         }
         all.extend((0..extension.masks() as u32).map(Self::ExtensionMask));
-        if grouping.is_grouped() {
-            all.push(Self::LinksStage);
+        if paged::<P>() {
+            all.extend(Self::PAGED_MASKS);
         }
         assert_eq!(all.len(), Self::num::<P>());
         all
@@ -565,22 +605,21 @@ impl InternalCircuitIndex {
         use InternalCircuitIndex::*;
         let steps = NumSteps::<P>::len();
         let extension = crate::profile::extension_lengths::<P>(true);
-        let grouping = walk_grouping::<P>();
-        let checks = if grouping.is_grouped() {
-            grouping.groups()
-        } else {
-            0
-        };
-        let mask = steps + 2 + extension.circuits + checks;
+        let program_steps = NumProgramSteps::<P>::len();
+        let mask = steps + 2 + extension.circuits + program_steps;
         let pos = match self {
             EndoscalingStep(i) => super::checked_index(i, steps),
             Collapse => steps,
             ComputeV => steps + 1,
             ExtensionCircuit(i) => steps + 2 + super::checked_index(i, extension.circuits),
-            GroupCheck(i) => steps + 2 + extension.circuits + super::checked_index(i, checks),
-            LinksStage => {
-                assert!(grouping.is_grouped(), "index is outside the profile");
-                mask + NUM_FIXED_MASKS + extension.masks
+            Step(i) => steps + 2 + extension.circuits + super::checked_index(i, program_steps),
+            LinksStage | MemoryStage | ErrorsFinalStaged | QueryFinalStaged | EvalFinalStaged => {
+                assert!(paged::<P>(), "index is outside the profile");
+                let position = Self::PAGED_MASKS
+                    .iter()
+                    .position(|&mask| mask == self)
+                    .expect("a paged profile's mask");
+                mask + NUM_FIXED_MASKS + extension.masks + position
             }
             EndoscalarStage => mask,
             PointsStage => mask + 1,
@@ -608,6 +647,7 @@ impl InternalCircuitIndex {
             Self::EndoscalarStage => RxIndex::EndoscalarStage,
             Self::PointsStage => RxIndex::PointsStage,
             Self::LinksStage => RxIndex::LinksStage,
+            Self::MemoryStage => RxIndex::MemoryStage,
             Self::BridgePreamble => RxIndex::BridgePreamble,
             Self::BridgeHash => RxIndex::BridgeHash,
             Self::BridgeSPrime => RxIndex::BridgeSPrime,
@@ -624,15 +664,16 @@ impl InternalCircuitIndex {
 
     /// Whether `self` is registered as a mask, a stage mask or a final
     /// mask, rather than as a circuit.
-    #[cfg(test)]
     pub fn is_mask(self) -> bool {
         use InternalCircuitIndex::*;
         match self {
-            EndoscalingStep(_) | Collapse | ComputeV | ExtensionCircuit(_) | GroupCheck(_) => false,
+            EndoscalingStep(_) | Collapse | ComputeV | ExtensionCircuit(_) | Step(_) => false,
             EndoscalarStage | PointsStage | PointsFinalStaged | BridgePreamble | BridgeHash
             | BridgeSPrime | BridgeInnerError | BridgeOuterError | BridgeAB | BridgeQuery
             | BridgeF | BridgeEval | ChallengeStage | ChallengeFinalStaged | ExtensionMask(_)
-            | LinksStage => true,
+            | LinksStage | MemoryStage | ErrorsFinalStaged | QueryFinalStaged | EvalFinalStaged => {
+                true
+            }
         }
     }
 }
@@ -681,10 +722,12 @@ pub enum RxIndex {
     /// The points stage polynomial of a group of a grouped walk after the
     /// first, whose is [`PointsStage`](Self::PointsStage).
     PointsGroup(u32),
-    /// The links stage's rx polynomial, for a grouped walk.
+    /// The links stage's rx polynomial, in a paged profile.
     LinksStage,
-    /// The rx polynomial of a group's check circuit, for a grouped walk.
-    GroupCheck(u32),
+    /// The memory stage's rx polynomial, in a paged profile.
+    MemoryStage,
+    /// The rx polynomial of a step circuit of a paged profile's program.
+    Step(u32),
 }
 
 impl RxIndex {
@@ -793,7 +836,7 @@ impl RxIndex {
         }
         all.extend((0..extension.circuits.len() as u32).map(Self::ExtensionCircuit));
         all.extend((0..extension.stages as u32).map(Self::ExtensionStage));
-        all.extend(Self::walk_extras::<P>());
+        all.extend(Self::paged_extras::<P>());
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
@@ -806,48 +849,72 @@ impl RxIndex {
         }
     }
 
-    /// The rx polynomials a grouped walk adds in profile `P`, in order:
-    /// the points stages of the groups after the first, the links stage,
-    /// each group's check circuit. None for a walk in one stage.
-    pub fn walk_extras<P: Profile>() -> Vec<Self> {
-        let grouping = walk_grouping::<P>();
-        if !grouping.is_grouped() {
+    /// The rx polynomials a paged profile adds, in order: the points stages
+    /// of the walk's groups after the first, the links stage, the memory
+    /// stage, then the program's step circuits. None for a profile that is
+    /// not paged.
+    pub fn paged_extras<P: Profile>() -> Vec<Self> {
+        if !paged::<P>() {
             return Vec::new();
         }
-        let groups = grouping.groups() as u32;
+        let groups = walk_grouping::<P>().groups() as u32;
         (1..groups)
             .map(Self::PointsGroup)
-            .chain([Self::LinksStage])
-            .chain((0..groups).map(Self::GroupCheck))
+            .chain([Self::LinksStage, Self::MemoryStage])
+            .chain((0..NumProgramSteps::<P>::len() as u32).map(Self::Step))
             .collect()
+    }
+
+    /// The rx polynomials of the steps of the program of profile `P` whose
+    /// circuits load `branch`, in schedule order: the circuits one final
+    /// mask covers.
+    pub fn steps_on<P: Profile>(branch: circuits::paged::Branch) -> impl Iterator<Item = Self> {
+        let schedule = if paged::<P>() {
+            circuits::paged::schedule::<P>()
+        } else {
+            Vec::new()
+        };
+        schedule
+            .into_iter()
+            .enumerate()
+            .filter(move |(_, step)| step.branch() == branch)
+            .map(|(position, _)| Self::Step(position as u32))
     }
 
     /// The stages an instance circuit's claim takes in profile `P`: every
-    /// nested stage, with the links stage in place of the points stage for
-    /// a grouped walk, whose groups no instance circuit loads.
+    /// nested stage, or in a paged profile the stages of the layout's trunk
+    /// and the `preamble` stage.
     pub fn instance_stages<P: Profile>() -> Vec<Self> {
-        let grouped = walk_grouping::<P>().is_grouped();
-        Self::STAGES
-            .into_iter()
-            .map(|stage| match stage {
-                Self::PointsStage if grouped => Self::LinksStage,
-                stage => stage,
-            })
-            .collect()
+        if paged::<P>() {
+            Self::loaded_stages(circuits::paged::Branch::Preamble, None)
+        } else {
+            Self::STAGES.to_vec()
+        }
     }
 
-    /// The stages the claim of the check circuit of group `group` takes:
-    /// every nested stage, with the group's points stage, and the links
-    /// stage.
-    pub fn group_check_stages(group: usize) -> Vec<Self> {
-        Self::STAGES
-            .into_iter()
-            .map(|stage| match stage {
-                Self::PointsStage => Self::points_group(group),
-                stage => stage,
-            })
-            .chain([Self::LinksStage])
-            .collect()
+    /// The stages the claim of a paged profile's circuit takes: the stages
+    /// of the layout's trunk, with the points stage of group `group` of the
+    /// walk if the circuit loads one, then the stages of `branch`. See
+    /// [`layout`].
+    pub fn loaded_stages(branch: circuits::paged::Branch, group: Option<usize>) -> Vec<Self> {
+        use circuits::paged::Branch;
+        let mut stages = alloc::vec![Self::EndoscalarStage, Self::BridgeHash];
+        stages.extend(group.map(Self::points_group));
+        stages.extend([
+            Self::LinksStage,
+            Self::BridgeSPrime,
+            Self::BridgeAB,
+            Self::BridgeF,
+            Self::ChallengeStage,
+            Self::MemoryStage,
+        ]);
+        stages.extend(match branch {
+            Branch::Preamble => alloc::vec![Self::BridgePreamble],
+            Branch::Errors => alloc::vec![Self::BridgeInnerError, Self::BridgeOuterError],
+            Branch::Query => alloc::vec![Self::BridgeQuery],
+            Branch::Eval => alloc::vec![Self::BridgeQuery, Self::BridgeEval],
+        });
+        stages
     }
 
     /// The position of `self` in [`all`](Self::all), for profile `P`.
@@ -881,9 +948,9 @@ impl RxIndex {
                     + crate::profile::extension_lengths::<P>(true).circuits
                     + super::checked_index(i, crate::profile::extension_lengths::<P>(true).stages)
             }
-            PointsGroup(_) | LinksStage | GroupCheck(_) => {
+            PointsGroup(_) | LinksStage | MemoryStage | Step(_) => {
                 let extension = crate::profile::extension_lengths::<P>(true);
-                let extra = Self::walk_extras::<P>()
+                let extra = Self::paged_extras::<P>()
                     .iter()
                     .position(|&extra| extra == self)
                     .expect("index is outside the profile");
@@ -907,6 +974,7 @@ pub enum RxComponent {
 }
 
 pub mod claims;
+pub mod layout;
 pub mod online;
 pub mod pcs;
 pub mod unified;
@@ -935,6 +1003,20 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     source_domain: Option<u32>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     C::Profile::check()?;
+    // The profile pins its program's steps; the schedule its sizes give
+    // must be the one the pin laid the polynomials out for.
+    if paged::<C::Profile>() {
+        let fixed = circuits::paged::num_fixed_steps::<C::Profile>();
+        if fixed != C::Profile::NESTED_STEPS {
+            return Err(ragu_core::Error::Initialization(
+                alloc::format!(
+                    "the profile pins {} steps of its nested program, whose schedule has {fixed}",
+                    C::Profile::NESTED_STEPS
+                )
+                .into(),
+            ));
+        }
+    }
     let initial_internal_circuits = registry.num_internal_circuits();
 
     let extension = crate::profile::nested_extension::<C::Profile>();
@@ -950,6 +1032,16 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                     self::EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step as usize);
                 let staged = MultiStage::new(step_circuit);
                 registry.register_internal_circuit(staged)?
+            }
+            Collapse if paged::<C::Profile>() => {
+                let circuit =
+                    circuits::paged::instance::Circuit::<C::HostCurve, R, C::Profile>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
+            }
+            ComputeV if paged::<C::Profile>() => {
+                let circuit =
+                    circuits::paged::export::Circuit::<C::HostCurve, R, C::Profile>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
             }
             Collapse => {
                 let circuit = circuits::collapse::Circuit::<C::HostCurve, R, C::Profile>::new();
@@ -1008,19 +1100,55 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                     stages::challenges::Stage::<C::HostCurve, R, C::Profile>::stage_mask()?,
                 )
             }
+            ChallengeFinalStaged if paged::<C::Profile>() => registry.register_mask(
+                stages::preamble::Stage::<C::HostCurve, R, C::Profile>::final_mask()?,
+            ),
             ChallengeFinalStaged => {
                 registry.register_mask(
                     stages::challenges::Stage::<C::HostCurve, R, C::Profile>::final_mask()?,
                 )
             }
-            GroupCheck(group) => {
-                let circuit = circuits::group_check::Circuit::<C::HostCurve, R, C::Profile>::new(
-                    group as usize,
-                );
-                registry.register_internal_circuit(MultiStage::new(circuit))?
+            Step(step) => {
+                use circuits::paged::{
+                    Branch, OnErrors, OnEval, OnPreamble, OnQuery, StepCircuit, schedule,
+                };
+                let step = step as usize;
+                macro_rules! on {
+                    ($branch:ty) => {
+                        registry.register_internal_circuit(MultiStage::new(StepCircuit::<
+                            C::HostCurve,
+                            R,
+                            C::Profile,
+                            $branch,
+                        >::new(step)))?
+                    };
+                }
+                match schedule::<C::Profile>()[step].branch() {
+                    Branch::Preamble => on!(OnPreamble),
+                    Branch::Errors => on!(OnErrors),
+                    Branch::Query => on!(OnQuery),
+                    Branch::Eval => on!(OnEval),
+                }
             }
             LinksStage => {
                 registry.register_mask(self::LinksStage::<C::HostCurve, C::Profile>::stage_mask()?)
+            }
+            MemoryStage => registry
+                .register_mask(self::MemoryStage::<C::HostCurve, R, C::Profile>::stage_mask()?),
+            ErrorsFinalStaged => {
+                registry.register_mask(
+                    stages::outer_error::Stage::<C::HostCurve, R, C::Profile>::final_mask()?,
+                )
+            }
+            QueryFinalStaged => {
+                registry.register_mask(
+                    stages::query::Stage::<C::HostCurve, R, C::Profile>::final_mask()?,
+                )
+            }
+            EvalFinalStaged => {
+                registry.register_mask(
+                    stages::eval::Stage::<C::HostCurve, R, C::Profile>::final_mask()?,
+                )
             }
             ExtensionCircuit(k) => {
                 use crate::profile::online::stages::{self as extension, Nested};

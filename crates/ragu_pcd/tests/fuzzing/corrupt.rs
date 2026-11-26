@@ -982,7 +982,7 @@ impl NestedRx {
             I::ChallengeStage => Self::ChallengeStage,
             // The vocabulary is the standard profile's, whose walk is in
             // one stage.
-            I::PointsGroup(_) | I::LinksStage | I::GroupCheck(_) => {
+            I::PointsGroup(_) | I::LinksStage | I::MemoryStage | I::Step(_) => {
                 panic!("the standard profile's walk is not grouped")
             }
         }

@@ -92,6 +92,7 @@ impl Profile for Grouped {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const NESTED_WALK_GROUP: usize = 8;
+    const NESTED_STEPS: usize = 7;
 
     type Context<'params, Base, R, B>
         = ()
@@ -99,6 +100,75 @@ impl Profile for Grouped {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
+}
+
+/// `NATIVE` native and `NESTED` nested [`Trivial`] circuits and no stage,
+/// in a paged profile whose nested walk is in groups of thirty-two steps
+/// and whose nested program pins `STEPS` steps: a profile with as many
+/// polynomials as an extension the size of the aggregator's adds, for the
+/// tests that measure the nested program's steps at that size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Sized<const NATIVE: usize, const NESTED: usize, const STEPS: usize>;
+
+impl<const NATIVE: usize, const NESTED: usize, const STEPS: usize> Profile
+    for Sized<NATIVE, NESTED, STEPS>
+{
+    const NAME: &'static str = "sized";
+    const NATIVE_EXTENSION: usize = NATIVE;
+    const NESTED_EXTENSION: usize = NESTED;
+    const NESTED_WALK_GROUP: usize = 32;
+    const NESTED_STEPS: usize = STEPS;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+
+    fn native_extension() -> Extension {
+        Extension {
+            circuits: vec![vec![]; NATIVE],
+            stages: 0,
+            final_masks: vec![],
+            statement: None,
+            binding: None,
+        }
+    }
+
+    fn nested_extension() -> Extension {
+        Extension {
+            circuits: vec![vec![]; NESTED],
+            stages: 0,
+            final_masks: vec![],
+            statement: None,
+            binding: None,
+        }
+    }
+
+    fn register_native_circuit<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+        circuit: usize,
+        slot: CircuitSlot<'params, Base::CircuitField, R>,
+        _: &'params Base::Params,
+    ) -> Result<Registered<'params, Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        assert!(circuit < NATIVE);
+        slot.register(Trivial::<Base::CircuitField>::new())
+    }
+
+    fn register_nested_circuit<'params, Base, R: Rank>(
+        circuit: usize,
+        slot: CircuitSlot<'params, Base::ScalarField, R>,
+        _: &'params Base::Params,
+    ) -> Result<Registered<'params, Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        assert!(circuit < NESTED);
+        slot.register(Trivial::<Base::ScalarField>::new())
+    }
 }
 
 /// Two native circuits over two stages, each under its last stage's

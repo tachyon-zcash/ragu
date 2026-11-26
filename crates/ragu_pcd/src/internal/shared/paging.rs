@@ -571,20 +571,12 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Unit<'dr, D> for PointHorner<'
 ///
 /// An application costs one gate. The applications of a page share
 /// nothing.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no circuit pages a walk over elements yet")
-)]
 pub struct ElementHorner<'a, 'dr, D: Driver<'dr>> {
     point: &'a Element<'dr, D>,
 }
 
 impl<'a, 'dr, D: Driver<'dr>> ElementHorner<'a, 'dr, D> {
     /// Creates the unit that evaluates at `point`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no circuit pages a walk over elements yet")
-    )]
     pub fn new(point: &'a Element<'dr, D>) -> Self {
         ElementHorner { point }
     }

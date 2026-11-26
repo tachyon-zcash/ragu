@@ -98,14 +98,6 @@
 //! cells then follow the rules above, and the walk's pages are steps of
 //! the program.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no circuit is a program yet: only this module's tests use it"
-    )
-)]
-
 use alloc::{string::String, vec, vec::Vec};
 use core::{cell::RefCell, marker::PhantomData};
 
@@ -139,6 +131,10 @@ pub struct PointCell {
 
 impl ElementCell {
     /// Returns the cell's position among the memory's elements.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests of a program read its report")
+    )]
     pub fn index(&self) -> usize {
         self.index
     }
@@ -146,6 +142,10 @@ impl ElementCell {
 
 impl PointCell {
     /// Returns the cell's position among the memory's points.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests of a program read its report")
+    )]
     pub fn index(&self) -> usize {
         self.index
     }
@@ -547,6 +547,10 @@ pub struct Report {
     pub cells: Vec<Usage>,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "only the tests of a program read its report")
+)]
 impl Report {
     /// Returns how the run used `cell`.
     ///
@@ -597,6 +601,10 @@ struct Take<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     element: fn(&Element<'dr, D>) -> D::F,
     point: fn(&Point<'dr, D, C>) -> C,
     advised_element: fn(&DriverValue<D, D::F>) -> D::F,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no program advises a point yet")
+    )]
     advised_point: fn(&DriverValue<D, C>) -> C,
 }
 
@@ -616,6 +624,10 @@ enum Backing<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, S: Shape> {
     Fill(&'a RefCell<Values<C>>, &'a Log, Take<'dr, D, C>),
     /// A run that records its accesses and fills nothing. A loaded point
     /// is the placeholder.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests of a program run a checking pass")
+    )]
     Check(&'a Log, C),
 }
 
@@ -683,6 +695,10 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, S: Shape> Memory<'a, 'dr, 
     /// # Panics
     ///
     /// Panics if `log` already records a memory of this name.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests of a program run a checking pass")
+    )]
     pub fn checking(log: &'a Log, placeholder: C) -> Self {
         log.register::<S>();
         Memory {
@@ -823,6 +839,10 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, S: Shape> Memory<'a, 'dr, 
     ///
     /// Fails in a run if the cell has a definition already, and returns a
     /// witness-generation error if `value` is the identity.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no program advises a point yet")
+    )]
     pub fn advise_point(
         &self,
         dr: &mut D,
