@@ -78,11 +78,16 @@ fn pinned_layout_is_the_schedules() {
         check_native_counts::<2>();
         check_native_counts::<3>();
         check_native_counts::<9>();
+        check_native_counts::<10>();
         check_native_counts::<57>();
         check_native_counts::<58>();
         check_native_counts::<100>();
         check_native_counts::<153>();
         check_native_counts::<154>();
+        check_native_counts::<161>();
+        check_native_counts::<162>();
+        check_native_counts::<185>();
+        check_native_counts::<186>();
     }
     assert_eq!(
         P::NESTED_CIRCUITS,

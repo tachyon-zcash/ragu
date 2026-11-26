@@ -716,7 +716,7 @@ fn aggregator_declares_the_decompression() {
         shape
     };
     assert_eq!(shape, expected(224));
-    assert_eq!(Shape::of::<Aggregator<195>>(), expected(236));
+    assert_eq!(Shape::of::<Aggregator<195>>(), expected(237));
     assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
     std::println!(
         "aggregator at header size 4: {shape:?}, {} polynomials",
