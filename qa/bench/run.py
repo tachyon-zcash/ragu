@@ -49,7 +49,12 @@ OPERATIONS = [
     ("Compress", "compress", None),
     ("Verify compressed", "verify_compressed", None),
 ]
-PROFILES = {"wallet": "Standard profile (wallet, R13)", "aggregator": "Aggregator profile (R15)"}
+# The wallet and aggregator ranks a campaign's proofs must have; override
+# with RAGU_BENCH_RANKS=WALLET,AGGREGATOR for a revision that changes them.
+RANKS = dict(zip(["wallet", "aggregator"],
+                 (int(r) for r in os.environ.get("RAGU_BENCH_RANKS", "13,15").split(","))))
+PROFILES = {"wallet": f"Standard profile (wallet, R{RANKS['wallet']})",
+            "aggregator": f"Aggregator profile (R{RANKS['aggregator']})"}
 # Column labels for the two roles, unless a campaign names its own.
 LABELS = {"baseline": "main", "candidate": "optimized"}
 
@@ -271,7 +276,7 @@ def records(path, case=None):
     require(Counter((row["profile"], row["label"]) for row in shapes) == Counter(SHAPES),
             f"Missing or duplicate compressed proof: {path}")
     for row in shapes:
-        require(row["rank"] == (13 if row["profile"] == "wallet" else 15),
+        require(row["rank"] == RANKS[row["profile"]],
                 f"Unexpected proof rank: {path}")
         require(row["compressed_bytes"] == 32 * (1 + row["points"] + row["scalars"])
                 and row["polynomials"] > 0 and row["ordinary_bytes"] > 0,

@@ -133,16 +133,16 @@ pub struct R<const RANK: u32>;
 /// The wallet rank: the standard rank for Ragu circuits, at which wallets
 /// prove.
 ///
-/// Provides $2^{13} = 8192$ polynomial coefficients and supports up to
-/// $2^{11} = 2048$ gates.
-pub type WalletRank = R<13>;
+/// Provides $2^{14} = 16384$ polynomial coefficients and supports up to
+/// $2^{12} = 4096$ gates.
+pub type WalletRank = R<14>;
 
 /// The rank for aggregators' proofs: the wallet rank's. An aggregator's
 /// proofs carry the decompression circuits' polynomials, which the fuse's
 /// circuits verify of its children: at this rank they do so in pages (see
 /// [`paging`](crate::paging)), where a larger rank gave them the room
 /// whole.
-pub type AggregatorRank = R<13>;
+pub type AggregatorRank = R<14>;
 
 /// A small rank for fast unit tests.
 ///

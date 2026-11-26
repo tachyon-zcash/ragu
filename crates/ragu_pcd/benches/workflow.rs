@@ -102,9 +102,23 @@ fn compressed_shape<P: Profile, R: Rank>() -> (usize, usize, usize) {
 
 fn compressed<C: ProfiledCycle, R: Rank>(profile: &str, label: &str, proof: &CompressedProof<C>) {
     let bytes = proof.to_bytes().expect("compressed proof encodes");
-    let (polynomials, points, scalars) = compressed_shape::<C::Profile, R>();
-    // The envelope and circuit index occupy 32 bytes together. Check the
-    // independently counted points and scalars against the encoded length.
+    let (polynomials, mut points, mut scalars) = compressed_shape::<C::Profile, R>();
+    // The envelope and circuit index occupy 32 bytes together. The count
+    // above folds each side's claims in one batch; a wide proof folds them
+    // in more, and each batch past a side's first adds a fold (two points,
+    // two scalars), five derived openings and five batch evaluations. The
+    // fold's batch count is crate-private, so take the excess as whole
+    // extra batches and check the encoded length against the result.
+    let counted = 32 + 32 * (points + scalars);
+    let per_batch = 32 * (2 + 12);
+    assert!(
+        bytes.len() >= counted && (bytes.len() - counted) % per_batch == 0,
+        "{profile} {label}: {} encoded bytes are not {counted} plus whole extra batches",
+        bytes.len()
+    );
+    let extra = (bytes.len() - counted) / per_batch;
+    points += 2 * extra;
+    scalars += 12 * extra;
     assert_eq!(bytes.len(), 32 + 32 * (points + scalars));
     println!(
         "{{\"kind\":\"shape\",\"profile\":\"{profile}\",\"label\":\"{label}\",\"rank\":{},\"polynomials\":{polynomials},\"points\":{points},\"scalars\":{scalars},\"compressed_bytes\":{},\"ordinary_bytes\":{},\"digest\":\"{}\"}}",

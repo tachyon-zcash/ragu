@@ -86,7 +86,7 @@ impl<P: Profile> Len for NumPoints<P> {
 /// fits a step beside the stages it reserves, which hold every point the
 /// walk consumes, at the wallet rank. A profile sets its own
 /// ([`Profile::NESTED_ENDOSCALINGS_PER_STEP`]).
-pub const ENDOSCALINGS_PER_STEP: usize = 4;
+pub const ENDOSCALINGS_PER_STEP: usize = 8;
 
 /// Length type for the endoscalings a nested step performs in profile `P`.
 pub struct Endoscalings<P: Profile>(PhantomData<P>);

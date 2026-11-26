@@ -19,9 +19,9 @@ pub use ragu_core::pasta::{Pasta, PastaParams};
 /// The build script's derivation
 /// carries its own copy of these counts; Bento checks the artifact lengths
 /// against the consumer's array types at compile time.
-pub const DEFAULT_EP_K: usize = 13;
+pub const DEFAULT_EP_K: usize = 14;
 /// Log2 of the number of Standard-profile Vesta generators.
-pub const DEFAULT_EQ_K: usize = 13;
+pub const DEFAULT_EQ_K: usize = 14;
 
 /// Log2 of the optional Aggregator Pallas table's capacity: rank 15's. The
 /// vector generators are derived by index, so the table's first $2^{13}$

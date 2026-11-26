@@ -58,7 +58,7 @@ impl<P: Profile> Len for NumPoints<P> {
 /// The endoscalings a native step performs in the standard profile: what
 /// fits a step beside the stages it reserves at the wallet rank. A
 /// profile sets its own ([`Profile::NATIVE_ENDOSCALINGS_PER_STEP`]).
-pub const ENDOSCALINGS_PER_STEP: usize = 4;
+pub const ENDOSCALINGS_PER_STEP: usize = 8;
 
 /// Length type for the endoscalings a native step performs in profile `P`.
 pub struct Endoscalings<P: Profile>(PhantomData<P>);
@@ -77,7 +77,7 @@ impl<P: Profile> Len for Endoscalings<P> {
 /// assertion below checks the pin is the fixed point, so a change to either
 /// batch that moves it fails to build here. The profile's shape rederives
 /// the whole cycle (see [`Shape`]).
-pub const NUM_ENDOSCALING_STEPS: usize = 27;
+pub const NUM_ENDOSCALING_STEPS: usize = 9;
 
 const _: () = assert!(
     endoscalar::num_steps(ENDOSCALINGS_PER_STEP, NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
