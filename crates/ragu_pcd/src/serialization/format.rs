@@ -343,10 +343,11 @@ mod tests {
 
     // Schema v4 is the standard profile's shape under `ragu-pcd-v1`, with
     // the online polynomials (see `internal::native::online`) in the batch,
-    // each step folding its own application claim, and each step's
-    // randomizers (see `fuse::randomizer`) in its fold and its batch. A
-    // change to either moves the layout or the verifier semantics and needs
-    // a new schema or protocol version, not a silent re-pin.
+    // each step folding its own application claim, each step's randomizers
+    // (see `fuse::randomizer`) in its fold and its batch, and the wallet
+    // rank's walks of eight endoscalings a step. A change to either moves
+    // the layout or the verifier semantics and needs a new schema or
+    // protocol version, not a silent re-pin.
     #[test]
     fn schema_v4_pins_protocol_and_shape() {
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
@@ -355,13 +356,13 @@ mod tests {
         assert_eq!(
             Shape::of::<Standard>(),
             Shape {
-                native_rx: 48,
-                nested_points: 122,
-                nested_steps: 31,
-                nested_rx: 45,
+                native_rx: 30,
+                nested_points: 86,
+                nested_steps: 11,
+                nested_rx: 25,
                 nested_online: 0,
-                native_points: 108,
-                native_steps: 27,
+                native_points: 68,
+                native_steps: 9,
                 source_polynomials: 0,
             }
         );
@@ -389,11 +390,11 @@ mod tests {
             Proof::<Pasta, WalletRank>::encoded_len(),
             28 + payload::<WalletRank>()
         );
-        // 104 instance points; 17 instance scalars; per side 6+2R points,
+        // 66 instance points; 17 instance scalars; per side 6+2R points,
         // 21 scalars; plus the circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<WalletRank>(),
-            28 + 4 + (104 + 17 + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (66 + 17 + 2 * (6 + 2 * 14 + 21)) * 32
         );
     }
 

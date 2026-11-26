@@ -1757,8 +1757,8 @@ macro_rules! run_index {
 }
 
 impl Runs for ragu_circuits::polynomials::WalletRank {
-    // Twenty-three runs: ten besides the thirteen rounds'.
-    type Last = run_index!(+ + + + + + + + + + + + + + + + + + + + + +);
+    // Twenty-four runs: ten besides the fourteen rounds'.
+    type Last = run_index!(+ + + + + + + + + + + + + + + + + + + + + + +);
 }
 
 const _: () = {

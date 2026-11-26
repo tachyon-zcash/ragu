@@ -38,7 +38,7 @@ alloc = []
 asm = ["udon/aarch64-asm"]
 # Embeds the Pasta generators derived at build time; see `pasta`.
 baked = ["alloc", "dep:bento", "dep:lazy_static"]
-# Additional, separately loaded generators for Aggregator extensions above R<13>.
+# Additional, separately loaded generators for Aggregator extensions above R<14>.
 baked-aggregator = ["baked"]
 default = ["alloc", "asm"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
@@ -136,6 +136,9 @@ name = "nontrivial"
 [[test]]
 name = "online_fp_oracles"
 test = false # Selected by the corruption job and `just ci_corruption`.
+
+[[test]]
+name = "paging"
 
 [[test]]
 name = "pasta_parameters"

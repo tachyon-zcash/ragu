@@ -1,7 +1,7 @@
 //! The decompression circuits as the aggregator profile's extension: the
 //! pinned layout is the schedules', the hooks register every chunk, the
 //! statement and binding circuits and every stage at the aggregator rank
-//! and refuse the wallet rank, and an application over the profile
+//! and refuse another rank, and an application over the profile
 //! builds at the aggregator rank, where every fuse circuit fits with the
 //! extension's polynomials, and its bootstrap proof verifies with the
 //! chunks run over the wallet application's canonical compressed proof. A
@@ -13,7 +13,7 @@
 use alloc::{string::ToString, vec::Vec};
 
 use ragu_circuits::{
-    polynomials::{AggregatorRank, Rank, WalletRank},
+    polynomials::{AggregatorRank, R, Rank, WalletRank},
     registry::{CircuitIndex, RegistryBuilder},
 };
 use ragu_core::{
@@ -78,11 +78,16 @@ fn pinned_layout_is_the_schedules() {
         check_native_counts::<2>();
         check_native_counts::<3>();
         check_native_counts::<9>();
+        check_native_counts::<10>();
         check_native_counts::<57>();
         check_native_counts::<58>();
         check_native_counts::<100>();
         check_native_counts::<153>();
         check_native_counts::<154>();
+        check_native_counts::<161>();
+        check_native_counts::<162>();
+        check_native_counts::<185>();
+        check_native_counts::<186>();
     }
     assert_eq!(
         P::NESTED_CIRCUITS,
@@ -176,9 +181,13 @@ fn pinned_layout_is_the_schedules() {
     P::check().unwrap();
 }
 
+/// A rank other than the aggregator's and the wallet's, past the one the
+/// Standard tables reach.
+type OtherRank = R<15>;
+
 /// Every chunk and mask of both sides registers through the hooks at
 /// the aggregator rank at the maximum profile width. One past the last
-/// fails, and the wallet rank is refused.
+/// fails, and a rank other than the aggregator's is refused.
 #[test]
 fn hooks_register_every_chunk_and_stage() {
     const H: usize = 195;
@@ -215,7 +224,7 @@ fn hooks_register_every_chunk_and_stage() {
         Err(Error::Initialization(_))
     ));
     assert!(matches!(
-        Wide::register_native_circuit::<Pasta, TestR, H>(
+        Wide::register_native_circuit::<Pasta, OtherRank, H>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params
@@ -245,7 +254,7 @@ fn hooks_register_every_chunk_and_stage() {
     }
     assert_eq!(registry.num_internal_circuits(), nested.internal());
     assert!(matches!(
-        Wide::register_nested_circuit::<Pasta, TestR>(
+        Wide::register_nested_circuit::<Pasta, OtherRank>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params
@@ -265,13 +274,16 @@ fn the_fuse_fits_at_the_aggregator_rank() {
     let standard = Shape::of::<Standard>();
     let shape = Shape::of::<P>();
     // The extension's polynomials, the online batch's three stages and its
-    // helper's, and the walk's.
+    // helper's, the pages' and their carry stages', and the walk's, each
+    // step with its pages.
+    use crate::profile::paging::{added, rxs};
     assert_eq!(
         shape.native_rx,
         standard.native_rx
             + P::NATIVE_EXTENSION
             + crate::profile::online::stages::RXS
-            + shape.native_steps
+            + rxs(&P::PAGES, false)
+            + shape.native_steps * (1 + added(P::PAGES.endoscaling_step))
             - standard.native_steps
     );
     // The walks fold more points at fewer steps per the profile's
@@ -799,17 +811,19 @@ fn a_decompression_cannot_output_the_dummy_suffix() {
     }
 }
 
-/// The chunk circuits use the generators at the aggregator rank, so a
-/// wallet application over tables that stop short of it, the Standard
-/// ones, is refused a decompression with an error rather than a panic.
+/// The chunk circuits use the generators at their rank, so a
+/// decompression into chunk circuits past the rank the wallet
+/// application's tables reach, the Standard ones, is refused with an error
+/// rather than a panic. The aggregator rank is the wallet's, which those
+/// tables reach.
 #[test]
-fn a_wallet_short_of_the_aggregator_rank_is_refused() {
+fn tables_short_of_the_chunks_rank_are_refused() {
     let wallet = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
         .register(Leaf)
         .unwrap()
         .finalize(crate::pasta::baked())
         .unwrap();
-    let decompression = Decompression::<Pasta, AggregatorRank, HEADER_SIZE, _>::new(
+    let decompression = Decompression::<Pasta, OtherRank, HEADER_SIZE, _>::new(
         wallet,
         &mut StdRng::seed_from_u64(40),
     );

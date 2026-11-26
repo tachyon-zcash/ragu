@@ -17,8 +17,9 @@ pub trait Rank:
     private::Sealed + Clone + Send + Sync + 'static + PartialEq + Eq + core::fmt::Debug + Default
 {
     /// The rank can range from $2$ to $28$ (to avoid overflows on 32-bit
-    /// architectures), but only [`WalletRank`], [`AggregatorRank`],
-    /// [`TestRank`] and `R<14>` are currently implemented.
+    /// architectures), but only [`WalletRank`], which is also
+    /// [`AggregatorRank`], [`TestRank`], `R<13>` and `R<15>` are currently
+    /// implemented.
     const RANK: u32;
 
     /// Returns the $2^\text{RANK}$ number of coefficients in the polynomials
@@ -124,24 +125,25 @@ pub trait Rank:
 }
 
 /// `R<N>` implements [`Rank`] for supported values of $N$. The type aliases
-/// [`WalletRank`] ($N = 13$) and [`TestRank`] ($N = 7$) are provided for
-/// convenience; `R<14>` serves the tests of what the wallet rank cannot
-/// hold. Additional implementations can be added to `impl_rank_for_R!` as needed.
+/// [`WalletRank`] ($N = 14$) and [`TestRank`] ($N = 7$) are provided for
+/// convenience; `R<13>` and `R<15>` serve the tests of other ranks than the
+/// wallet's. Additional implementations can be added to `impl_rank_for_R!` as needed.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct R<const RANK: u32>;
 
 /// The wallet rank: the standard rank for Ragu circuits, at which wallets
 /// prove.
 ///
-/// Provides $2^{13} = 8192$ polynomial coefficients and supports up to
-/// $2^{11} = 2048$ gates.
-pub type WalletRank = R<13>;
+/// Provides $2^{14} = 16384$ polynomial coefficients and supports up to
+/// $2^{12} = 4096$ gates.
+pub type WalletRank = R<14>;
 
-/// The rank for aggregators' proofs: four times the wallet rank's
-/// capacity, $2^{15}$ polynomial coefficients and up to $2^{13} = 8192$
-/// gates, so that the fuse's circuits have the room to verify children that
-/// carry the decompression circuits' polynomials.
-pub type AggregatorRank = R<15>;
+/// The rank for aggregators' proofs: the wallet rank's. An aggregator's
+/// proofs carry the decompression circuits' polynomials, which the fuse's
+/// circuits verify of its children: at this rank they do so in pages (see
+/// [`paging`](crate::paging)), where a larger rank gave them the room
+/// whole.
+pub type AggregatorRank = R<14>;
 
 /// A small rank for fast unit tests.
 ///

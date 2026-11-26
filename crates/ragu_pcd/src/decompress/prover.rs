@@ -162,8 +162,8 @@ where
     /// Pass the network's wallet application as `wallet`, with the native
     /// and nested registries used to produce incoming wallet proofs. Ragu
     /// registers the internal `Decompress` step and its circuits in the
-    /// aggregator. The [`Aggregator`] profile verifies rank-13 wallet
-    /// proofs in rank-15 circuits and produces a proof under the
+    /// aggregator. The [`Aggregator`] profile verifies rank-14 wallet
+    /// proofs in circuits of the same rank and produces a proof under the
     /// aggregator's registries.
     ///
     /// Finalize the wallet over the aggregator's parameters, whose tables

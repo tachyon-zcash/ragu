@@ -18,6 +18,19 @@ fn main() {
     if env::var("RAGU_PCD_TARGETED_TESTS").as_deref() == Ok("1") {
         println!("cargo:rustc-cfg=ragu_pcd_targeted_tests");
     }
+    println!("cargo:rerun-if-env-changed=RAGU_PCD_PAGING_CENSUS_BATCH");
+    println!("cargo:rustc-check-cfg=cfg(ragu_pcd_paging_census)");
+    let batches = (0..13)
+        .map(|batch| format!("\"{batch}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("cargo:rustc-check-cfg=cfg(ragu_pcd_paging_census_batch, values({batches}))");
+    if let Ok(batch) = env::var("RAGU_PCD_PAGING_CENSUS_BATCH") {
+        let batch: usize = batch.parse().expect("paging census batch is an integer");
+        assert!(batch < 13, "paging census batch is between 0 and 12");
+        println!("cargo:rustc-cfg=ragu_pcd_paging_census");
+        println!("cargo:rustc-cfg=ragu_pcd_paging_census_batch=\"{batch}\"");
+    }
 
     if env::var("CARGO_FEATURE_BAKED").is_err() {
         return;
