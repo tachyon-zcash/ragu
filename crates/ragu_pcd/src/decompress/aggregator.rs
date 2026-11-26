@@ -167,17 +167,17 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// A header size outside 1 through 195 panics. This fails at compile
     /// time when evaluating the profile's associated constants.
     pub const fn native_circuits(header_size: usize) -> Counts {
-        // Rank-14 bench pins, measured only at the bench's four-element
-        // header: 52 work circuits, 10 transcript circuits and one digits
-        // circuit. Other header sizes keep rank 13's shape around these
+        // Rank-15 aggregator over rank-14 wallet proofs, measured only at
+        // the bench's four-element header: 22 work circuits, 4 transcript
+        // circuits and one digits circuit. Other header sizes keep rank 13's shape around these
         // values unmeasured; registration checks them against the actual
         // schedule for the chosen width.
         assert!(
             1 <= header_size && header_size <= 195,
             "the aggregator header size must be between 1 and 195"
         );
-        let transcript = 9 + (header_size + 7).div_ceil(16);
-        let work = 52;
+        let transcript = 3 + (header_size + 7).div_ceil(16);
+        let work = 22;
         Counts {
             circuits: work + transcript + 1,
             transcript,
@@ -189,9 +189,9 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// header size: none run transcript chunks, and the digits chunks come
     /// last.
     pub const NESTED_CIRCUITS: Counts = Counts {
-        circuits: 34,
+        circuits: 15,
         transcript: 0,
-        digits: 2,
+        digits: 1,
     };
 
     /// The endoscalings a step of either walk performs, in the pages the

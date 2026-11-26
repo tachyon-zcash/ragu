@@ -3,6 +3,10 @@ identities) into the runner's comparison-table format: before -> after per
 mode, plus both campaigns' proof shapes side by side.
 
 Usage: python3 compare_campaigns.py BEFORE_DIR AFTER_DIR BEFORE_LABEL AFTER_LABEL
+
+The labels name the two campaigns; each profile's table title takes its
+ranks from the campaigns' proofs, so a campaign pair that moves only one
+profile's rank reads as such.
 """
 import json
 import statistics
@@ -59,8 +63,10 @@ def main():
     def mode_label(m):
         return 'single' if m == 'single' else f"{cb[(m, True)]['workers']} workers"
     out = []
-    for profile, title in (('wallet', f'Standard profile (wallet, {lb} → {la})'),
-                           ('aggregator', f'Aggregator profile ({lb} → {la})')):
+    def ranks(profile):
+        return f"R{sb[profile]['rank']} → R{sa[profile]['rank']}"
+    for profile, title in (('wallet', f'Standard profile (wallet, {ranks("wallet")})'),
+                           ('aggregator', f'Aggregator profile ({ranks("aggregator")})')):
         rows = []
         for label, step, applies in OPERATIONS:
             if applies not in (None, profile):

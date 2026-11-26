@@ -137,12 +137,12 @@ pub struct R<const RANK: u32>;
 /// $2^{12} = 4096$ gates.
 pub type WalletRank = R<14>;
 
-/// The rank for aggregators' proofs: the wallet rank's. An aggregator's
-/// proofs carry the decompression circuits' polynomials, which the fuse's
-/// circuits verify of its children: at this rank they do so in pages (see
-/// [`paging`](crate::paging)), where a larger rank gave them the room
-/// whole.
-pub type AggregatorRank = R<14>;
+/// The rank for aggregators' proofs: rank 15 in this bench variant, one
+/// above the wallet's. An aggregator's proofs carry the decompression
+/// circuits' polynomials, which the fuse's circuits verify of its children,
+/// in pages where the rank leaves too little room for them whole (see
+/// [`paging`](crate::paging)).
+pub type AggregatorRank = R<15>;
 
 /// A small rank for fast unit tests.
 ///
