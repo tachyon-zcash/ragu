@@ -25,6 +25,7 @@ pub mod floor_planner;
 pub mod horner;
 mod ky;
 mod metrics;
+pub mod paging;
 pub mod polynomials;
 mod raw;
 pub mod registry;
