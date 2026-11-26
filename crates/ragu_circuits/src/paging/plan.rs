@@ -34,7 +34,7 @@ use super::{
 };
 use crate::{
     Circuit,
-    raw::{CircuitAdapterRef, RawCircuit},
+    raw::{self, CircuitAdapterRef, RawCircuit},
 };
 
 /// The places among a circuit's gates at which a cut is looked for, at
@@ -699,6 +699,42 @@ mod memo {
 }
 
 impl<F: Field> Recording<F> {
+    /// Every constraint emitted by `circuit`, including those made while
+    /// writing its public output and the final `ONE` constraint, expanded to
+    /// gate wires. Unlike the planner's recording, this walk follows the
+    /// complete relation that a registered circuit enforces.
+    pub(super) fn all_of<C: Circuit<F>>(circuit: &C) -> Result<(usize, Vec<Vec<(u32, F)>>)> {
+        let mut dr = Prober {
+            recording: Recording {
+                num_gates: 0,
+                derived: Vec::new(),
+                raw: Vec::new(),
+                raw_outputs: Vec::new(),
+                routines: Vec::new(),
+                constraints: Vec::new(),
+                outputs: Vec::new(),
+            },
+            depth: 0,
+        };
+        raw::orchestrate(&mut dr, &CircuitAdapterRef(circuit), Empty)?;
+        let recording = dr.recording.expanded();
+        Ok((
+            recording.num_gates,
+            recording
+                .constraints
+                .into_iter()
+                .map(|(_, terms)| terms)
+                .collect(),
+        ))
+    }
+
+    /// The gates and constraints of the circuit body, before writing its
+    /// public output and the final `ONE` constraint.
+    pub(super) fn body_shape<C: Circuit<F>>(circuit: &C) -> Result<(usize, usize)> {
+        let recording = Self::raw_of(circuit)?;
+        Ok((recording.num_gates, recording.raw.len()))
+    }
+
     /// A digest of the recording as emitted, the stages its pages load and
     /// the gates their polynomials hold: what a cut is a function of.
     #[cfg(feature = "std")]

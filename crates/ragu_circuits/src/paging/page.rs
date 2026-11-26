@@ -13,9 +13,9 @@ use core::marker::PhantomData;
 use ragu_core::{
     Coeff, Result,
     convert::WireMap,
-    drivers::{DirectSum, Driver, DriverTypes, DriverValue, LinearExpression},
+    drivers::{Driver, DriverTypes, DriverValue, LinearExpression},
     gadgets::{Bound, Gadget},
-    maybe::{Always, Empty, Maybe, MaybeKind},
+    maybe::{Always, Maybe, MaybeKind},
 };
 use udon::field::Field;
 
@@ -25,7 +25,6 @@ use super::{
 use crate::{
     Blind, Circuit, MaskObject, WithAux,
     polynomials::{Rank, sparse},
-    raw::{self, CircuitAdapterRef},
     staging,
     trace::Trace,
 };
@@ -217,85 +216,6 @@ impl<F: Field, K: MaybeKind, D: DriverTypes<ImplField = F>> WireMap<F> for Resol
     }
 }
 
-/// An arbitrary value for a wire, fixed by the wire alone.
-fn arbitrary<F: Field>(gate: usize, kind: u32) -> F {
-    let mut input = [0u8; 12];
-    input[..8].copy_from_slice(&(gate as u64).to_le_bytes());
-    input[8..].copy_from_slice(&kind.to_le_bytes());
-    F::from_uniform_bytes(
-        blake2b_simd::Params::new()
-            .personal(b"ragu_paging_____")
-            .hash(&input)
-            .as_array(),
-    )
-}
-
-/// A driver that gives every wire a value and records what each constraint
-/// evaluates to.
-struct Valuer<F, V> {
-    value: V,
-    gates: usize,
-    constraints: Vec<F>,
-}
-
-impl<F: Field, V: Fn(usize, u32) -> F> Valuer<F, V> {
-    /// What each of `circuit`'s constraints evaluates to, the public
-    /// output's and `ONE`'s included, when the wire `kind` of gate `gate`
-    /// has value `value(gate, kind)` and `ONE` is one.
-    fn walk<C: Circuit<F>>(circuit: &C, value: V) -> Result<Vec<F>> {
-        let mut dr = Valuer {
-            value,
-            gates: 0,
-            constraints: Vec::new(),
-        };
-        raw::orchestrate(&mut dr, &CircuitAdapterRef(circuit), Empty)?;
-        Ok(dr.constraints)
-    }
-}
-
-impl<F: Field, V: Fn(usize, u32) -> F> DriverTypes for Valuer<F, V> {
-    type ImplField = F;
-    type ImplWire = F;
-    type MaybeKind = Empty;
-    type LCadd = DirectSum<F>;
-    type LCenforce = DirectSum<F>;
-    type Extra = F;
-
-    fn gate(
-        &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(F, F, F, F)> {
-        let gate = self.gates;
-        self.gates += 1;
-        let value = &self.value;
-        Ok((
-            value(gate, 0),
-            value(gate, 1),
-            value(gate, 2),
-            value(gate, 3),
-        ))
-    }
-
-    fn assign_extra(&mut self, extra: F, _: impl Fn() -> Result<Coeff<F>>) -> Result<F> {
-        Ok(extra)
-    }
-}
-
-impl<'dr, F: Field, V: Fn(usize, u32) -> F> Driver<'dr> for Valuer<F, V> {
-    type F = F;
-    type Wire = F;
-    const ONE: F = F::ONE;
-
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> F {
-        lc(DirectSum::default()).value()
-    }
-
-    fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        self.constraints.push(lc(DirectSum::default()).value());
-        Ok(())
-    }
-}
-
 /// The degree at which a polynomial holds the wire `kind` of gate `gate`,
 /// in the trace layout.
 fn degree<R: Rank>(gate: usize, kind: u32) -> usize {
@@ -332,119 +252,18 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         }
     }
 
-    /// Checks the pages' constraints against the circuit's own.
-    ///
-    /// Every wire is given an arbitrary value, the same in the circuit and
-    /// on its page, and every carry slot the value of the combination it
-    /// stands for. The circuit's constraints then evaluate to some values,
-    /// which need not be zero, and the pages' constraints must evaluate to
-    /// the same values: each of the circuit's once, a zero more for each
-    /// slot a page holds to its wires, and `ONE`'s once more for each page
-    /// past the first. A constraint that lost or gained a term, or moved to
-    /// a page that lacks a wire it names, evaluates to something else.
+    /// Checks the pages' complete constraints against the circuit's own,
+    /// including the equations defining every carry slot. Each page gate
+    /// is mapped to its original gate, a carry slot or an otherwise unused
+    /// wire; the resulting linear forms must match exactly after the carry
+    /// definitions are accounted for.
     ///
     /// # Errors
     ///
-    /// Fails if a walk fails or if the values differ.
+    /// Fails if a walk fails, a gate is missing or repeated, a carry slot
+    /// lacks its definition, or the constraints differ.
     pub fn check(&self) -> Result<()> {
-        let plan = &*self.plan;
-        let (layout, stages) = (&plan.layout, &plan.stages);
-        let pages = plan.pages();
-        let values = |slots: &Vec<Vec<(u32, F)>>| -> Vec<F> {
-            slots
-                .iter()
-                .map(|combination| {
-                    combination
-                        .iter()
-                        .map(|&(wire, coeff)| coeff * arbitrary::<F>((wire / 4) as usize, wire % 4))
-                        .sum()
-                })
-                .collect()
-        };
-        let carry = values(&plan.slots);
-        let apart: Vec<Vec<F>> = plan.apart.iter().map(values).collect();
-        let local: Vec<Vec<F>> = plan.local.iter().map(values).collect();
-        let slots = plan.slots.len()
-            + plan
-                .apart
-                .iter()
-                .chain(&plan.local)
-                .map(Vec::len)
-                .sum::<usize>();
-
-        let mut expected = Valuer::walk(&*self.circuit, |gate, kind| arbitrary(gate, kind))?;
-        expected.extend(core::iter::repeat_n(F::ONE, pages - 1));
-        expected.extend(core::iter::repeat_n(F::ZERO, slots));
-
-        let on_page = |page: usize| {
-            // The carry stage the page loads: its group's if it is apart.
-            let (gates, carry) = match stages.group_of(page) {
-                Some(group) => (&layout.apart[group].1, &apart[group]),
-                None => (&layout.carry, &carry),
-            };
-            // And the one it shares with its group, if it shares one.
-            let shared = stages
-                .local_of(page)
-                .map(|group| (&layout.local[group].1, &local[group]));
-            move |local: usize, kind: u32| {
-                if local == 0 {
-                    return arbitrary(0, kind);
-                }
-                let loaded = [Some((gates, carry)), shared];
-                if let Some((gates, carry)) = loaded
-                    .into_iter()
-                    .flatten()
-                    .find(|(gates, _)| gates.contains(&local))
-                {
-                    // A gate of a carry stage: its two values are its
-                    // slots', and nothing names its other wires.
-                    let gate = local - gates.start;
-                    let slot = match kind {
-                        0 => 2 * gate,
-                        3 => 2 * gate + 1,
-                        _ => return F::ZERO,
-                    };
-                    return carry.get(slot).copied().unwrap_or(F::ZERO);
-                }
-                if local < layout.firsts[page] {
-                    // A gate of a stage the page loads, or of none.
-                    return stages
-                        .spans
-                        .iter()
-                        .enumerate()
-                        .find(|&(stage, span)| span.contains(&local) && stages.loaded(page, stage))
-                        .map_or(F::ZERO, |(stage, span)| {
-                            arbitrary(stages.start(stage) + local - span.start, kind)
-                        });
-                }
-                // A gate of the page's own, or one it leaves blank.
-                plan.held[page]
-                    .get(local - layout.firsts[page])
-                    .map_or(F::ZERO, |&gate| arbitrary(gate as usize, kind))
-            }
-        };
-        let mut found = Vec::new();
-        for index in 0..pages - 1 {
-            found.extend(Valuer::walk(&self.page(index), on_page(index))?);
-        }
-        found.extend(Valuer::walk(&self.last(), on_page(pages - 1))?);
-
-        let sorted = |values: Vec<F>| {
-            let mut bytes: Vec<Vec<u8>> = values
-                .iter()
-                .map(|value| value.to_bytes().as_ref().to_vec())
-                .collect();
-            bytes.sort();
-            bytes
-        };
-        let (expected_len, found_len) = (expected.len(), found.len());
-        if sorted(expected) != sorted(found) {
-            return refuse(format!(
-                "the pages' {found_len} constraints are not the circuit's ({expected_len} with \
-                 the slots' and the pages' own)"
-            ));
-        }
-        Ok(())
+        super::check::check(self)
     }
 
     /// The layout of the pages' polynomials.

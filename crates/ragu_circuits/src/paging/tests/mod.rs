@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{string::ToString, vec::Vec};
 
 use ragu_core::{
     drivers::{Driver, DriverValue, LinearExpression},
@@ -85,6 +85,37 @@ impl<const LEN: usize, const STRIDE: usize> Circuit<Fp> for Chain<LEN, STRIDE> {
             history.push(acc.clone());
         }
         Ok(WithAux::new(acc, D::unit()))
+    }
+}
+
+struct TwoOutputs;
+
+impl Circuit<Fp> for TwoOutputs {
+    type Instance<'source> = (Fp, Fp);
+    type Witness<'source> = (Fp, Fp);
+    type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let allocator = &mut Standard::new();
+        let first = Element::alloc(dr, allocator, instance.as_ref().map(|values| values.0))?;
+        let second = Element::alloc(dr, allocator, instance.as_ref().map(|values| values.1))?;
+        Ok((first, second))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
+        let allocator = &mut Standard::new();
+        let first = Element::alloc(dr, allocator, witness.as_ref().map(|values| values.0))?;
+        let second = Element::alloc(dr, allocator, witness.as_ref().map(|values| values.1))?;
+        Ok(WithAux::new((first, second), D::unit()))
     }
 }
 
@@ -290,6 +321,62 @@ fn a_plan_that_miscarries_is_caught() -> Result<()> {
         plan.homes[moved] = 0;
     });
     assert!(wrong.check().is_err());
+    Ok(())
+}
+
+#[test]
+fn a_missing_carry_definition_cannot_hide_behind_a_zero_constraint() -> Result<()> {
+    let paged = Paged::fitted(Chain::<100, 3>, &Stages::whole(1), 8)?;
+    paged.check()?;
+    let (&constraint, links) = paged
+        .plan
+        .links
+        .iter()
+        .find(|(_, links)| links.iter().any(|link| link.defines))
+        .expect("the chain has a defined carry slot");
+    let exporter = links.iter().find(|link| link.defines).unwrap().exporter as usize;
+
+    let mut plan = (*paged.plan).clone();
+    plan.links
+        .get_mut(&constraint)
+        .unwrap()
+        .iter_mut()
+        .find(|link| link.defines)
+        .unwrap()
+        .defines = false;
+    plan.compile(&Recording::of(&*paged.circuit)?);
+    // The old value-based check included one zero for each slot definition.
+    // A planner could replace a missing definition with 0 = 0 and pass it.
+    plan.programs[exporter].constraints.push(Vec::new());
+    let wrong = Paged {
+        circuit: paged.circuit.clone(),
+        plan: Arc::new(plan),
+        report: paged.report.clone(),
+    };
+    assert!(matches!(
+        wrong.check(),
+        Err(Error::Initialization(message)) if message.to_string().contains("a carry slot lacks its defining constraint")
+    ));
+    Ok(())
+}
+
+#[test]
+fn the_public_output_keeps_its_order() -> Result<()> {
+    let paged = Paged::fitted(TwoOutputs, &Stages::whole(1), 8)?;
+    paged.check()?;
+    let mut plan = (*paged.plan).clone();
+    assert_eq!(plan.programs.len(), 1);
+    assert_eq!(plan.programs[0].outputs.len(), 2);
+    plan.programs[0].outputs.swap(0, 1);
+    let wrong = Paged {
+        circuit: paged.circuit.clone(),
+        plan: Arc::new(plan),
+        report: paged.report.clone(),
+    };
+    assert!(matches!(
+        wrong.check(),
+        Err(Error::Initialization(message)) if message.to_string().contains("public output")
+    ));
     Ok(())
 }
 

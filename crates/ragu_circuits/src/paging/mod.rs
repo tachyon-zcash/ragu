@@ -113,6 +113,7 @@ use crate::{
     staging::{MultiStageCircuit, Stage},
 };
 
+mod check;
 mod page;
 mod plan;
 #[cfg(test)]
