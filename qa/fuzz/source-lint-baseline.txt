@@ -7,10 +7,10 @@ RAGU004|crates/ragu_circuits/src/raw.rs|165|The reserved extra wire is intention
 RAGU005|crates/ragu_core/src/drivers/emulator.rs|354|Known prediction bypasses execution only in the constraint-free Wire-equals-unit emulator.
 RAGU005|crates/ragu_pcd/src/step/encoder.rs|97|The enum structurally distinguishes a pre-encoded value from one requiring conversion.
 RAGU005|crates/ragu_pcd/src/step/internal/padded.rs|99|The early error depends only on the structural number of header elements already written.
-RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|858|The fixed interpolation-node index selects an endpoint product or a multiplication; it does not depend on witness values.
-RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|860|The fixed group size and node index select the last endpoint product instead of multiplying by one.
-RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|896|The quotient slice comes from a FixedVec length type; a singleton claim has no quotient coefficients or correction operations.
-RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|928|The interpolation-basis cache is keyed by the fixed length type and prior structural fold calls, never by witness values.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|869|The fixed interpolation-node index selects an endpoint product or a multiplication; it does not depend on witness values.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|871|The fixed group size and node index select the last endpoint product instead of multiplying by one.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|907|The quotient slice comes from a FixedVec length type; a singleton claim has no quotient coefficients or correction operations.
+RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|939|The interpolation-basis cache is keyed by the fixed length type and prior structural fold calls, never by witness values.
 RAGU004|crates/ragu_primitives/src/allocator.rs|68|The stateless allocator intentionally returns A and wastes the zero B and C wires of its allocation gate.
 RAGU005|crates/ragu_primitives/src/allocator.rs|109|Structural pool occupancy selects redemption of a D wire or allocation of a fresh gate.
 RAGU004|crates/ragu_primitives/src/allocator.rs|112|The pooled allocator intentionally returns A, stores Extra, and wastes the zero B and C wires.
@@ -34,13 +34,14 @@ RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|217|The public-rate threshold
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|254|Save behavior is selected by structural sponge mode at an explicit API boundary.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|257|Pending-value count is structural sponge state, not a circuit witness.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|325|ALPHA is a type-level permutation parameter and unsupported values panic before synthesis.
-RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1169|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
-RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|619|The first factor seeds the product; later factors multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1326|The first square is the base itself; each later one squares the previous.
-RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1354|The exponent is a constant of the rank; its set bits fix which squares multiply.
-RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1355|The exponent is a constant of the rank; its first set bit seeds the product.
-RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1373|The first two powers are one and the base; later ones multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|318|A claim's kind is fixed by the protocol's claim list, never by the witness.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|198|The pair cache is keyed by the fixed layout's indices: a pair's product is taken the first time a group weights it and reused after, whatever the witness.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1182|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|632|The first factor seeds the product; later factors multiply once each.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1339|The first square is the base itself; each later one squares the previous.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1367|The exponent is a constant of the rank; its set bits fix which squares multiply.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1368|The exponent is a constant of the rank; its first set bit seeds the product.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|1386|The first two powers are one and the base; later ones multiply once each.
+RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|331|A claim's kind is fixed by the protocol's claim list, never by the witness.
 RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|683|A point source is a constant of the schedule, a pure function of the proof system's constants.
 RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|703|An element source is a constant of the schedule, a pure function of the proof system's constants.
 RAGU005|crates/ragu_pcd/src/decompress/circuits.rs|753|Which challenges a side squeezes and which it takes from bits is fixed by the schedule.
