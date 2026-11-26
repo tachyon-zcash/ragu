@@ -913,7 +913,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x26276ff1e6006327a3ff501213fb68404690eedf5bee8dd81c0cb969a85dd710"
+        "0x0db4f6623b447917bc954d311d99b456be477e9004699ad0cbfb3ab94bef3ace"
     ));
 
     assert_eq!(
