@@ -112,10 +112,10 @@ impl Run {
         self.shape_in::<P>(fold::num_batches::<P>(K::num_coeffs()))
     }
 
-    /// [`shape`](Self::shape), given the batches the claims fold in: the
-    /// host reduction's, then the nested reduction's. Counting them walks
-    /// every claim of the profile, so a caller that shapes every run
-    /// counts once.
+    /// The run's stage shape in a proof of profile `P`, given the batches
+    /// the claims fold in: the host reduction's, then the nested
+    /// reduction's. Counting them walks every claim of the profile, so a
+    /// caller that shapes every run counts once.
     fn shape_in<P: Profile>(self, (host, nested): (usize, usize)) -> StageShape {
         let points = |points| StageShape {
             points,
