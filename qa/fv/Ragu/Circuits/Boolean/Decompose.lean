@@ -42,9 +42,9 @@ decomposition and the constraints are unsatisfiable.
 The `0` arm matches `decompose_n::<_, 0>`, constraining `0 - input = 0`.
 
 Sub-gadget: `decompose` is `pub(crate)` and reaches the constraint system only
-through `Endoscalar::extract_element`, so it has no extraction instance of its
-own. It is fingerprinted through `Endoscalar.Extract`, whose instance drives
-the real `EndoscalarChallenge::from_element`. -/
+through the `Extract` routine's `execute`, so it has no extraction instance of
+its own. It is fingerprinted through `Endoscalar.Extract`, whose instance
+drives the real `EndoscalarChallenge::from_element`. -/
 def main : (n : ℕ) → Var field (F p) → Circuit (F p) (Var (fields n) (F p))
   | 0, input => do
     assertZero (recomposeExpr (#v[] : Vector (Expression (F p)) 0) - input)

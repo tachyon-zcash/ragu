@@ -305,7 +305,7 @@ mod tests {
             &mut alloc,
             Recorder::<Fp>::just(|| Fp::from(0x1234_5678_9abc_def0u64)),
         )?;
-        let challenge = EndoscalarChallenge::from_element(&mut rec, &mut alloc, value.clone())?;
+        let challenge = EndoscalarChallenge::from_element(&mut rec, value.clone())?;
         let endoscalar = Endoscalar::extract(challenge);
         let lifted = endoscalar.lift(&mut rec)?;
         assert!(constraints_hold(&rec.events, &rec.values));

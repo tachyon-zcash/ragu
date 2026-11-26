@@ -216,7 +216,7 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
             }
         })?;
         let beta = if S::NATIVE {
-            let challenge = EndoscalarChallenge::from_element(dr, &mut (), public[5].clone())?;
+            let challenge = EndoscalarChallenge::from_element(dr, public[5].clone())?;
             Endoscalar::extract(challenge).lift(dr)?
         } else {
             public[5].clone()

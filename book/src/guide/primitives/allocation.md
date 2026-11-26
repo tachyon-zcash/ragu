@@ -128,6 +128,19 @@ but a rough guide:
 | Two or more allocations, or donating gadgets | [`Standard`] |
 | Single isolated allocation | `()` |
 
+### Allocators and Routines {#routines}
+
+An allocator does not cross a [routine](../routines.md) boundary. The
+constraints of a routine depend only on its type and the type of its input
+gadget. A caller's allocator would make them depend on the allocator's pool
+too, and tokens donated inside the routine would let the caller assign wires
+of the routine's gates. A routine therefore creates its own allocator, and
+the tokens donated inside the routine stay there.
+
+For example, [`EndoscalarChallenge::from_element`] decomposes its element
+in a routine and takes no allocator. The routine allocates the bits with
+`()`, because nothing in it redeems their donated tokens.
+
 ## Cost Accounting {#cost-accounting}
 
 The [`Simulator`] makes allocation costs visible. Compare two unit
@@ -166,4 +179,5 @@ catch unnecessary gate overhead early.
 [`Standard`]: ragu_primitives::allocator::Standard
 [assign-extra]: ragu_core::drivers::DriverTypes::assign_extra
 [`Boolean::alloc`]: ragu_primitives::Boolean::alloc
+[`EndoscalarChallenge::from_element`]: ragu_primitives::EndoscalarChallenge::from_element
 [`Simulator`]: ragu_primitives::Simulator

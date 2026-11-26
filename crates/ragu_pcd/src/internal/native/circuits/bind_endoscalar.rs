@@ -151,7 +151,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         // Hoisting the extracted endoscalar derives the products, and the
         // conservative equality transfers both to the stage's wires.
         let pre_beta = unified_output.pre_beta.read(dr, allocator)?;
-        let pre_beta = EndoscalarChallenge::from_element(dr, allocator, pre_beta)?;
+        let pre_beta = EndoscalarChallenge::from_element(dr, pre_beta)?;
         let extracted = HoistedEndoscalar::hoist(dr, Endoscalar::extract(pre_beta))?;
         extracted.enforce_conservative_equal(dr, &walk.endoscalar)?;
 

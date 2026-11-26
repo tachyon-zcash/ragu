@@ -38,6 +38,7 @@
 //! check this pairing.
 
 use alloc::{boxed::Box, vec::Vec};
+use core::marker::PhantomData;
 
 use ragu_core::{
     Coeff, Error, Result,
@@ -45,14 +46,17 @@ use ragu_core::{
         Driver, DriverValue,
         emulator::{Emulator, Wireless},
     },
-    gadgets::Gadget,
+    gadgets::{Bound, Gadget, Kind},
     maybe::{Always, Maybe},
+    routines::{Prediction, Routine},
 };
-use udon::{curve::EndomorphismAffine as Affine, field::Field};
+use udon::{
+    curve::{EndomorphismAffine as Affine, EndomorphismProjective, Projective},
+    field::Field,
+};
 
 use crate::{
     Boolean, Element, Nonzero, NonzeroBank, Point,
-    allocator::Allocator,
     boolean::decompose,
     consistent::Consistent,
     promotion::Demoted,
@@ -223,8 +227,9 @@ pub struct EndoscalarChallenge<'dr, D: Driver<'dr>> {
 impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     /// Validates an in-range element as an endoscalar challenge.
     ///
-    /// The single-attempt constructor, which emits the binding decomposition
-    /// directly.
+    /// The single-attempt constructor. It emits the binding decomposition
+    /// inside the extraction routine, which allocates with its own allocator,
+    /// so its constraints do not depend on the caller's allocator.
     ///
     /// It serves the in-circuit verifier path, where an honest prover has
     /// already ground the challenge into range and it is only re-derived
@@ -240,10 +245,10 @@ impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     ///
     /// # Completeness
     ///
-    /// Honest proving succeeds only when `elem` is in range. The witness value
-    /// is checked directly as well, so the emulators — which compute witness
-    /// data without evaluating constraints — reject an out-of-range element
-    /// rather than returning a truncated endoscalar.
+    /// Honest proving succeeds only when `elem` is in range. The extraction
+    /// routine's prediction also checks the witness value, so the emulators —
+    /// which compute witness data without evaluating constraints — reject an
+    /// out-of-range element rather than returning a truncated endoscalar.
     ///
     /// # Errors
     ///
@@ -255,24 +260,8 @@ impl<'dr, D: Driver<'dr>> EndoscalarChallenge<'dr, D> {
     /// unchanged.
     ///
     /// [`sample`]: EndoscalarChallenge::sample
-    pub fn from_element<A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        elem: Element<'dr, D>,
-    ) -> Result<Self> {
-        // Emulator drivers never evaluate the decomposition constraints, so
-        // also reject an out-of-range witness value directly; `try_just` runs
-        // only during witness generation and emits nothing, leaving circuit
-        // structure untouched.
-        D::try_just(|| {
-            if !endoscalar_in_range(*elem.value().take()) {
-                return Err(Error::InvalidWitness(Box::new(EndoscalarRangeError)));
-            }
-
-            Ok(())
-        })?;
-
-        let endoscalar = Endoscalar::extract_element(dr, allocator, &elem)?;
+    pub fn from_element(dr: &mut D, elem: Element<'dr, D>) -> Result<Self> {
+        let endoscalar = dr.routine(Extract, elem.clone())?;
 
         Ok(Self { elem, endoscalar })
     }
@@ -309,7 +298,7 @@ impl<'dr, F: Field> EndoscalarChallenge<'dr, NativeEmulator<F>> {
         dr: &mut NativeEmulator<F>,
         elem: Element<'dr, NativeEmulator<F>>,
     ) -> Result<Option<Self>> {
-        match Self::from_element(dr, &mut (), elem) {
+        match Self::from_element(dr, elem) {
             Ok(challenge) => Ok(Some(challenge)),
             Err(err)
                 if err
@@ -388,9 +377,10 @@ impl<'dr, F: Field> EndoscalarChallenge<'dr, NativeEmulator<F>> {
 /// decomposition is set, so it is `true` exactly when that in-circuit
 /// decomposition is satisfiable.
 ///
-/// An implementation detail of `from_element`, which reports an out-of-range
-/// value as a typed [`EndoscalarRangeError`] failure that rejection-sampling
-/// callers detect with [`Error::invalid_witness_source`].
+/// An implementation detail of the extraction routine's prediction, which
+/// reports an out-of-range value as a typed [`EndoscalarRangeError`] failure
+/// that rejection-sampling callers detect with
+/// [`Error::invalid_witness_source`].
 fn endoscalar_in_range<F: Field>(value: F) -> bool {
     !Field::to_le_bits(&value).as_ref()[F::CAPACITY as usize..]
         .iter()
@@ -452,29 +442,6 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         challenge.endoscalar
     }
 
-    /// Constrains `elem` to its canonical decomposition and returns its low
-    /// [`ENDOSCALAR_BITS`] bits as an endoscalar.
-    fn extract_element<A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        elem: &Element<'dr, D>,
-    ) -> Result<Self> {
-        let bits = decompose(dr, allocator, elem)?;
-
-        let value = elem.value().map(|v| {
-            let le_bits = Field::to_le_bits(v);
-            Uendo::from_le_bits(le_bits.as_ref().iter().take(ENDOSCALAR_BITS).copied())
-        });
-
-        let bits = bits
-            .iter()
-            .take(ENDOSCALAR_BITS)
-            .map(|bit| Demoted::new(bit))
-            .try_collect_fixed()?;
-
-        Ok(Endoscalar { bits, value })
-    }
-
     /// Scale a point by the endoscalar.
     ///
     /// The bits are read least significant first as two initial bits
@@ -511,7 +478,8 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// curve's only in its constant term, and the addition formulas never
     /// read that term.
     ///
-    /// This costs $3 + 4 + 10 n + 3$ gates, $480$ here.
+    /// This costs $3 + 4 + 10 n + 3$ gates, $480$ here, in one routine
+    /// invocation.
     ///
     /// # Exceptional Cases
     ///
@@ -543,50 +511,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         dr: &mut D,
         p: &Point<'dr, D, C>,
     ) -> Result<Point<'dr, D, C>> {
-        let zeta = D::F::ZETA;
-        let one = Element::one();
-        let two = D::F::from(2);
-        let third = D::F::from(3)
-            .invert()
-            .expect("3 is invertible in a field of large characteristic");
-        let zm1 = zeta - D::F::ONE;
-        let z2m1 = zeta.square() - D::F::ONE;
-        let four_ninths_zm1 = zm1 * third.square().double().double();
-        let zm1_third = zm1 * third;
-        let four_zeta_third = zeta * third.double().double();
-        let neg_two_zeta_third = -(zeta * third.double());
-
-        let mut bits = self.bits();
-        let s0 = bits.next().unwrap().element();
-        let e0 = bits.next().unwrap().element();
-
-        // D = (-1)^s {P, φP, φ²P, P - φP}[u, v], in three gates: with
-        // h = (r + (4/9)(ζ-1) u) ((ζ-1) u + (ζ²-1) v) and j = (u + v - 1) h,
-        // x_D = r + h + ((ζ-1)/3) j + (4ζ/3) u and
-        // y_D = (1 - 2s) (r - (2ζ/3) j).
-        let point = walk(dr, p, (s0, e0), |dr, r| {
-            let s = bits.next().unwrap().element();
-            let u = bits.next().unwrap().element();
-            let v = bits.next().unwrap().element();
-
-            let lhs = r.add_coeff(dr, &u, Coeff::Arbitrary(four_ninths_zm1));
-            let rhs = u
-                .scale(dr, Coeff::Arbitrary(zm1))
-                .add_coeff(dr, &v, Coeff::Arbitrary(z2m1));
-            let h = lhs.mul(dr, &rhs)?;
-            let j = u.add(dr, &v).sub(dr, &one).mul(dr, &h)?;
-            let xd = r
-                .add(dr, &h)
-                .add_coeff(dr, &j, Coeff::Arbitrary(zm1_third))
-                .add_coeff(dr, &u, Coeff::Arbitrary(four_zeta_third));
-            let sign = one.add_coeff(dr, &s, Coeff::NegativeArbitrary(two));
-            let yd_unsigned = r.add_coeff(dr, &j, Coeff::Arbitrary(neg_two_zeta_third));
-            let yd = sign.mul(dr, &yd_unsigned)?;
-            Ok((xd, yd))
-        })?;
-        assert!(bits.next().is_none());
-
-        Ok(point)
+        dr.routine(GroupScale::new(), (self.clone(), p.clone()))
     }
 
     /// Lifts this endoscalar to a field element (scales $1$ by the endoscalar).
@@ -833,6 +758,198 @@ impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for HoistedEndoscalar<'dr, D> {
     }
 }
 
+/// [`Routine`] behind [`EndoscalarChallenge::from_element`]: constrains an
+/// element to its canonical decomposition and returns its low
+/// [`ENDOSCALAR_BITS`] bits as an endoscalar.
+///
+/// The body allocates the bits with the stateless allocator. A caller's
+/// allocator would make the emitted gates depend on its pool, and the
+/// spare wires the bits donate would leave the routine.
+///
+/// The prediction is the low bits of the witness value. It rejects an
+/// out-of-range value, for which the body's constraints are unsatisfiable.
+#[derive(Clone)]
+struct Extract;
+
+impl<F: Field> Routine<F> for Extract {
+    type Input = Kind![F; Element<'_, _>];
+    type Output = Kind![F; Endoscalar<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        elem: Bound<'dr, D, Self::Input>,
+        _: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let bits = decompose(dr, &mut (), &elem)?;
+        let value = elem.value().map(|v| low_bits(*v));
+        let bits = bits
+            .iter()
+            .take(ENDOSCALAR_BITS)
+            .map(|bit| Demoted::new(bit))
+            .try_collect_fixed()?;
+
+        Ok(Endoscalar { bits, value })
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = F, Wire = ()>>(
+        &self,
+        dr: &mut D,
+        elem: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        let value = D::try_just(|| {
+            let value = *elem.value().take();
+            if !endoscalar_in_range(value) {
+                return Err(Error::InvalidWitness(Box::new(EndoscalarRangeError)));
+            }
+
+            Ok(low_bits(value))
+        })?;
+
+        Ok(Prediction::Known(Endoscalar::alloc(dr, value)?, D::unit()))
+    }
+}
+
+/// The low [`ENDOSCALAR_BITS`] bits of the canonical decomposition of
+/// `value`.
+fn low_bits<F: Field>(value: F) -> Uendo {
+    let le_bits = Field::to_le_bits(&value);
+    Uendo::from_le_bits(le_bits.as_ref().iter().take(ENDOSCALAR_BITS).copied())
+}
+
+/// [`Routine`] behind [`Endoscalar::group_scale`]: scales a point on the
+/// curve `C` by an endoscalar.
+///
+/// The routine carries no state, so its constraints depend only on `C`.
+///
+/// The prediction is the native walk of [`group_scale_native`] on the
+/// witness values. The walk has no exceptional case for an on-curve input
+/// (see [`Endoscalar::group_scale`]), so the prediction agrees with every
+/// satisfying execution.
+struct GroupScale<C> {
+    _marker: PhantomData<fn() -> C>,
+}
+
+impl<C> GroupScale<C> {
+    fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C> Clone for GroupScale<C> {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
+impl<C: Affine> Routine<C::Base> for GroupScale<C> {
+    type Input = Kind![C::Base; (Endoscalar<'_, _>, Point<'_, _, C>)];
+    type Output = Kind![C::Base; Point<'_, _, C>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        (endoscalar, p): Bound<'dr, D, Self::Input>,
+        _: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let zeta = D::F::ZETA;
+        let one = Element::one();
+        let two = D::F::from(2);
+        let third = D::F::from(3)
+            .invert()
+            .expect("3 is invertible in a field of large characteristic");
+        let zm1 = zeta - D::F::ONE;
+        let z2m1 = zeta.square() - D::F::ONE;
+        let four_ninths_zm1 = zm1 * third.square().double().double();
+        let zm1_third = zm1 * third;
+        let four_zeta_third = zeta * third.double().double();
+        let neg_two_zeta_third = -(zeta * third.double());
+
+        let mut bits = endoscalar.bits();
+        let s0 = bits.next().unwrap().element();
+        let e0 = bits.next().unwrap().element();
+
+        // D = (-1)^s {P, φP, φ²P, P - φP}[u, v], in three gates: with
+        // h = (r + (4/9)(ζ-1) u) ((ζ-1) u + (ζ²-1) v) and j = (u + v - 1) h,
+        // x_D = r + h + ((ζ-1)/3) j + (4ζ/3) u and
+        // y_D = (1 - 2s) (r - (2ζ/3) j).
+        let point = walk(dr, &p, (s0, e0), |dr, r| {
+            let s = bits.next().unwrap().element();
+            let u = bits.next().unwrap().element();
+            let v = bits.next().unwrap().element();
+
+            let lhs = r.add_coeff(dr, &u, Coeff::Arbitrary(four_ninths_zm1));
+            let rhs = u
+                .scale(dr, Coeff::Arbitrary(zm1))
+                .add_coeff(dr, &v, Coeff::Arbitrary(z2m1));
+            let h = lhs.mul(dr, &rhs)?;
+            let j = u.add(dr, &v).sub(dr, &one).mul(dr, &h)?;
+            let xd = r
+                .add(dr, &h)
+                .add_coeff(dr, &j, Coeff::Arbitrary(zm1_third))
+                .add_coeff(dr, &u, Coeff::Arbitrary(four_zeta_third));
+            let sign = one.add_coeff(dr, &s, Coeff::NegativeArbitrary(two));
+            let yd_unsigned = r.add_coeff(dr, &j, Coeff::Arbitrary(neg_two_zeta_third));
+            let yd = sign.mul(dr, &yd_unsigned)?;
+            Ok((xd, yd))
+        })?;
+        assert!(bits.next().is_none());
+
+        Ok(point)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = C::Base, Wire = ()>>(
+        &self,
+        dr: &mut D,
+        (endoscalar, p): &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        let scaled = D::try_just(|| {
+            let x = *p.x.value().take();
+            let y = *p.y.value().take();
+            let p = C::from_xy(x, y).ok_or_else(|| {
+                Error::InvalidWitness("endoscaling base point is not on the curve".into())
+            })?;
+
+            Ok(group_scale_native(endoscalar.value.snag(), &p))
+        })?;
+
+        Ok(Prediction::Known(Point::alloc(dr, scaled)?, D::unit()))
+    }
+}
+
+/// The native counterpart to [`Endoscalar::group_scale`]: the same radix-3
+/// walk in projective coordinates, with the digit multiples of `p` formed by
+/// the endomorphism.
+fn group_scale_native<C: Affine>(endo: &Uendo, p: &C) -> C {
+    let bit = |i: usize| endo.bit(i);
+    let p = p.to_projective();
+
+    let mut acc = if bit(1) { p.endomorphism() } else { p };
+    if bit(0) {
+        acc = -acc;
+    }
+    acc = acc.double();
+
+    for i in 0..ENDOSCALAR_DIGITS {
+        let base = 2 + 3 * i;
+        let mut d = match (bit(base + 1), bit(base + 2)) {
+            (false, false) => p,
+            (true, false) => p.endomorphism(),
+            (false, true) => p.endomorphism().endomorphism(),
+            (true, true) => p + (-p.endomorphism()),
+        };
+        if bit(base) {
+            d = -d;
+        }
+        acc = acc.double() + acc + d;
+    }
+    acc.into()
+}
+
 /// The radix-3 walk shared by [`Endoscalar::group_scale`] and
 /// [`HoistedEndoscalar::group_scale`]: normalizes `p` to $(r, r)$, forms the
 /// initial point from the two initial bits, then for each digit adds the
@@ -1044,7 +1161,7 @@ pub fn lift_endoscalar<F: Field>(endo: Uendo) -> F {
 pub fn extract_endoscalar<F: Field>(value: F) -> Result<Uendo> {
     Emulator::emulate_wireless(value, |dr, witness| {
         let elem = Element::alloc(dr, &mut (), witness)?;
-        let challenge = EndoscalarChallenge::from_element(dr, &mut (), elem)?;
+        let challenge = EndoscalarChallenge::from_element(dr, elem)?;
         let endo = Endoscalar::extract(challenge);
         Ok(*endo.value.snag())
     })
@@ -1059,7 +1176,7 @@ mod tests {
     };
     use rand::{Rng, RngExt};
     use udon::{
-        curve::{Affine as _, EndomorphismAffine as Affine, EndomorphismProjective, Projective},
+        curve::{Affine as _, EndomorphismAffine as Affine},
         field::Field,
     };
 
@@ -1079,32 +1196,10 @@ mod tests {
     }
 
     impl EndoscalarTest {
-        /// The radix-3 walk of [`Endoscalar::group_scale`], in projective
-        /// coordinates with the digit multiples formed by the endomorphism.
+        /// The radix-3 walk of [`Endoscalar::group_scale`], from
+        /// [`super::group_scale_native`].
         pub fn scale<C: Affine>(&self, p: &C) -> C {
-            let bit = |i: usize| self.value.bit(i);
-            let p = p.to_projective();
-
-            let mut acc = if bit(1) { p.endomorphism() } else { p };
-            if bit(0) {
-                acc = -acc;
-            }
-            acc = acc.double();
-
-            for i in 0..super::ENDOSCALAR_DIGITS {
-                let base = 2 + 3 * i;
-                let mut d = match (bit(base + 1), bit(base + 2)) {
-                    (false, false) => p,
-                    (true, false) => p.endomorphism(),
-                    (false, true) => p.endomorphism().endomorphism(),
-                    (true, true) => p + (-p.endomorphism()),
-                };
-                if bit(base) {
-                    d = -d;
-                }
-                acc = acc.double() + acc + d;
-            }
-            acc.into()
+            super::group_scale_native(&self.value, p)
         }
 
         /// The scalar of the walk above, from [`super::lift_endoscalar`].
@@ -1165,7 +1260,7 @@ mod tests {
             let allocator = &mut Standard::new();
             let r = Element::alloc(dr, allocator, r)?;
             let constraints_before_challenge = dr.num_constraints();
-            let r = EndoscalarChallenge::from_element(dr, allocator, r)?;
+            let r = EndoscalarChallenge::from_element(dr, r)?;
             let constraints_after_challenge = dr.num_constraints();
             assert!(constraints_after_challenge > constraints_before_challenge);
             let my_extracted = Endoscalar::extract(r);
@@ -1197,7 +1292,7 @@ mod tests {
 
         let result = Simulator::<Fp>::simulate(-Fp::ONE, |dr, witness| {
             let elem = Element::alloc(dr, &mut (), witness)?;
-            EndoscalarChallenge::from_element(dr, &mut (), elem)?;
+            EndoscalarChallenge::from_element(dr, elem)?;
             Ok(())
         });
 
@@ -1218,7 +1313,7 @@ mod tests {
         let result =
             Emulator::<Wireless<Always<()>, Fp>>::emulate_wireless(-Fp::ONE, |dr, value| {
                 let elem = Element::alloc(dr, &mut (), value)?;
-                EndoscalarChallenge::from_element(dr, &mut (), elem)?;
+                EndoscalarChallenge::from_element(dr, elem)?;
                 Ok(())
             });
 
@@ -1386,6 +1481,56 @@ mod tests {
             dr.reset();
             assert_eq!(r.group_scale(dr, &p)?.value().take(), expected);
             assert_eq!(dr.num_gates(), 3 + 4 + 10 * super::ENDOSCALAR_DIGITS + 3);
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    /// The extraction routine's prediction, which the wireless emulator
+    /// returns without executing the body, equals the bits the body
+    /// constrains.
+    #[test]
+    fn test_extract_prediction_matches_execution() -> Result<()> {
+        let value = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let predicted = super::extract_endoscalar(value)?;
+
+        Simulator::simulate(value, |dr, witness| {
+            let elem = Element::alloc(dr, &mut (), witness)?;
+            let endoscalar = Endoscalar::extract(EndoscalarChallenge::from_element(dr, elem)?);
+            let executed = Uendo::from_le_bits(endoscalar.bits().map(|bit| *bit.wire() == Fp::ONE));
+            assert_eq!(executed, predicted);
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    /// The scaling routine's prediction, which the wireless emulator returns
+    /// without executing the body, equals the point the body constrains.
+    #[test]
+    fn test_group_scale_prediction_matches_execution() -> Result<()> {
+        let p = EpAffine::generator();
+        let r = random_endoscalar();
+
+        let predicted = Emulator::emulate_wireless((p, r), |dr, witness| {
+            let (p, r) = witness.cast();
+            let p = Point::alloc(dr, p)?;
+            let r = Endoscalar::alloc(dr, r)?;
+            Ok(r.group_scale(dr, &p)?.value().take())
+        })?;
+        assert_eq!(predicted, EndoscalarTest { value: r }.scale(&p));
+
+        Simulator::simulate((p, r), |dr, witness| {
+            let (p, r) = witness.cast();
+            let p = Point::alloc(dr, p)?;
+            let r = Endoscalar::alloc(dr, r)?;
+            let scaled = r.group_scale(dr, &p)?;
+            let executed = EpAffine::from_xy(*scaled.x.wire(), *scaled.y.wire())
+                .expect("the scaled point is on the curve");
+            assert_eq!(executed, predicted);
 
             Ok(())
         })?;

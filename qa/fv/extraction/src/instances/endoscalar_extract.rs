@@ -19,14 +19,9 @@ impl<F: Field> CircuitInstance for EndoscalarExtractInstance<F> {
     /// `Boolean::alloc` gates and one recomposition constraint binding their
     /// weighted sum to the element (`boolean.rs::decompose`); `extract` emits
     /// nothing and returns the low `ENDOSCALAR_BITS` bits.
-    /// Under `MaybeKind = Empty`, the witness-side range check (`try_just`)
-    /// and the per-bit witness closures never run, so the trace is exactly
-    /// those constraints.
-    ///
-    /// The unit allocator stands in for `compute_v`'s `Standard` pool: the only
-    /// thing `Boolean::alloc` hands an allocator is its gate's spare `D` wire,
-    /// which the extractor's three-wire model does not have (`Extra = ()`), so
-    /// the choice of allocator leaves the trace unchanged.
+    /// Under `MaybeKind = Empty`, the witness-side range check (in the
+    /// extraction routine's prediction) and the per-bit witness closures never
+    /// run, so the trace is exactly those constraints.
     ///
     /// Input wire: `elem` (1 wire). Output: the `ENDOSCALAR_BITS` endoscalar bit wires,
     /// least significant first.
@@ -38,7 +33,7 @@ impl<F: Field> CircuitInstance for EndoscalarExtractInstance<F> {
         let element_template = Element::constant(dr, F::ZERO);
         let elem = WireDeserializer::new(input_wires).into_gadget(&element_template)?;
 
-        let challenge = EndoscalarChallenge::from_element(dr, &mut (), elem)?;
+        let challenge = EndoscalarChallenge::from_element(dr, elem)?;
         let endo = Endoscalar::extract(challenge);
 
         WireCollector::collect_from(&endo)

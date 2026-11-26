@@ -189,8 +189,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 walked.enforce_equal(dr, absorbed)?;
             }
 
-            let pre_beta =
-                EndoscalarChallenge::from_element(dr, allocator, child.unified.pre_beta.clone())?;
+            let pre_beta = EndoscalarChallenge::from_element(dr, child.unified.pre_beta.clone())?;
             let bits = Endoscalar::extract(pre_beta);
             let generator = Point::constant(dr, generator)?;
             let beta_term = bits.group_scale(dr, &generator)?;

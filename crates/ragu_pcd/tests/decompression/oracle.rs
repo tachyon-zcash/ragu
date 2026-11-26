@@ -228,8 +228,7 @@ pub(crate) mod transcript {
             transcript: &mut Transcript<'dr, D, P>,
         ) -> Result<Self> {
             let element = transcript.challenge(dr)?;
-            let endoscalar =
-                Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), element)?);
+            let endoscalar = Endoscalar::extract(EndoscalarChallenge::from_element(dr, element)?);
             let lift = endoscalar.lift(dr)?;
             Ok(Challenge { endoscalar, lift })
         }
@@ -253,7 +252,7 @@ pub(crate) mod transcript {
         ) -> Result<Self> {
             let raw = transcript.challenge(dr)?;
             let endoscalar =
-                Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), raw.clone())?);
+                Endoscalar::extract(EndoscalarChallenge::from_element(dr, raw.clone())?);
             Ok(RawChallenge { raw, endoscalar })
         }
     }
