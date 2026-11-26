@@ -585,6 +585,7 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         native_endoscaling_step_rxs,
         native_extension_circuit_rxs,
         native_extension_stage_rxs,
+        native_walk_rxs,
         native_points_binding_rx,
         native_points_preamble_rx,
         native_points_registry_wx_rx,
@@ -659,6 +660,7 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         native_endoscaling_step_commitments: _,
         native_extension_circuit_commitments: _,
         native_extension_stage_commitments: _,
+        native_walk_commitments: _,
         native_points_binding_commitment: _,
         native_points_preamble_commitment: _,
         native_points_registry_wx_commitment: _,
@@ -757,7 +759,9 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
     // The fixture profiles' nested walks are in one stage. A grouped walk's
     // polynomials need their own lines here before a fixture can hold one.
     assert!(
-        nested_paged_stage_rxs.is_empty() && nested_step_rxs.is_empty(),
+        nested_paged_stage_rxs.is_empty()
+            && nested_step_rxs.is_empty()
+            && native_walk_rxs.is_empty(),
         "the fixtures do not record a grouped walk's polynomials"
     );
     lines.poly("nested_endoscalar_rx", nested_endoscalar_rx);

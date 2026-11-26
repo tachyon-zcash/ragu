@@ -79,8 +79,9 @@ pub use super::super::NumSteps;
 use crate::{
     internal::{
         Side,
-        endoscalar::{InputsLen, PointsWitness},
+        endoscalar::{self, InputsLen, PointsWitness},
         nested::{self, pcs::NUM_CURRENT_POINTS},
+        paging,
     },
     profile::{
         Profile,
@@ -93,6 +94,77 @@ use crate::{
 
 /// Length type for the walk's inputs, the initial point aside.
 pub type NumInputs<P> = InputsLen<NumPoints<P>>;
+
+/// Length type for the steps one group of the native walk holds in profile
+/// `P` ([`Profile::NATIVE_WALK_GROUP`]): zero for a walk whose steps read
+/// the points stages.
+pub struct WalkGroup<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for WalkGroup<P> {
+    fn len() -> usize {
+        P::NATIVE_WALK_GROUP
+    }
+}
+
+/// Whether the native walk of profile `P` is grouped: its steps read a
+/// points stage of copies, one polynomial per group, and no step loads
+/// the points stages the transcript commits.
+pub fn grouped<P: Profile>() -> bool {
+    P::NATIVE_WALK_GROUP != 0
+}
+
+/// The grouping of the native walk in profile `P`.
+pub fn walk_grouping<P: Profile>() -> paging::Grouping {
+    endoscalar::grouping::<NumPoints<P>, super::super::Endoscalings<P>, WalkGroup<P>>()
+}
+
+/// Length type for the interstitials [`WalkStage`] holds in profile `P`:
+/// one per step, or none for a grouped walk, whose interstitials are in
+/// its groups' points stages.
+pub struct WalkInterstitials<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for WalkInterstitials<P> {
+    fn len() -> usize {
+        if grouped::<P>() {
+            0
+        } else {
+            NumSteps::<P>::len()
+        }
+    }
+}
+
+/// The points stage of one group of a grouped native walk: a copy of the
+/// group's entry point and inputs, and the group's interstitials. It
+/// follows [`WalkStage`], which for such a walk follows [`BindingStage`]
+/// and holds the endoscalar alone, so a step loads the endoscalar and its
+/// group and reserves nothing else but the binding stage.
+pub type GroupStage<C, P> = endoscalar::PointsStage<
+    C,
+    NumPoints<P>,
+    super::super::Endoscalings<P>,
+    WalkStage<C, P>,
+    WalkGroup<P>,
+>;
+
+/// The links stage of a grouped native walk, after [`GroupStage`]: the
+/// walk's state at every group boundary.
+pub type LinksStage<C, P> = endoscalar::LinksStage<
+    C,
+    NumPoints<P>,
+    super::super::Endoscalings<P>,
+    WalkStage<C, P>,
+    WalkGroup<P>,
+>;
+
+/// The witness of a grouped native walk: every group and the links.
+pub type GroupedWalk<C, P> =
+    endoscalar::WalkWitness<C, NumPoints<P>, super::super::Endoscalings<P>, WalkGroup<P>>;
+
+/// The gate after stage `S`, where a stage laid after it starts.
+fn after<F: udon::field::Field, R: Rank, S: staging::Stage<F, R>>() -> usize {
+    use staging::StageExt as _;
+    S::skip_gates() + S::num_gates()
+}
 
 /// The number of points a child contributes to the walk in profile `P`:
 /// every nested rx commitment, then $a_n$, $b_n$, `registry_xy` and $P_n$.
@@ -340,7 +412,7 @@ pub struct FWitness<C: Affine, P: Profile> {
 #[derive(Clone)]
 pub struct WalkWitness<C: Affine, P: Profile> {
     pub endoscalar: Uendo,
-    pub interstitials: FixedVec<C, NumSteps<P>>,
+    pub interstitials: FixedVec<C, WalkInterstitials<P>>,
 }
 
 impl<C: Affine, P: Profile> WalkWitness<C, P> {
@@ -357,6 +429,20 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
     }
 
     /// The walk's last interstitial: $P_n$.
+    /// The witness of the walk stage of a grouped walk: the endoscalar
+    /// alone.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the profile's walk is not grouped.
+    pub fn grouped(endoscalar: Uendo) -> Self {
+        Self {
+            endoscalar,
+            interstitials: FixedVec::new(Vec::new())
+                .expect("a grouped walk's stage holds no interstitial"),
+        }
+    }
+
     pub fn p(&self) -> C {
         *self
             .interstitials
@@ -374,6 +460,14 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 ///
 /// Panics if either child has other than [`num_child_points`] points, or
 /// if `online_points` has other than one point per such polynomial.
+/// The witness of the native walk: the walk stage's, and for a grouped
+/// walk its groups and links.
+#[derive(Clone)]
+pub struct Walked<C: Affine, P: Profile> {
+    pub stage: WalkWitness<C, P>,
+    pub grouped: Option<GroupedWalk<C, P>>,
+}
+
 pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
@@ -626,7 +720,7 @@ pub struct Walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub endoscalar: HoistedEndoscalar<'dr, D>,
     #[ragu(gadget)]
-    pub interstitials: FixedVec<Point<'dr, D, C>, NumSteps<P>>,
+    pub interstitials: FixedVec<Point<'dr, D, C>, WalkInterstitials<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walk<'dr, D, C, P> {
@@ -773,6 +867,18 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
     type Witness<'source> = &'source PreambleWitness<C, P>;
     type OutputKind = Kind![C::Base; Preamble<'_, _, C, P>];
 
+    /// After the binding stage, or after the links stage of a grouped
+    /// walk, whose endoscalar, group and links stages come between the
+    /// two: a circuit that loads the points stages the transcript commits
+    /// then loads a group's copies before them.
+    fn skip_gates() -> usize {
+        if grouped::<P>() {
+            after::<C::Base, R, LinksStage<C, P>>()
+        } else {
+            after::<C::Base, R, BindingStage<C, P>>()
+        }
+    }
+
     fn values() -> usize {
         2 * (num_children_points::<P>() + PhaseLen::<P, Nested, 0>::len())
     }
@@ -829,10 +935,20 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
     type Witness<'source> = &'source WalkWitness<C, P>;
     type OutputKind = Kind![C::Base; Walk<'_, _, C, P>];
 
+    /// After the last input stage, or for a grouped walk after the binding
+    /// stage, where a step reaches it without the input stages.
+    fn skip_gates() -> usize {
+        if grouped::<P>() {
+            after::<C::Base, R, BindingStage<C, P>>()
+        } else {
+            after::<C::Base, R, FStage<C, P>>()
+        }
+    }
+
     fn values() -> usize {
         // The endoscalar's bits and hoisted products, then (x, y) of one
-        // interstitial per step.
-        ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS + 2 * NumSteps::<P>::len()
+        // interstitial per step of a walk that is not grouped.
+        ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS + 2 * WalkInterstitials::<P>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

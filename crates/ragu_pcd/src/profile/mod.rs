@@ -202,6 +202,22 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The endoscalings a nested endoscaling step performs, likewise.
     const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
 
+    /// The steps one group of the native endoscaling walk holds, or zero
+    /// for a walk whose steps read the points stages the transcript
+    /// commits, as the standard profile's do.
+    ///
+    /// A step of such a walk reserves every points stage, so a batch too
+    /// large for them to fit beside the step's endoscalings needs a grouped
+    /// walk. A grouped walk keeps each group of this many steps in a points
+    /// stage polynomial of its own, a copy of the group's inputs with its
+    /// interstitials, which a step loads with the binding stage and the
+    /// endoscalar alone. One check circuit per group holds the copies to
+    /// the points stages the transcript commits and the group to the links
+    /// stage. A grouped walk adds to the native side a polynomial per
+    /// group for its points, one for the links stage and one per group for
+    /// its check circuit.
+    const NATIVE_WALK_GROUP: usize = 0;
+
     /// The steps one group of the nested endoscaling walk holds, or zero
     /// for a walk whose points are all in one stage, as the standard
     /// profile's are.
@@ -1670,6 +1686,7 @@ impl Shape {
             P::NESTED_ENDOSCALINGS_PER_STEP,
             P::NESTED_WALK_GROUP,
             P::NESTED_STEPS,
+            P::NATIVE_WALK_GROUP,
         );
         shape.source_polynomials =
             P::NATIVE_MESH.is_some() as usize + P::NESTED_MESH.is_some() as usize;
@@ -1700,6 +1717,7 @@ impl Shape {
             nested_endoscalings,
             0,
             0,
+            0,
         )
     }
 
@@ -1712,6 +1730,7 @@ impl Shape {
         nested_endoscalings: usize,
         nested_walk_group: usize,
         nested_program_steps: usize,
+        native_walk_group: usize,
     ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
@@ -1726,6 +1745,7 @@ impl Shape {
                 nested_endoscalings,
                 nested_walk_group,
                 nested_program_steps,
+                native_walk_group,
             );
             if shape.native_steps == native_steps {
                 return shape;
@@ -1748,8 +1768,12 @@ impl Shape {
         nested_endoscalings: usize,
         nested_walk_group: usize,
         nested_program_steps: usize,
+        native_walk_group: usize,
     ) -> Self {
-        let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
+        let native_rx = native::NUM_FIXED_RX
+            + native_steps
+            + native_extension
+            + native::num_walk_extras(native_steps, native_walk_group);
         let nested_points = nested::num_endoscaling_points(native_rx) + native_online;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX

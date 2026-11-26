@@ -100,6 +100,7 @@ impl<'a> Parts<'a> {
             native_endoscaling_step_rxs,
             native_extension_circuit_rxs,
             native_extension_stage_rxs,
+            native_walk_rxs,
             native_points_binding_rx,
             native_points_preamble_rx,
             native_points_registry_wx_rx,
@@ -174,6 +175,7 @@ impl<'a> Parts<'a> {
             native_endoscaling_step_commitments,
             native_extension_circuit_commitments,
             native_extension_stage_commitments,
+            native_walk_commitments,
             native_points_binding_commitment,
             native_points_preamble_commitment,
             native_points_registry_wx_commitment,
@@ -205,12 +207,14 @@ impl<'a> Parts<'a> {
                 && nested_source_out.is_empty()
                 && native_extension_circuit_rxs.is_empty()
                 && native_extension_stage_rxs.is_empty()
+                && native_walk_rxs.is_empty()
                 && nested_extension_circuit_rxs.is_empty()
                 && nested_extension_stage_rxs.is_empty()
                 && nested_paged_stage_rxs.is_empty()
                 && nested_step_rxs.is_empty()
                 && native_extension_circuit_commitments.is_empty()
                 && native_extension_stage_commitments.is_empty()
+                && native_walk_commitments.is_empty()
                 && nested_extension_circuit_commitments.is_empty()
                 && nested_extension_stage_commitments.is_empty()
                 && nested_paged_stage_commitments.is_empty()

@@ -1409,6 +1409,7 @@ mod proof_equivalence {
                 native_endoscaling_step_rxs: _,
                 native_extension_circuit_rxs: _,
                 native_extension_stage_rxs: _,
+                native_walk_rxs: _,
                 native_points_binding_rx: _,
                 native_points_preamble_rx: _,
                 native_points_registry_wx_rx: _,
@@ -1483,6 +1484,7 @@ mod proof_equivalence {
                 native_endoscaling_step_commitments: _,
                 native_extension_circuit_commitments: _,
                 native_extension_stage_commitments: _,
+                native_walk_commitments: _,
                 native_points_binding_commitment: _,
                 native_points_preamble_commitment: _,
                 native_points_registry_wx_commitment: _,
@@ -1546,6 +1548,9 @@ mod proof_equivalence {
                 || !extension_eq(&self.nested_step_rxs, &other.nested_step_rxs)
             {
                 return Some("nested walk polynomials");
+            }
+            if !extension_eq(&self.native_walk_rxs, &other.native_walk_rxs) {
+                return Some("native walk polynomials");
             }
             if !polynomial_eq(&self.native_a_poly, &other.native_a_poly)
                 || !polynomial_eq(&self.native_b_poly, &other.native_b_poly)
@@ -1654,6 +1659,9 @@ mod proof_equivalence {
                 || self.nested_step_commitments != other.nested_step_commitments
             {
                 return Some("nested walk commitments");
+            }
+            if self.native_walk_commitments != other.native_walk_commitments {
+                return Some("native walk commitments");
             }
             if self.nested_a_commitment != other.nested_a_commitment
                 || self.nested_b_commitment != other.nested_b_commitment

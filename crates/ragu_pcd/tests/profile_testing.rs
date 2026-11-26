@@ -81,9 +81,9 @@ impl Profile for Twin {
         B: SelectableBackend;
 }
 
-/// The standard profile's circuits with the nested walk cut into groups of
-/// eight steps: a links stage, a points stage polynomial per group and a
-/// check circuit per group beside the fuse's own.
+/// The standard profile's circuits in a paged profile: both walks cut into
+/// groups of eight steps, the nested stages side by side and the nested
+/// instance checked by a program of steps.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Grouped;
 
@@ -91,8 +91,9 @@ impl Profile for Grouped {
     const NAME: &'static str = "grouped";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
+    const NATIVE_WALK_GROUP: usize = 8;
     const NESTED_WALK_GROUP: usize = 8;
-    const NESTED_STEPS: usize = 7;
+    const NESTED_STEPS: usize = 8;
 
     type Context<'params, Base, R, B>
         = ()
@@ -116,6 +117,7 @@ impl<const NATIVE: usize, const NESTED: usize, const STEPS: usize> Profile
     const NAME: &'static str = "sized";
     const NATIVE_EXTENSION: usize = NATIVE;
     const NESTED_EXTENSION: usize = NESTED;
+    const NATIVE_WALK_GROUP: usize = 16;
     const NESTED_WALK_GROUP: usize = 32;
     const NESTED_STEPS: usize = STEPS;
 

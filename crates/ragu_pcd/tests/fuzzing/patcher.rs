@@ -1108,7 +1108,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             )?,
             stage_values::<_, R, native_points::AbStage<Nested<C>, C::Profile>>(&native_points.ab)?,
             stage_values::<_, R, native_points::FStage<Nested<C>, C::Profile>>(&native_points.f)?,
-            stage_values::<_, R, native_points::WalkStage<Nested<C>, C::Profile>>(&native_walk)?,
+            stage_values::<_, R, native_points::WalkStage<Nested<C>, C::Profile>>(
+                &native_walk.stage,
+            )?,
         ]
         .concat();
 
@@ -1117,7 +1119,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Ok(native::circuits::bind_endoscalar::Witness {
                 unified: make_unified(&builder)?,
                 inputs: &native_points,
-                walk: &native_walk,
+                walk: &native_walk.stage,
             })
         };
         let bind_endoscalar_spec = CircuitSpec {
@@ -1159,7 +1161,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             visitor.visit(&spec, &circuit, &native_walk_values, || {
                 Ok(native::circuits::endoscaling_step::Witness {
                     inputs: &native_points,
-                    walk: &native_walk,
+                    walk: &native_walk.stage,
                 })
             })?;
         }

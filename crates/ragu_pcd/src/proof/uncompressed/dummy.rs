@@ -491,6 +491,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 extension_stages: FixedVec::from_fn(|_| host_commitment),
                 endoscaling_steps: FixedVec::from_fn(|_| host_commitment),
                 points_walk: host_commitment,
+                walk: FixedVec::from_fn(|_| host_commitment),
                 stashed_preamble: host_commitment,
                 stashed_inner_error: host_commitment,
                 stashed_outer_error: host_commitment,

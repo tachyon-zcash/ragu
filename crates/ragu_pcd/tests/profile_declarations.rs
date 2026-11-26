@@ -707,6 +707,7 @@ fn aggregator_declares_the_decompression() {
             per_step,
             0,
             0,
+            0,
         );
         shape.source_polynomials = 2;
         shape
@@ -779,6 +780,7 @@ fn solve_finds_a_fixed_point_for_wider_profiles() {
             4,
             0,
             0,
+            0,
         );
         assert_eq!(
             again, shape,
@@ -823,6 +825,7 @@ fn an_extension_proves_verifies_and_compresses() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(14);
     let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
+    assert!(app.verify_uncompressed(&left, &mut rng)?, "a seed verifies");
     let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;
     assert!(app.verify_uncompressed(&fused, &mut rng)?);
     let compressed = app.compress(&fused, &mut rng)?;
@@ -984,6 +987,17 @@ where
     let compressed = app.compress(&fused, &mut rng)?;
     assert!(app.verify_compressed(&compressed)?);
 
+    // The native walk's extra polynomials are bound the same way.
+    for index in crate::internal::native::RxIndex::walk_extras::<Grouped>() {
+        let mut proof = fused.proof().clone();
+        proof.double_native_extension_rx(crate::pasta::baked_aggregator(), index);
+        let changed = proof.carry::<()>(());
+        assert!(
+            !app.verify_uncompressed(&changed, &mut rng)?,
+            "{index:?} is not bound"
+        );
+    }
+
     // The profile's extra polynomials are bound: doubling any one of them
     // breaks a claim the decider checks.
     for index in RxIndex::paged_extras::<Grouped>() {
@@ -999,7 +1013,7 @@ where
 }
 
 #[test]
-#[ignore = "the native walk of a paged profile is not grouped yet: its step loads every point"]
+#[ignore = "the native compute-v of a paged profile is not cut yet: it outgrows the wallet rank"]
 fn a_paged_profile_proves_at_the_wallet_rank() -> Result<()> {
     a_paged_profile_proves_at::<13>()
 }

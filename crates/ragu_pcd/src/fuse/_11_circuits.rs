@@ -223,14 +223,27 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         // The native walk's inputs: the bits the endoscaling steps walked
         // with are pre_beta's, and the points lie on the curve.
-        let (bind_endoscalar_trace, unified) =
-            native::circuits::bind_endoscalar::Circuit::<C, R>::new()
+        let (bind_endoscalar_trace, unified) = match &native_walk.grouped {
+            // A grouped walk: its groups' check circuits hold the points to
+            // the curve, and the walk's ends are its first and last links.
+            Some(grouped) => native::circuits::walk::Bind::<C, R>::new()
+                .trace(native::circuits::walk::BindWitness {
+                    unified,
+                    walk: native::circuits::walk::Witness {
+                        inputs: native_points,
+                        walk: &native_walk.stage,
+                        grouped,
+                    },
+                })?
+                .into_parts(),
+            None => native::circuits::bind_endoscalar::Circuit::<C, R>::new()
                 .trace(native::circuits::bind_endoscalar::Witness {
                     unified,
                     inputs: native_points,
-                    walk: native_walk,
+                    walk: &native_walk.stage,
                 })?
-                .into_parts();
+                .into_parts(),
+        };
         let bind_endoscalar_rx = self.native_registry.assemble(
             &bind_endoscalar_trace,
             native::InternalCircuitIndex::BindEndoscalarCircuit.circuit_index::<C::Profile>(),

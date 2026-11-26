@@ -22,7 +22,10 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, vec::Len};
 use udon::field::Field;
 
-use super::{InternalCircuitIndex, NUM_BINDERS, NumSteps, RxComponent, RxIndex};
+use super::{
+    InternalCircuitIndex, NUM_BINDERS, NumSteps, NumWalkGroups, RxComponent, RxIndex,
+    stages::points,
+};
 use crate::{
     internal::revdot::{Builder, Source, sum_polynomials},
     profile::Profile,
@@ -259,13 +262,58 @@ where
             }
 
             // bind_endoscalar: BindEndoscalar + every points input stage +
-            // PointsWalk
+            // PointsWalk, and the links stage of a grouped walk
             BindEndoscalarCircuit => {
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in [BindEndoscalar]
                     .into_iter()
                     .chain(POINTS_INPUT_STAGES)
                     .chain([PointsWalk])
+                    .chain(points::grouped::<P>().then_some(WalkLinks))
+                {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // A step of a grouped walk: its rx, PointsWalk and its group's
+            // points stage (k(y) = 1). It reserves the binding stage and
+            // loads no input stage.
+            EndoscalingStep(step) if points::grouped::<P>() => {
+                let (group, _) = points::walk_grouping::<P>().locate(step as usize);
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [
+                    RxIndex::EndoscalingStep(step),
+                    PointsWalk,
+                    WalkGroup(group as u32),
+                ] {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // A group's check circuit: its rx, every points input stage,
+            // the group's points stage and the links stage (k(y) = 1).
+            WalkCheck(group) => {
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::WalkCheck(group)]
+                    .into_iter()
+                    .chain(POINTS_INPUT_STAGES)
+                    .chain([WalkGroup(group), WalkLinks])
                 {
                     for (i, rx) in source.rx(Rx(index)).enumerate() {
                         if per_proof.len() <= i {
@@ -374,6 +422,18 @@ where
             PointsWalkStage => {
                 processor.mask_claim(id, source.rx(Rx(PointsWalk)))?;
             }
+            // A grouped walk's group stage, over every group's polynomial,
+            // and its links stage.
+            WalkGroupStage => {
+                let groups = NumWalkGroups::<P>::len() as u32;
+                processor.mask_claim(
+                    id,
+                    (0..groups).flat_map(|group| source.rx(Rx(WalkGroup(group)))),
+                )?;
+            }
+            WalkLinksStage => {
+                processor.mask_claim(id, source.rx(Rx(WalkLinks)))?;
+            }
 
             // Final stage mask claims
             InnerErrorFinalStaged => {
@@ -409,12 +469,32 @@ where
                     ),
                 )?;
             }
+            // The final mask of the steps of a grouped walk, which end on
+            // their group's points stage.
+            PointsWalkFinalStaged if points::grouped::<P>() => {
+                processor.mask_claim(
+                    id,
+                    (0..NumSteps::<P>::len() as u32)
+                        .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
+                )?;
+            }
             PointsWalkFinalStaged => {
                 processor.mask_claim(
                     id,
                     source.rx(Rx(BindEndoscalar)).chain(
                         (0..NumSteps::<P>::len() as u32)
                             .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
+                    ),
+                )?;
+            }
+            // The final mask of a grouped walk's circuits that end on the
+            // last points input stage.
+            WalkCheckFinalStaged => {
+                let groups = NumWalkGroups::<P>::len() as u32;
+                processor.mask_claim(
+                    id,
+                    source.rx(Rx(BindEndoscalar)).chain(
+                        (0..groups).flat_map(|group| source.rx(Rx(RxIndex::WalkCheck(group)))),
                     ),
                 )?;
             }
@@ -542,6 +622,8 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 }
             })
         })
+        // A grouped walk's check circuits, which expose nothing.
+        .chain(repeat_n(source.ones(), NumWalkGroups::<P>::len()).flatten())
 }
 
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {

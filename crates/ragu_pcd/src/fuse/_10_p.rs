@@ -49,7 +49,7 @@ use crate::{
         endoscalar::EndoscalarStage,
         native::{
             self, RxComponent, RxIndex, online,
-            stages::points::{self as native_points, Inputs, WalkWitness},
+            stages::points::{self as native_points, Inputs},
         },
         nested::{
             self, EndoscalingStep, EndoscalingStepWitness, LinksStage, NumPoints, NumSteps,
@@ -63,9 +63,9 @@ use crate::{
 /// The native points stages' witnesses: the nested batch's commitments.
 pub(super) type NativeInputs<C> = Inputs<<C as Cycle>::NestedCurve, <C as ProfiledCycle>::Profile>;
 
-/// The native walk stage's witness: the endoscalar and the walk's outputs.
+/// The native walk's witness: the endoscalar and the walk's outputs.
 pub(super) type NativeWalk<C> =
-    WalkWitness<<C as Cycle>::NestedCurve, <C as ProfiledCycle>::Profile>;
+    native_points::Walked<<C as Cycle>::NestedCurve, <C as ProfiledCycle>::Profile>;
 
 /// The wireless emulator the fuse step's transcript runs in, which `pre_beta`
 /// is sampled from.
@@ -471,8 +471,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         C::NestedCurve,
-        native_points::WalkWitness<C::NestedCurve, C::Profile>,
+        native_points::Walked<C::NestedCurve, C::Profile>,
     )> {
+        if native_points::grouped::<C::Profile>() {
+            return self.compute_grouped_native_endoscaling(rng, beta_endo, inputs, builder);
+        }
         use native_points::{WalkStage, WalkWitness};
 
         let walk = WalkWitness::new(
@@ -515,8 +518,104 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         builder.set_native_points_walk_rx(walk_rx);
         builder.set_native_endoscaling_step_rxs(step_rxs);
+        builder.set_native_walk_rxs(Vec::new());
 
         let p_commitment = walk.p();
-        Ok((p_commitment, walk))
+        Ok((
+            p_commitment,
+            native_points::Walked {
+                stage: walk,
+                grouped: None,
+            },
+        ))
+    }
+
+    /// [`compute_native_endoscaling`](Self::compute_native_endoscaling) for
+    /// a grouped walk: walks the inputs group by group, commits the walk
+    /// stage, each group's points stage and the links stage, and traces the
+    /// steps and each group's check circuit.
+    fn compute_grouped_native_endoscaling<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        beta_endo: Uendo,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<(
+        C::NestedCurve,
+        native_points::Walked<C::NestedCurve, C::Profile>,
+    )> {
+        use native::circuits::walk;
+        use native_points::{GroupStage, GroupedWalk, LinksStage, WalkStage, WalkWitness};
+
+        let stage = WalkWitness::grouped(beta_endo);
+        let grouped = GroupedWalk::<C::NestedCurve, C::Profile>::new(beta_endo, &inputs.walk());
+        let witness = walk::Witness::<C> {
+            inputs,
+            walk: &stage,
+            grouped: &grouped,
+        };
+
+        let walk_rx = <WalkStage<C::NestedCurve, C::Profile> as StageExt<C::CircuitField, R>>::rx(
+            Blind::random(rng),
+            &stage,
+        )?;
+
+        let num_steps = native::NumSteps::<C::Profile>::len();
+        let mut step_rxs = Vec::with_capacity(num_steps);
+        // Independent work, with each step's blinding factor drawn first,
+        // in step order.
+        let blinds: Vec<Blind<C::CircuitField>> =
+            (0..num_steps).map(|_| Blind::random(rng)).collect();
+        let registry = &self.native_registry;
+        for step_rx in B::map(blinds.into_iter().enumerate(), |(step, blind)| {
+            let trace = walk::Step::<C, R>::new(step).trace(witness)?.into_output();
+            registry.assemble_with_alpha(
+                &trace,
+                native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index::<C::Profile>(),
+                blind,
+            )
+        }) {
+            step_rxs.push(step_rx?);
+        }
+
+        // The walk's own polynomials, in `RxIndex::walk_extras` order: each
+        // group's points stage, the links stage, each group's check
+        // circuit.
+        let groups = grouped.groups.len();
+        let mut walk_rxs = Vec::with_capacity(2 * groups + 1);
+        for group in &grouped.groups {
+            walk_rxs.push(<GroupStage<C::NestedCurve, C::Profile> as StageExt<
+                C::CircuitField,
+                R,
+            >>::rx(Blind::random(rng), group)?);
+        }
+        walk_rxs.push(<LinksStage<C::NestedCurve, C::Profile> as StageExt<
+            C::CircuitField,
+            R,
+        >>::rx(Blind::random(rng), &grouped.links)?);
+        for group in 0..groups {
+            let trace = walk::Check::<C, R>::new(group)
+                .trace(witness)?
+                .into_output();
+            walk_rxs.push(registry.assemble(
+                &trace,
+                native::InternalCircuitIndex::WalkCheck(group as u32).circuit_index::<C::Profile>(),
+                &mut *rng,
+            )?);
+        }
+
+        builder.set_native_points_walk_rx(walk_rx);
+        builder.set_native_endoscaling_step_rxs(step_rxs);
+        builder.set_native_walk_rxs(walk_rxs);
+
+        let p_commitment = grouped.result();
+        Ok((
+            p_commitment,
+            native_points::Walked {
+                stage,
+                grouped: Some(grouped),
+            },
+        ))
     }
 }

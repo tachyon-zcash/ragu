@@ -1641,6 +1641,15 @@ macro_rules! fuse_gates {
                 Native::BindBetaCircuit => gates(
                     &native::circuits::bind_beta::Circuit::<$C, $R, $H>::new(pasta),
                 ),
+                Native::BindEndoscalarCircuit if native::stages::points::grouped::<$P>() => {
+                    gates(&native::circuits::walk::Bind::<$C, $R>::new())
+                }
+                Native::EndoscalingStep(step) if native::stages::points::grouped::<$P>() => {
+                    gates(&native::circuits::walk::Step::<$C, $R>::new(step as usize))
+                }
+                Native::WalkCheck(group) => gates(&native::circuits::walk::Check::<$C, $R>::new(
+                    group as usize,
+                )),
                 Native::BindEndoscalarCircuit => {
                     gates(&native::circuits::bind_endoscalar::Circuit::<$C, $R>::new())
                 }
@@ -1731,10 +1740,11 @@ fn report_fuse_gates(
         .collect()
 }
 
-/// Every nested circuit of a paged profile fits the wallet rank: with the
-/// standard profile's polynomials alone, and with as many polynomials as
-/// an extension the size of the aggregator's adds, where the program's
-/// pages are several. The native circuits of such a profile are not cut
+/// Every nested circuit of a paged profile fits the wallet rank, and so
+/// does every circuit of its grouped native walk: with the standard
+/// profile's polynomials alone, and with as many polynomials as an
+/// extension the size of the aggregator's adds, where the program's pages
+/// are several. The other native circuits of a paged profile are not cut
 /// yet and are reported without a bound.
 #[test]
 fn test_paged_nested_fuse_fits_the_wallet_rank() {
@@ -1750,10 +1760,17 @@ fn test_paged_nested_fuse_fits_the_wallet_rank() {
 
     let budget = WalletRank::blind_gate();
     let mut over = alloc::vec::Vec::new();
+    // Of the native circuits, the grouped walk's are cut.
+    let walk = |(name, _): &(alloc::string::String, usize)| {
+        ["EndoscalingStep", "WalkCheck", "BindEndoscalar"]
+            .iter()
+            .any(|circuit| name.starts_with(circuit))
+    };
     {
         type C = Profiled<Pasta, Grouped>;
         let (native, nested) = fuse_gates!(C, WalletRank, 4, Grouped);
-        report_fuse_gates("native, standard size", &native, budget);
+        let native_over = report_fuse_gates("native, standard size", &native, budget);
+        over.extend(native_over.into_iter().filter(walk));
         over.extend(report_fuse_gates("nested, standard size", &nested, budget));
     }
     // The program's steps are pinned by the profile, and the pin is part of
@@ -1772,7 +1789,8 @@ fn test_paged_nested_fuse_fits_the_wallet_rank() {
                     shape.native_rx, shape.nested_rx, $pin
                 );
                 let (native, nested) = fuse_gates!(C, WalletRank, 4, P);
-                report_fuse_gates("native, aggregator size", &native, budget);
+                let native_over = report_fuse_gates("native, aggregator size", &native, budget);
+                over.extend(native_over.into_iter().filter(walk));
                 over.extend(report_fuse_gates("nested, aggregator size", &nested, budget));
             }
         })*};

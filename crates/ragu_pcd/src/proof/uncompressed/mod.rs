@@ -190,6 +190,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_extension_circuit_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The rx polynomials of the stages of the profile's native extension.
     pub(crate) native_extension_stage_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    /// A grouped native walk's polynomials: each group's points stage, the
+    /// links stage, each group's check circuit.
+    pub(crate) native_walk_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) native_points_binding_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_registry_wx_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -319,6 +322,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_endoscaling_step_commitments: Vec<Cached<C::HostCurve>>,
     pub(crate) native_extension_circuit_commitments: Vec<Cached<C::HostCurve>>,
     pub(crate) native_extension_stage_commitments: Vec<Cached<C::HostCurve>>,
+    pub(crate) native_walk_commitments: Vec<Cached<C::HostCurve>>,
     pub(crate) native_points_binding_commitment: Cached<C::HostCurve>,
     pub(crate) native_points_preamble_commitment: Cached<C::HostCurve>,
     pub(crate) native_points_registry_wx_commitment: Cached<C::HostCurve>,
@@ -420,6 +424,8 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.native_extension_circuit_commitments.len() == native_extension.circuits.len()
             && self.native_extension_stage_rxs.len() == native_extension.stages
             && self.native_extension_stage_commitments.len() == native_extension.stages
+            && self.native_walk_rxs.len() == native::NumWalkRx::<C::Profile>::len()
+            && self.native_walk_commitments.len() == native::NumWalkRx::<C::Profile>::len()
             && self.nested_endoscaling_step_rxs.len() == nested_steps
             && self.nested_endoscaling_step_commitments.len() == nested_steps
             && self.nested_extension_circuit_rxs.len() == nested_extension.circuits.len()
@@ -432,6 +438,30 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.nested_step_rxs.len() == nested::NumProgramSteps::<C::Profile>::len()
             && self.nested_step_commitments.len() == nested::NumProgramSteps::<C::Profile>::len()
             && self.step_binding.len() == native::online::StepBindingLen::<C::Profile>::len()
+    }
+}
+
+impl<C: Cycle, R: Rank> Proof<C, R> {
+    /// The position of `idx` among a grouped native walk's polynomials:
+    /// each group's points stage, the links stage, each group's check
+    /// circuit, as [`RxIndex::walk_extras`] orders them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is not a polynomial of the proof's grouped walk.
+    fn native_walk_position(&self, idx: RxIndex) -> usize {
+        let groups = self.native_walk_rxs.len() / 2;
+        let position = match idx {
+            RxIndex::WalkGroup(group) => group as usize,
+            RxIndex::WalkLinks => groups,
+            RxIndex::WalkCheck(group) => groups + 1 + group as usize,
+            _ => panic!("{idx:?} is not a polynomial of a grouped walk"),
+        };
+        assert!(
+            position < self.native_walk_rxs.len(),
+            "{idx:?} is outside the proof's walk"
+        );
+        position
     }
 }
 
@@ -461,6 +491,9 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             PointsAb => &self.native_points_ab_rx,
             PointsF => &self.native_points_f_rx,
             PointsWalk => &self.native_points_walk_rx,
+            WalkGroup(_) | WalkLinks | WalkCheck(_) => {
+                &self.native_walk_rxs[self.native_walk_position(idx)]
+            }
         }
     }
 }
@@ -779,6 +812,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             PointsAb => self.native_points_ab_commitment.0,
             PointsF => self.native_points_f_commitment.0,
             PointsWalk => self.native_points_walk_commitment.0,
+            WalkGroup(_) | WalkLinks | WalkCheck(_) => {
+                self.native_walk_commitments[self.native_walk_position(idx)].0
+            }
         }
     }
 
@@ -916,6 +952,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 &mut self.native_extension_stage_rxs[k as usize],
                 &mut self.native_extension_stage_commitments[k as usize],
             ),
+            RxIndex::WalkGroup(_) | RxIndex::WalkLinks | RxIndex::WalkCheck(_) => {
+                let position = self.native_walk_position(index);
+                (
+                    &mut self.native_walk_rxs[position],
+                    &mut self.native_walk_commitments[position],
+                )
+            }
             _ => panic!("{index:?} is not an extension polynomial"),
         };
         rx.scale(C::CircuitField::ONE + C::CircuitField::ONE);

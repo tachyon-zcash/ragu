@@ -243,6 +243,11 @@ impl NativeRx {
             I::PointsAb => Self::PointsAb,
             I::PointsF => Self::PointsF,
             I::PointsWalk => Self::PointsWalk,
+            // The vocabulary is the standard profile's, whose walk is not
+            // grouped.
+            I::WalkGroup(_) | I::WalkLinks | I::WalkCheck(_) => {
+                panic!("the standard profile's walk is not grouped")
+            }
         }
     }
 }

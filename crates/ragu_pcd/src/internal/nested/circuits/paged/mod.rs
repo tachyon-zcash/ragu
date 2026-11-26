@@ -118,7 +118,7 @@ pub const FOLD_GROUPS: usize = 36;
 /// gates an opening, and a third for an opening whose denominator no
 /// other opening of the page shares, as every opening at an internal
 /// circuit's $\omega^j$ is.
-pub const QUOTIENTS: usize = 235;
+pub const QUOTIENTS: usize = 215;
 
 /// The evaluations a page of [`Step::Evaluations`] folds into $v_n$, a
 /// gate each.

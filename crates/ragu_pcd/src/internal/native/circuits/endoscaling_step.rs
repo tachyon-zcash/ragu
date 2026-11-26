@@ -49,7 +49,7 @@ use ragu_primitives::{
 
 use super::super::stages::points::{
     AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, PreambleStage, RegistryWxStage,
-    WalkInputs, WalkStage, WalkWitness,
+    WalkInputs, WalkInterstitials, WalkStage, WalkWitness,
 };
 use crate::{
     internal::paging::{self, PointHorner, Walk as _},
@@ -60,7 +60,7 @@ use crate::{
 struct Loaded<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     unit: PointHorner<'a, 'dr, D, C::NestedCurve>,
     inputs: WalkInputs<'a, 'dr, D, C::NestedCurve, C::Profile>,
-    interstitials: &'a FixedVec<Point<'dr, D, C::NestedCurve>, NumSteps<C::Profile>>,
+    interstitials: &'a FixedVec<Point<'dr, D, C::NestedCurve>, WalkInterstitials<C::Profile>>,
 }
 
 impl<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> paging::Walk<'dr, D>

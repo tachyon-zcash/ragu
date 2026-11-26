@@ -1217,6 +1217,7 @@ mod index_positions {
     fn arithmetic_positions_match_canonical_lists() {
         check::<Standard>();
         check::<crate::profile::testing::Wider>();
+        check::<crate::profile::testing::Grouped>();
         check::<crate::profile::Aggregator<4>>();
     }
 }

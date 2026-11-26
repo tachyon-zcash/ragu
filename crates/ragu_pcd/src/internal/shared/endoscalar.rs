@@ -544,25 +544,38 @@ where
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
         let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points))?;
 
-        // The step is one page of its group's walk: from the group's entry
-        // point or the previous interstitial, Horner's rule over the step's
-        // inputs, held to the step's own interstitial. With only the
-        // initial point, the page applies nothing and holds it to the
-        // output.
-        let grouping = grouping::<N, E, Q>();
-        let (group, page) = grouping.locate(self.step);
-        paging::page(
-            dr,
-            &Loaded {
-                unit: PointHorner::new(&endoscalar),
-                points: &points,
-                num_inputs: grouping.inputs_of(group).len(),
-            },
-            page,
-        )?;
+        step_page(dr, &endoscalar, &points, self.step)?;
 
         Ok(WithAux::new((), D::unit()))
     }
+}
+
+/// Runs step `step` of a walk over the points stage of the step's group:
+/// one page of the group's walk. From the group's entry point or the
+/// previous interstitial, Horner's rule under `endoscalar` over the step's
+/// inputs, held to the step's own interstitial. With only the initial
+/// point, the page applies nothing and holds it to the output.
+///
+/// `points` is the points stage of the group that holds `step`
+/// ([`grouping`]). The caller loads it and the endoscalar, and their
+/// contracts are another circuit's.
+pub fn step_page<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len, Q: Len>(
+    dr: &mut D,
+    endoscalar: &HoistedEndoscalar<'dr, D>,
+    points: &Points<'dr, D, C, N, E, Q>,
+    step: usize,
+) -> Result<()> {
+    let grouping = grouping::<N, E, Q>();
+    let (group, page) = grouping.locate(step);
+    paging::page(
+        dr,
+        &Loaded {
+            unit: PointHorner::new(endoscalar),
+            points,
+            num_inputs: grouping.inputs_of(group).len(),
+        },
+        page,
+    )
 }
 
 #[cfg(test)]
