@@ -205,6 +205,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let extension = crate::profile::native_extension::<C::Profile>();
         builder.set_native_extension_circuit_rxs(vec![ones_host.clone(); extension.circuits.len()]);
         builder.set_native_extension_stage_rxs(vec![ones_host.clone(); extension.stages]);
+        // A native program's memory stage and step circuits.
+        builder.set_native_program_rxs(vec![
+            ones_host.clone();
+            native::NumProgramRx::<C::Profile>::len()
+        ]);
 
         // Nested accumulator: a trivial claim (all-ones traces), so that a
         // dummy child contributes a well-formed raw claim to its parent's
@@ -492,6 +497,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 endoscaling_steps: FixedVec::from_fn(|_| host_commitment),
                 points_walk: host_commitment,
                 walk: FixedVec::from_fn(|_| host_commitment),
+                program: FixedVec::from_fn(|_| host_commitment),
                 stashed_preamble: host_commitment,
                 stashed_inner_error: host_commitment,
                 stashed_outer_error: host_commitment,

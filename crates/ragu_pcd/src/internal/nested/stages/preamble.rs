@@ -86,6 +86,9 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     /// Commitments from the polynomials of the child's grouped native walk,
     /// in [`RxIndex::walk_extras`] order.
     pub walk: FixedVec<C, native::NumWalkRx<P>>,
+    /// Commitments from the polynomials of the child's native program, in
+    /// [`RxIndex::program_extras`] order.
+    pub program: FixedVec<C, native::NumProgramRx<P>>,
 
     /// Stashed commitment from the child's preamble bridge stage.
     pub stashed_preamble: C,
@@ -180,6 +183,10 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             points_walk: proof.native_rx_commitment(RxIndex::PointsWalk),
             walk: {
                 let extras = RxIndex::walk_extras::<P>();
+                FixedVec::from_fn(|i| proof.native_rx_commitment(extras[i]))
+            },
+            program: {
+                let extras = RxIndex::program_extras::<P>();
                 FixedVec::from_fn(|i| proof.native_rx_commitment(extras[i]))
             },
             stashed_preamble: proof.native_rx_commitment(RxIndex::Preamble),
@@ -286,6 +293,8 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     pub points_walk: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub walk: FixedVec<Point<'dr, D, C>, native::NumWalkRx<P>>,
+    #[ragu(gadget)]
+    pub program: FixedVec<Point<'dr, D, C>, native::NumProgramRx<P>>,
 
     /// Stashed commitment from the child's preamble bridge stage.
     #[ragu(gadget)]
@@ -440,6 +449,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
             PointsF => &self.stashed_points_f,
             PointsWalk => &self.points_walk,
             WalkGroup(_) | WalkLinks | WalkCheck(_) => &self.walk[idx.walk_position::<P>()],
+            Memory => &self.program[0],
+            Step(step) => &self.program[1 + step as usize],
         }
     }
 }
@@ -470,6 +481,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
             })?,
             points_walk: Point::alloc(dr, witness.as_ref().map(|w| w.points_walk))?,
             walk: FixedVec::try_from_fn(|i| Point::alloc(dr, witness.as_ref().map(|w| w.walk[i])))?,
+            program: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.program[i]))
+            })?,
             stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
             stashed_inner_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_inner_error))?,
             stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,

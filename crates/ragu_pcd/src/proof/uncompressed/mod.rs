@@ -193,6 +193,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// A grouped native walk's polynomials: each group's points stage, the
     /// links stage, each group's check circuit.
     pub(crate) native_walk_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    /// A native program's polynomials: the memory stage's, then each step
+    /// circuit's.
+    pub(crate) native_program_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) native_points_binding_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_registry_wx_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -323,6 +326,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_extension_circuit_commitments: Vec<Cached<C::HostCurve>>,
     pub(crate) native_extension_stage_commitments: Vec<Cached<C::HostCurve>>,
     pub(crate) native_walk_commitments: Vec<Cached<C::HostCurve>>,
+    pub(crate) native_program_commitments: Vec<Cached<C::HostCurve>>,
     pub(crate) native_points_binding_commitment: Cached<C::HostCurve>,
     pub(crate) native_points_preamble_commitment: Cached<C::HostCurve>,
     pub(crate) native_points_registry_wx_commitment: Cached<C::HostCurve>,
@@ -426,6 +430,8 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.native_extension_stage_commitments.len() == native_extension.stages
             && self.native_walk_rxs.len() == native::NumWalkRx::<C::Profile>::len()
             && self.native_walk_commitments.len() == native::NumWalkRx::<C::Profile>::len()
+            && self.native_program_rxs.len() == native::NumProgramRx::<C::Profile>::len()
+            && self.native_program_commitments.len() == native::NumProgramRx::<C::Profile>::len()
             && self.nested_endoscaling_step_rxs.len() == nested_steps
             && self.nested_endoscaling_step_commitments.len() == nested_steps
             && self.nested_extension_circuit_rxs.len() == nested_extension.circuits.len()
@@ -494,6 +500,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             WalkGroup(_) | WalkLinks | WalkCheck(_) => {
                 &self.native_walk_rxs[self.native_walk_position(idx)]
             }
+            Memory => &self.native_program_rxs[0],
+            Step(step) => &self.native_program_rxs[1 + step as usize],
         }
     }
 }
@@ -815,6 +823,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             WalkGroup(_) | WalkLinks | WalkCheck(_) => {
                 self.native_walk_commitments[self.native_walk_position(idx)].0
             }
+            Memory => self.native_program_commitments[0].0,
+            Step(step) => self.native_program_commitments[1 + step as usize].0,
         }
     }
 
@@ -957,6 +967,16 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 (
                     &mut self.native_walk_rxs[position],
                     &mut self.native_walk_commitments[position],
+                )
+            }
+            RxIndex::Memory | RxIndex::Step(_) => {
+                let position = match index {
+                    RxIndex::Step(step) => 1 + step as usize,
+                    _ => 0,
+                };
+                (
+                    &mut self.native_program_rxs[position],
+                    &mut self.native_program_commitments[position],
                 )
             }
             _ => panic!("{index:?} is not an extension polynomial"),

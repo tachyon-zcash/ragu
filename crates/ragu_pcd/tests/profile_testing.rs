@@ -92,6 +92,7 @@ impl Profile for Grouped {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const NATIVE_WALK_GROUP: usize = 8;
+    const NATIVE_STEPS: usize = 5;
     const NESTED_WALK_GROUP: usize = 8;
     const NESTED_STEPS: usize = 8;
 
@@ -104,22 +105,29 @@ impl Profile for Grouped {
 }
 
 /// `NATIVE` native and `NESTED` nested [`Trivial`] circuits and no stage,
-/// in a paged profile whose nested walk is in groups of thirty-two steps
-/// and whose nested program pins `STEPS` steps: a profile with as many
-/// polynomials as an extension the size of the aggregator's adds, for the
-/// tests that measure the nested program's steps at that size.
+/// in a paged profile whose walks are in groups of sixteen and thirty-two
+/// steps and whose native and nested programs pin `NATIVE_STEPS` and
+/// `NESTED_STEPS` steps: a profile with as many polynomials as an extension
+/// the size of the aggregator's adds, for the tests that measure the
+/// programs' steps at that size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Sized<const NATIVE: usize, const NESTED: usize, const STEPS: usize>;
+pub(crate) struct Sized<
+    const NATIVE: usize,
+    const NESTED: usize,
+    const NATIVE_STEPS: usize,
+    const NESTED_STEPS: usize,
+>;
 
-impl<const NATIVE: usize, const NESTED: usize, const STEPS: usize> Profile
-    for Sized<NATIVE, NESTED, STEPS>
+impl<const NATIVE: usize, const NESTED: usize, const NATIVE_STEPS: usize, const NESTED_STEPS: usize>
+    Profile for Sized<NATIVE, NESTED, NATIVE_STEPS, NESTED_STEPS>
 {
     const NAME: &'static str = "sized";
     const NATIVE_EXTENSION: usize = NATIVE;
     const NESTED_EXTENSION: usize = NESTED;
     const NATIVE_WALK_GROUP: usize = 16;
+    const NATIVE_STEPS: usize = NATIVE_STEPS;
     const NESTED_WALK_GROUP: usize = 32;
-    const NESTED_STEPS: usize = STEPS;
+    const NESTED_STEPS: usize = NESTED_STEPS;
 
     type Context<'params, Base, R, B>
         = ()

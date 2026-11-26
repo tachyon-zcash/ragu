@@ -108,7 +108,7 @@ pub mod walk;
 /// A group of layer one takes about seventeen gates. The last page also
 /// folds layer two, which takes about five gates for each group of the
 /// grid.
-pub const ERROR_GROUPS: usize = 60;
+pub const ERROR_GROUPS: usize = 66;
 
 /// The groups of the claims' grid a page of [`Step::Fold`] folds, at about
 /// twenty gates a group beside the two bases the page builds.
@@ -122,7 +122,7 @@ pub const QUOTIENTS: usize = 215;
 
 /// The evaluations a page of [`Step::Evaluations`] folds into $v_n$, a
 /// gate each.
-pub const EVALUATIONS: usize = 650;
+pub const EVALUATIONS: usize = 620;
 
 /// One step of the program: one circuit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

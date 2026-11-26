@@ -157,6 +157,63 @@ pub const fn num_walk_extras(steps: usize, per_group: usize) -> usize {
     }
 }
 
+/// The rx polynomials a native program of `steps` step circuits adds: the
+/// steps' and the memory stage's. None for a profile without a program.
+pub const fn num_program_extras(steps: usize) -> usize {
+    if steps == 0 { 0 } else { steps + 1 }
+}
+
+/// Whether profile `P` checks its native batch evaluation with a program
+/// of step circuits ([`circuits::paged`]) in the place of one compute-v
+/// circuit: a profile that pins the program's steps
+/// ([`Profile::NATIVE_STEPS`]).
+pub fn paged<P: Profile>() -> bool {
+    P::NATIVE_STEPS != 0
+}
+
+/// The masks a native program adds: the memory stage's mask and the final
+/// mask of the steps whose last stage is the `query` stage.
+pub const NUM_PROGRAM_MASKS: usize = 2;
+
+/// Length type for the step circuits of the native program of profile `P`
+/// ([`Profile::NATIVE_STEPS`]).
+pub struct NumProgramSteps<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumProgramSteps<P> {
+    fn len() -> usize {
+        P::NATIVE_STEPS
+    }
+}
+
+/// Length type for the rx polynomials the native program of profile `P`
+/// adds ([`num_program_extras`]).
+pub struct NumProgramRx<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumProgramRx<P> {
+    fn len() -> usize {
+        num_program_extras(P::NATIVE_STEPS)
+    }
+}
+
+/// Length type for the masks the native program of profile `P` adds.
+pub struct NumProgramMasks<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumProgramMasks<P> {
+    fn len() -> usize {
+        if paged::<P>() { NUM_PROGRAM_MASKS } else { 0 }
+    }
+}
+
+/// The memory stage of the native program, after the `preamble` stage and
+/// before the `query` and `outer_error` stages. It holds nothing in a
+/// profile without a program, where those stages follow the `preamble`
+/// stage directly.
+pub type MemoryStage<C, R, const HEADER_SIZE: usize> = crate::internal::program::MemoryStage<
+    circuits::paged::Cells<<C as ProfiledCycle>::Profile>,
+    <C as ragu_core::Cycle>::NestedCurve,
+    stages::preamble::Stage<C, R, HEADER_SIZE>,
+>;
+
 /// The masks a grouped walk adds: the group points stage's and the links
 /// stage's masks, and the final mask of the circuits that end on the last
 /// points stage the transcript commits.
@@ -210,9 +267,13 @@ pub const FOLD_GROUP_SIZE: usize = 8;
 /// circuit's claim per child, and each mask's claim across both.
 pub fn num_claims<P: Profile>() -> usize {
     let extension = crate::profile::extension_lengths::<P>(false);
-    let circuits =
-        6 + NUM_BINDERS + NumSteps::<P>::len() + extension.circuits + NumWalkGroups::<P>::len();
-    let masks = 18 + extension.masks + NumWalkMasks::<P>::len();
+    let circuits = 6
+        + NUM_BINDERS
+        + NumSteps::<P>::len()
+        + extension.circuits
+        + NumWalkGroups::<P>::len()
+        + P::NATIVE_STEPS;
+    let masks = 18 + extension.masks + NumWalkMasks::<P>::len() + NumProgramMasks::<P>::len();
     2 + 1 + 2 * circuits + masks
 }
 
@@ -273,6 +334,7 @@ pub mod circuits {
     pub mod endoscaling_step;
     pub mod hashes_1;
     pub mod hashes_2;
+    pub mod paged;
     pub mod walk;
 }
 
@@ -345,9 +407,22 @@ pub enum InternalCircuitIndex {
     /// the last points stage the transcript commits: the check circuits
     /// and `bind_endoscalar`.
     WalkCheckFinalStaged,
+    /// A step circuit of the profile's native program, at its position in
+    /// [`schedule`](circuits::paged::schedule) after the program's first
+    /// step, which the circuit in compute-v's place runs.
+    Step(u32),
+    /// The native memory stage's mask.
+    MemoryStage,
+    /// Final staged mask of the native program's steps whose last stage is
+    /// the `query` stage.
+    QueryFinalStaged,
 }
 
 impl InternalCircuitIndex {
+    /// The masks a native program adds, in registration order.
+    pub const PROGRAM_MASKS: [Self; NUM_PROGRAM_MASKS] =
+        [Self::MemoryStage, Self::QueryFinalStaged];
+
     /// The masks a grouped walk adds, in registration order.
     pub const WALK_MASKS: [Self; NUM_WALK_MASKS] = [
         Self::WalkGroupStage,
@@ -435,6 +510,8 @@ impl InternalCircuitIndex {
             + crate::profile::native_extension::<P>().internal()
             + NumWalkGroups::<P>::len()
             + NumWalkMasks::<P>::len()
+            + P::NATIVE_STEPS
+            + NumProgramMasks::<P>::len()
     }
 
     /// All variants in canonical iteration order, for profile `P`:
@@ -457,10 +534,15 @@ impl InternalCircuitIndex {
             .expect("the first mask");
         all.splice(
             first_mask..first_mask,
-            (0..checks as u32).map(Self::WalkCheck),
+            (0..checks as u32)
+                .map(Self::WalkCheck)
+                .chain((0..P::NATIVE_STEPS as u32).map(Self::Step)),
         );
         if checks != 0 {
             all.extend(Self::WALK_MASKS);
+        }
+        if paged::<P>() {
+            all.extend(Self::PROGRAM_MASKS);
         }
         assert_eq!(all.len(), Self::num::<P>());
         all
@@ -492,7 +574,7 @@ impl InternalCircuitIndex {
         let extension = crate::profile::extension_lengths::<P>(false);
         let endoscaling = 6 + NUM_BINDERS;
         let checks = NumWalkGroups::<P>::len();
-        let mask = endoscaling + steps + extension.circuits + checks;
+        let mask = endoscaling + steps + extension.circuits + checks + P::NATIVE_STEPS;
         let pos = match self {
             Hashes1Circuit => 0,
             Hashes2Circuit => 1,
@@ -535,13 +617,27 @@ impl InternalCircuitIndex {
                     .expect("a grouped walk's mask");
                 mask + 18 + extension.masks + position
             }
+            Step(i) => {
+                endoscaling
+                    + steps
+                    + extension.circuits
+                    + checks
+                    + super::checked_index(i, P::NATIVE_STEPS)
+            }
+            MemoryStage | QueryFinalStaged => {
+                assert!(paged::<P>(), "index is outside the profile");
+                let position = Self::PROGRAM_MASKS
+                    .iter()
+                    .position(|&mask| mask == self)
+                    .expect("a native program's mask");
+                mask + 18 + extension.masks + NumWalkMasks::<P>::len() + position
+            }
         };
         CircuitIndex::new(pos)
     }
 
     /// Whether `self` is registered as a mask, a stage mask or a final
     /// mask, rather than as a circuit.
-    #[cfg(test)]
     pub fn is_mask(self) -> bool {
         use InternalCircuitIndex::*;
         match self {
@@ -554,7 +650,8 @@ impl InternalCircuitIndex {
             | BindEndoscalarCircuit
             | EndoscalingStep(_)
             | ExtensionCircuit(_)
-            | WalkCheck(_) => false,
+            | WalkCheck(_)
+            | Step(_) => false,
             PreambleStage
             | InnerErrorStage
             | OuterErrorStage
@@ -576,7 +673,9 @@ impl InternalCircuitIndex {
             | ExtensionMask(_)
             | WalkGroupStage
             | WalkLinksStage
-            | WalkCheckFinalStaged => true,
+            | WalkCheckFinalStaged
+            | MemoryStage
+            | QueryFinalStaged => true,
         }
     }
 }
@@ -604,6 +703,8 @@ pub struct InternalCircuitValues<T, P: Profile> {
     /// [`InternalCircuitIndex::all`] order, which a reader of the gadget's
     /// wires relies on.
     pub walk_checks: FixedVec<T, NumWalkGroups<P>>,
+    /// One per step circuit of the native program.
+    pub steps: FixedVec<T, NumProgramSteps<P>>,
     pub preamble_stage: T,
     pub inner_error_stage: T,
     pub outer_error_stage: T,
@@ -627,6 +728,9 @@ pub struct InternalCircuitValues<T, P: Profile> {
     /// One per mask of a grouped walk, in
     /// [`InternalCircuitIndex::WALK_MASKS`] order.
     pub walk_masks: FixedVec<T, NumWalkMasks<P>>,
+    /// One per mask of the native program, in
+    /// [`InternalCircuitIndex::PROGRAM_MASKS`] order.
+    pub program_masks: FixedVec<T, NumProgramMasks<P>>,
 }
 
 impl<T, P: Profile> InternalCircuitValues<T, P> {
@@ -686,6 +790,14 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
                     .expect("a grouped walk's mask");
                 &self.walk_masks[position]
             }
+            Step(step) => &self.steps[step as usize],
+            MemoryStage | QueryFinalStaged => {
+                let position = InternalCircuitIndex::PROGRAM_MASKS
+                    .iter()
+                    .position(|&mask| mask == id)
+                    .expect("a native program's mask");
+                &self.program_masks[position]
+            }
         }
     }
 
@@ -723,6 +835,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             endoscaling_step_circuits: try_fixed_vec(|step| f(EndoscalingStep(step as u32)))?,
             extension_circuits: try_fixed_vec(|k| f(ExtensionCircuit(k as u32)))?,
             walk_checks: try_fixed_vec(|group| f(WalkCheck(group as u32)))?,
+            steps: try_fixed_vec(|step| f(Step(step as u32)))?,
             preamble_stage: f(PreambleStage)?,
             inner_error_stage: f(InnerErrorStage)?,
             outer_error_stage: f(OuterErrorStage)?,
@@ -743,6 +856,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             application_final_staged: f(ApplicationFinalStaged)?,
             extension_masks: try_fixed_vec(|j| f(ExtensionMask(j as u32)))?,
             walk_masks: try_fixed_vec(|i| f(InternalCircuitIndex::WALK_MASKS[i]))?,
+            program_masks: try_fixed_vec(|i| f(InternalCircuitIndex::PROGRAM_MASKS[i]))?,
         })
     }
 }
@@ -796,6 +910,11 @@ pub enum RxIndex {
     WalkLinks,
     /// The rx polynomial of a group's check circuit, for a grouped walk.
     WalkCheck(u32),
+    /// The native memory stage's rx polynomial, for a profile with a
+    /// native program.
+    Memory,
+    /// The rx polynomial of a step circuit of the native program.
+    Step(u32),
 }
 
 impl RxIndex {
@@ -812,6 +931,35 @@ impl RxIndex {
             .chain([Self::WalkLinks])
             .chain((0..groups).map(Self::WalkCheck))
             .collect()
+    }
+
+    /// The rx polynomials a native program adds in profile `P`, in order:
+    /// the memory stage, then each step circuit. None for a profile
+    /// without a program.
+    pub fn program_extras<P: Profile>() -> Vec<Self> {
+        if !paged::<P>() {
+            return Vec::new();
+        }
+        core::iter::once(Self::Memory)
+            .chain((0..P::NATIVE_STEPS as u32).map(Self::Step))
+            .collect()
+    }
+
+    /// The rx polynomials of the step circuits of the native program of
+    /// profile `P` whose last stage is `branch`'s, in schedule order: the
+    /// circuits one final mask covers.
+    pub fn steps_on<P: Profile>(branch: circuits::paged::Branch) -> impl Iterator<Item = Self> {
+        let schedule = if paged::<P>() {
+            circuits::paged::schedule::<P>()
+        } else {
+            Vec::new()
+        };
+        schedule
+            .into_iter()
+            .enumerate()
+            .skip(1)
+            .filter(move |(_, step)| step.branch() == branch)
+            .map(|(position, _)| Self::Step(position as u32 - 1))
     }
 
     /// The position of `self` among [`walk_extras`](Self::walk_extras).
@@ -896,6 +1044,7 @@ impl RxIndex {
             extension.stages,
         );
         all.extend(Self::walk_extras::<P>());
+        all.extend(Self::program_extras::<P>());
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
@@ -965,6 +1114,20 @@ impl RxIndex {
                 let extension = crate::profile::extension_lengths::<P>(false);
                 stages + 11 + extension.circuits + extension.stages + self.walk_position::<P>()
             }
+            Memory | Step(_) => {
+                let extension = crate::profile::extension_lengths::<P>(false);
+                let position = match self {
+                    Step(step) => 1 + super::checked_index(step, P::NATIVE_STEPS),
+                    _ => 0,
+                };
+                assert!(paged::<P>(), "index is outside the profile");
+                stages
+                    + 11
+                    + extension.circuits
+                    + extension.stages
+                    + NumWalkRx::<P>::len()
+                    + position
+            }
         }
     }
 }
@@ -1002,6 +1165,9 @@ pub struct RxValues<T, P: Profile> {
     pub extension_stages: FixedVec<T, NumExtensionStages<P>>,
     /// A grouped walk's polynomials, in [`RxIndex::walk_extras`] order.
     pub walk: FixedVec<T, NumWalkRx<P>>,
+    /// A native program's polynomials, in [`RxIndex::program_extras`]
+    /// order.
+    pub program: FixedVec<T, NumProgramRx<P>>,
 }
 
 impl<T, P: Profile> RxValues<T, P> {
@@ -1046,6 +1212,8 @@ impl<T, P: Profile> RxValues<T, P> {
             ExtensionCircuit(k) => &self.extension_circuits[k as usize],
             ExtensionStage(k) => &self.extension_stages[k as usize],
             WalkGroup(_) | WalkLinks | WalkCheck(_) => &self.walk[id.walk_position::<P>()],
+            Memory => &self.program[0],
+            Step(step) => &self.program[1 + step as usize],
         }
     }
 
@@ -1097,6 +1265,10 @@ impl<T, P: Profile> RxValues<T, P> {
                 let extras = RxIndex::walk_extras::<P>();
                 try_fixed_vec(|i| f(extras[i]))?
             },
+            program: {
+                let extras = RxIndex::program_extras::<P>();
+                try_fixed_vec(|i| f(extras[i]))?
+            },
         })
     }
 }
@@ -1130,6 +1302,20 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     source_domain: Option<u32>,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     C::Profile::check()?;
+    // The profile pins its native program's step circuits; the schedule its
+    // sizes give must be the one the pin laid the polynomials out for.
+    if paged::<C::Profile>() {
+        let steps = circuits::paged::num_step_circuits::<C::Profile>();
+        if steps != C::Profile::NATIVE_STEPS {
+            return Err(ragu_core::Error::Initialization(
+                alloc::format!(
+                    "the profile pins {} steps of its native program, whose schedule has {steps}",
+                    C::Profile::NATIVE_STEPS
+                )
+                .into(),
+            ));
+        }
+    }
     let initial_internal_circuits = registry.num_internal_circuits();
     // The application stage follows the SYSTEM gate in every step circuit.
     let stage_gates = ragu_circuits::staging::stage_gates(stage_size);
@@ -1275,6 +1461,39 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             EndoscalingStep(step) => registry.register_internal_circuit(
                 circuits::endoscaling_step::Circuit::<C, R>::new(step as usize),
             )?,
+            ComputeVCircuit if paged::<C::Profile>() => {
+                registry.register_internal_circuit(circuits::paged::export::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                >::new())?
+            }
+            // A step circuit of the native program: the schedule's step
+            // after the first, which the export circuit runs.
+            Step(step) => {
+                use circuits::paged::{Branch, OnEval, OnQuery, schedule};
+                let position = step as usize + 1;
+                match schedule::<C::Profile>()[position].branch() {
+                    Branch::Query => {
+                        registry.register_internal_circuit(OnQuery::<C, R, HEADER_SIZE>::new(
+                            position,
+                        ))?
+                    }
+                    Branch::Eval => {
+                        registry
+                            .register_internal_circuit(OnEval::<C, R, HEADER_SIZE>::new(position))?
+                    }
+                }
+            }
+            MemoryStage => {
+                registry.register_mask(<self::MemoryStage<C, R, HEADER_SIZE> as StageExt<
+                    C::CircuitField,
+                    R,
+                >>::stage_mask()?)
+            }
+            QueryFinalStaged => {
+                registry.register_mask(stages::query::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+            }
             WalkCheck(group) => registry
                 .register_internal_circuit(circuits::walk::Check::<C, R>::new(group as usize))?,
             WalkGroupStage => registry.register_mask(<stages::points::GroupStage<

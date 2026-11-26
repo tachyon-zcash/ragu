@@ -157,6 +157,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
             .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
             )?;
         let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let builder =
+            builder.skip_stage::<crate::internal::native::MemoryStage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
             builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();

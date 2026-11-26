@@ -240,6 +240,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters
             )?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        // The memory stage of a profile with a native program; it holds
+        // nothing otherwise.
+        let builder =
+            builder.skip_stage::<crate::internal::native::MemoryStage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
             builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();

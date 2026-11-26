@@ -159,7 +159,80 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             rng,
         )?;
 
-        let (compute_v_trace, unified) =
+        let (compute_v_trace, unified) = if native::paged::<C::Profile>() {
+            use native::circuits::paged;
+
+            // The program's memory, from a run of its steps over the stage
+            // witnesses, then the memory stage and each step's circuit.
+            let challenges = paged::Challenges {
+                w: builder.w(),
+                y: builder.y(),
+                z: builder.z(),
+                x: builder.x(),
+                mu: builder.mu(),
+                mu_prime: builder.mu_prime(),
+                alpha: builder.alpha(),
+                u: builder.u(),
+                beta: builder.pre_beta(),
+            };
+            let blank = crate::internal::program::Values::blank::<paged::Cells<C::Profile>>(
+                <C::NestedCurve as udon::curve::Affine>::generator(),
+            );
+            let memory = paged::memory::<C, R, HEADER_SIZE>(
+                &paged::Witness {
+                    online_fold: &online_fold,
+                    preamble_witness,
+                    query_witness,
+                    eval_witness,
+                    memory: &blank,
+                },
+                &challenges,
+            )?;
+            let witness = paged::Witness {
+                online_fold: &online_fold,
+                preamble_witness,
+                query_witness,
+                eval_witness,
+                memory: &memory,
+            };
+            let mut program_rxs =
+                alloc::vec![<native::MemoryStage<C, R, HEADER_SIZE> as StageExt<
+                    C::CircuitField,
+                    R,
+                >>::rx(Blind::random(rng), &memory)?];
+            for (position, step) in paged::schedule::<C::Profile>()
+                .into_iter()
+                .enumerate()
+                .skip(1)
+            {
+                let trace = match step.branch() {
+                    paged::Branch::Query => paged::OnQuery::<C, R, HEADER_SIZE>::new(position)
+                        .trace(witness)?
+                        .into_output(),
+                    paged::Branch::Eval => paged::OnEval::<C, R, HEADER_SIZE>::new(position)
+                        .trace(witness)?
+                        .into_output(),
+                };
+                program_rxs.push(
+                    self.native_registry.assemble(
+                        &trace,
+                        native::InternalCircuitIndex::Step(position as u32 - 1)
+                            .circuit_index::<C::Profile>(),
+                        &mut *rng,
+                    )?,
+                );
+            }
+            builder.set_native_program_rxs(program_rxs);
+
+            paged::export::Circuit::<C, R, HEADER_SIZE>::new()
+                .trace(paged::export::ExportWitness {
+                    unified,
+                    binding: &native_points.binding,
+                    stages: witness,
+                })?
+                .into_parts()
+        } else {
+            builder.set_native_program_rxs(Vec::new());
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
                 .trace(native::circuits::compute_v::Witness {
                     online_fold,
@@ -169,7 +242,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     query_witness,
                     eval_witness,
                 })?
-                .into_parts();
+                .into_parts()
+        };
         let compute_v_rx = self.native_registry.assemble(
             &compute_v_trace,
             native::InternalCircuitIndex::ComputeVCircuit.circuit_index::<C::Profile>(),

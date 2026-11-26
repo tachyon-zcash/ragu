@@ -219,6 +219,27 @@ where
                 }
             }
 
+            // The circuit in compute-v's place in a profile with a native
+            // program: the same stages and the memory stage.
+            ComputeVCircuit if super::paged::<P>() => {
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [ComputeV]
+                    .into_iter()
+                    .chain((!P::NESTED_ONLINE.is_empty()).then_some(PointsBinding))
+                    .chain([Preamble, Memory, Query, Eval])
+                {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
             // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
             // when it exports the nested online input-stage commitment.
             ComputeVCircuit => {
@@ -234,6 +255,29 @@ where
                         rxs.push(pb);
                     }
                     rxs.extend([pre, q, e]);
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // A step of the native program: its rx, the preamble stage,
+            // the memory stage and the stages it loads after it
+            // (k(y) = 1).
+            Step(step) => {
+                use super::circuits::paged::{Branch, schedule};
+                let branch = schedule::<P>()[step as usize + 1].branch();
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::Step(step), Preamble, Memory, Query]
+                    .into_iter()
+                    .chain((branch == Branch::Eval).then_some(Eval))
+                {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -464,9 +508,29 @@ where
             EvalFinalStaged => {
                 processor.mask_claim(
                     id,
-                    source.rx(Rx(ComputeV)).chain(
-                        (0..NUM_BINDERS as u32).flat_map(|k| source.rx(Rx(BindChallenges(k)))),
-                    ),
+                    source
+                        .rx(Rx(ComputeV))
+                        .chain(
+                            (0..NUM_BINDERS as u32).flat_map(|k| source.rx(Rx(BindChallenges(k)))),
+                        )
+                        // The steps of a native program that end on the
+                        // eval stage.
+                        .chain(
+                            RxIndex::steps_on::<P>(super::circuits::paged::Branch::Eval)
+                                .flat_map(|step| source.rx(Rx(step))),
+                        ),
+                )?;
+            }
+            // A native program's memory stage, and the final mask of its
+            // steps that end on the query stage.
+            MemoryStage => {
+                processor.mask_claim(id, source.rx(Rx(Memory)))?;
+            }
+            QueryFinalStaged => {
+                processor.mask_claim(
+                    id,
+                    RxIndex::steps_on::<P>(super::circuits::paged::Branch::Query)
+                        .flat_map(|step| source.rx(Rx(step))),
                 )?;
             }
             // The final mask of the steps of a grouped walk, which end on
@@ -622,8 +686,9 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 }
             })
         })
-        // A grouped walk's check circuits, which expose nothing.
-        .chain(repeat_n(source.ones(), NumWalkGroups::<P>::len()).flatten())
+        // A grouped walk's check circuits and a native program's steps,
+        // which expose nothing.
+        .chain(repeat_n(source.ones(), NumWalkGroups::<P>::len() + P::NATIVE_STEPS).flatten())
 }
 
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {

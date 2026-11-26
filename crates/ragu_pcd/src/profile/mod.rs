@@ -218,6 +218,19 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// its check circuit.
     const NATIVE_WALK_GROUP: usize = 0;
 
+    /// The step circuits of the profile's native program, or zero for a
+    /// profile whose native compute-v is one circuit, as the standard
+    /// profile's is.
+    ///
+    /// A profile whose native batch outgrows one compute-v circuit checks
+    /// the batch evaluation with a program of step circuits that share a
+    /// memory stage, each a polynomial of the proof, as its nested side does
+    /// ([`NESTED_STEPS`](Self::NESTED_STEPS)). The program's schedule follows
+    /// from the profile's sizes, which the steps' count is part of, so the
+    /// profile pins the count and setup refuses a pin that is not the
+    /// schedule's.
+    const NATIVE_STEPS: usize = 0;
+
     /// The steps one group of the nested endoscaling walk holds, or zero
     /// for a walk whose points are all in one stage, as the standard
     /// profile's are.
@@ -1687,6 +1700,7 @@ impl Shape {
             P::NESTED_WALK_GROUP,
             P::NESTED_STEPS,
             P::NATIVE_WALK_GROUP,
+            P::NATIVE_STEPS,
         );
         shape.source_polynomials =
             P::NATIVE_MESH.is_some() as usize + P::NESTED_MESH.is_some() as usize;
@@ -1718,6 +1732,7 @@ impl Shape {
             0,
             0,
             0,
+            0,
         )
     }
 
@@ -1731,6 +1746,7 @@ impl Shape {
         nested_walk_group: usize,
         nested_program_steps: usize,
         native_walk_group: usize,
+        native_program_steps: usize,
     ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
@@ -1746,6 +1762,7 @@ impl Shape {
                 nested_walk_group,
                 nested_program_steps,
                 native_walk_group,
+                native_program_steps,
             );
             if shape.native_steps == native_steps {
                 return shape;
@@ -1769,11 +1786,13 @@ impl Shape {
         nested_walk_group: usize,
         nested_program_steps: usize,
         native_walk_group: usize,
+        native_program_steps: usize,
     ) -> Self {
         let native_rx = native::NUM_FIXED_RX
             + native_steps
             + native_extension
-            + native::num_walk_extras(native_steps, native_walk_group);
+            + native::num_walk_extras(native_steps, native_walk_group)
+            + native::num_program_extras(native_program_steps);
         let nested_points = nested::num_endoscaling_points(native_rx) + native_online;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX

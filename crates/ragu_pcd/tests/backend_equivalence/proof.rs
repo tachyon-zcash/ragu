@@ -1410,6 +1410,7 @@ mod proof_equivalence {
                 native_extension_circuit_rxs: _,
                 native_extension_stage_rxs: _,
                 native_walk_rxs: _,
+                native_program_rxs: _,
                 native_points_binding_rx: _,
                 native_points_preamble_rx: _,
                 native_points_registry_wx_rx: _,
@@ -1485,6 +1486,7 @@ mod proof_equivalence {
                 native_extension_circuit_commitments: _,
                 native_extension_stage_commitments: _,
                 native_walk_commitments: _,
+                native_program_commitments: _,
                 native_points_binding_commitment: _,
                 native_points_preamble_commitment: _,
                 native_points_registry_wx_commitment: _,
@@ -1549,7 +1551,9 @@ mod proof_equivalence {
             {
                 return Some("nested walk polynomials");
             }
-            if !extension_eq(&self.native_walk_rxs, &other.native_walk_rxs) {
+            if !extension_eq(&self.native_walk_rxs, &other.native_walk_rxs)
+                || !extension_eq(&self.native_program_rxs, &other.native_program_rxs)
+            {
                 return Some("native walk polynomials");
             }
             if !polynomial_eq(&self.native_a_poly, &other.native_a_poly)
@@ -1660,7 +1664,9 @@ mod proof_equivalence {
             {
                 return Some("nested walk commitments");
             }
-            if self.native_walk_commitments != other.native_walk_commitments {
+            if self.native_walk_commitments != other.native_walk_commitments
+                || self.native_program_commitments != other.native_program_commitments
+            {
                 return Some("native walk commitments");
             }
             if self.nested_a_commitment != other.nested_a_commitment

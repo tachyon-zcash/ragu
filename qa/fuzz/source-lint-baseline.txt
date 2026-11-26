@@ -98,3 +98,12 @@ RAGU005|crates/ragu_pcd/src/internal/nested/circuits/paged/compute_v.rs|343|The 
 RAGU005|crates/ragu_pcd/src/internal/nested/circuits/paged/compute_v.rs|353|The page's position, fixed by the profile's schedule, selects whether the page stores the eval stage's commitments.
 RAGU005|crates/ragu_pcd/src/internal/nested/circuits/paged/mod.rs|746|The step's position in the profile's schedule selects the step's body; a circuit is one step.
 RAGU005|crates/ragu_pcd/src/internal/shared/revdot.rs|1055|The number of claims, fixed by the caller's layout, selects a group's fold or the randomizer's term alone.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|211|The page's position, fixed by the profile's schedule, selects whether the page adds the sums of the page before.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|218|The page's position, fixed by the profile's schedule, selects whether the page adds the last group's term.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|275|The openings' points are fixed by the profile's layout; a point several openings share is inverted once.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|278|The kind of point an opening is at, fixed by the profile's layout, selects the value its denominator is taken from.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|311|The page's position, fixed by the profile's schedule, selects the fold of the page before or zero.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|316|The page's position, fixed by the profile's schedule, and the profile's constant online layout select whether the page adds the online helper's sum.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|366|The page's position, fixed by the profile's schedule, selects the fold of the page before or zero.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/compute_v.rs|371|The page's position, fixed by the profile's schedule, and the profile's constant online layout select whether the page adds the online helper's sum.
+RAGU005|crates/ragu_pcd/src/internal/native/circuits/paged/mod.rs|431|The step's position in the profile's schedule selects the step's body; a circuit is one step.

@@ -218,6 +218,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         };
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        // The memory stage of a profile with a native program; it holds
+        // nothing in a profile that registers this circuit.
+        let builder =
+            builder.skip_stage::<crate::internal::native::MemoryStage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
         let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();
@@ -305,14 +309,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 crate::profile::online::circuit::append_quotients(
                     dr,
                     &mut horner,
-                    poly_queries(
-                        eval,
-                        &query,
-                        &preamble,
-                        &denominators,
-                        &computed_ax,
-                        &computed_bx,
-                    ),
+                    poly_queries(eval, &query, &preamble, &computed_ax, &computed_bx)
+                        .map(|(evaluated, value, at)| (evaluated, value, denominators.at(at))),
                 )?;
                 let mut fu = horner.finish(dr);
                 if !C::Profile::NATIVE_ONLINE.is_empty() {
@@ -377,6 +375,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let zero = Element::zero(dr);
         Ok(WithAux::new(WithSuffix::new(output, zero), aux))
     }
+}
+
+/// The point an opening is taken at, which names the inverted denominator
+/// $(u - \cdot)^{-1}$ its quotient takes: a child's $u$, $y$ or $x$, one of
+/// the current step's challenges, $xz$ or the step's own circuit id, the
+/// $\omega^j$ of an internal circuit, or the point of an online opening.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum At {
+    LeftU,
+    LeftY,
+    LeftX,
+    RightU,
+    RightY,
+    RightX,
+    W,
+    X,
+    Y,
+    Xz,
+    CircuitId,
+    Internal(InternalCircuitIndex),
+    Online(usize),
 }
 
 /// Denominators for a single child proof evaluation points.
@@ -478,6 +497,25 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
             online: FixedVec::from_fn(|i| inverted[online[i]].clone()),
         })
     }
+
+    /// The inverted denominator of an opening at `at`.
+    fn at(&self, at: At) -> &Element<'dr, D> {
+        match at {
+            At::LeftU => &self.left.u,
+            At::LeftY => &self.left.y,
+            At::LeftX => &self.left.x,
+            At::RightU => &self.right.u,
+            At::RightY => &self.right.y,
+            At::RightX => &self.right.x,
+            At::W => &self.challenges.w,
+            At::X => &self.challenges.x,
+            At::Y => &self.challenges.y,
+            At::Xz => &self.challenges.xz,
+            At::CircuitId => &self.challenges.circuit_id,
+            At::Internal(id) => self.internal.get(id),
+            At::Online(i) => &self.online[i],
+        }
+    }
 }
 
 /// Source providing polynomial evaluations from child proofs for revdot folding.
@@ -487,13 +525,13 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
 /// to ensure correct folding correspondence with the prover's computation.
 ///
 /// [`build`]: claims::build
-struct EvaluationSource<'a, 'dr, D: Driver<'dr>, P: Profile> {
-    left: &'a ChildEvaluations<'dr, D, P>,
-    right: &'a ChildEvaluations<'dr, D, P>,
+pub(super) struct EvaluationSource<'a, 'dr, D: Driver<'dr>, P: Profile> {
+    pub left: &'a ChildEvaluations<'dr, D, P>,
+    pub right: &'a ChildEvaluations<'dr, D, P>,
     /// The step's own application claim: the registry evaluation at its
     /// circuit's omega^j, then its rx and its application stage's rx at
     /// $xz$.
-    application: (&'a Element<'dr, D>, [&'a Element<'dr, D>; 2]),
+    pub application: (&'a Element<'dr, D>, [&'a Element<'dr, D>; 2]),
 }
 
 impl<'a, 'dr, D: Driver<'dr>, P: Profile> Source for EvaluationSource<'a, 'dr, D, P> {
@@ -529,17 +567,30 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Source for EvaluationSource<'a, 'dr, D
 /// `bx` vector adds circuit-specific terms ($s\_y + t(xz)$). The composite
 /// $a$/$b$ polynomial evaluations use $a(xz)$ and $b(x)$ respectively. See
 /// [`compute_axbx`] for details.
-struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>, P: Profile> {
+///
+/// The processor builds the entries of the claims in `claims`, by their
+/// position in [`build`](claims::build) order, and passes over the others
+/// without a constraint. A circuit that folds every claim takes them all
+/// ([`new`](Self::new)). A step of a native program that folds some groups
+/// of the grid takes the claims of those groups, and takes each mask
+/// claim's $z$-fold as a value another step computed
+/// ([`over`](Self::over)).
+pub(super) struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>, P: Profile> {
     dr: &'a mut D,
     z: &'a Element<'dr, D>,
     txz: &'a Element<'dr, D>,
     fixed_registry: &'a InternalCircuitValues<Element<'dr, D>, P>,
+    claims: core::ops::Range<usize>,
+    next: usize,
+    /// The mask claims' folds, in claim order, if another circuit computed
+    /// them.
+    masks: Option<core::slice::Iter<'a, Element<'dr, D>>>,
     ax: Vec<Element<'dr, D>>,
     bx: Vec<Element<'dr, D>>,
 }
 
 impl<'a, 'dr, D: Driver<'dr>, P: Profile> EvaluationProcessor<'a, 'dr, D, P> {
-    fn new(
+    pub(super) fn new(
         dr: &'a mut D,
         z: &'a Element<'dr, D>,
         txz: &'a Element<'dr, D>,
@@ -550,12 +601,47 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> EvaluationProcessor<'a, 'dr, D, P> {
             z,
             txz,
             fixed_registry,
+            claims: 0..usize::MAX,
+            next: 0,
+            masks: None,
             ax: Vec::new(),
             bx: Vec::new(),
         }
     }
 
-    fn build(self) -> (Vec<Element<'dr, D>>, Vec<Element<'dr, D>>) {
+    /// A processor that builds the entries of the claims in `claims` alone
+    /// and takes the $z$-fold of every mask claim from `masks`, one per
+    /// mask claim in claim order.
+    pub(super) fn over(
+        dr: &'a mut D,
+        z: &'a Element<'dr, D>,
+        txz: &'a Element<'dr, D>,
+        fixed_registry: &'a InternalCircuitValues<Element<'dr, D>, P>,
+        claims: core::ops::Range<usize>,
+        masks: &'a [Element<'dr, D>],
+    ) -> Self {
+        Self {
+            dr,
+            z,
+            txz,
+            fixed_registry,
+            claims,
+            next: 0,
+            masks: Some(masks.iter()),
+            ax: Vec::new(),
+            bx: Vec::new(),
+        }
+    }
+
+    /// Whether the processor builds the next claim's entries, which it
+    /// then counts.
+    fn takes_next(&mut self) -> bool {
+        let position = self.next;
+        self.next += 1;
+        self.claims.contains(&position)
+    }
+
+    pub(super) fn build(self) -> (Vec<Element<'dr, D>>, Vec<Element<'dr, D>>) {
         (self.ax, self.bx)
     }
 }
@@ -564,6 +650,9 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
     for EvaluationProcessor<'a, 'dr, D, P>
 {
     fn raw_claim(&mut self, a: &'a Element<'dr, D>, b: &'a Element<'dr, D>) {
+        if !self.takes_next() {
+            return;
+        }
         self.ax.push(a.clone());
         self.bx.push(b.clone());
     }
@@ -573,6 +662,9 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
         sy: &'a Element<'dr, D>,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,
     ) {
+        if !self.takes_next() {
+            return;
+        }
         let rx = &Element::sum(self.dr, rxs);
 
         // a(xz) = rx(xz)
@@ -587,6 +679,9 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,
     ) {
+        if !self.takes_next() {
+            return;
+        }
         let sy = self.fixed_registry.get(id);
 
         let mut sum = Element::zero(self.dr);
@@ -607,10 +702,22 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,
     ) -> Result<()> {
+        // A fold another circuit computed is taken in claim order, whether
+        // or not this claim is among the ones built here.
+        let folded = self
+            .masks
+            .as_mut()
+            .map(|folds| folds.next().expect("a fold for every mask claim").clone());
+        if !self.takes_next() {
+            return Ok(());
+        }
         let sy = self.fixed_registry.get(id);
 
         // Horner-fold the rxs with z.
-        self.ax.push(Element::fold(self.dr, rxs, self.z)?);
+        self.ax.push(match folded {
+            Some(folded) => folded,
+            None => Element::fold(self.dr, rxs, self.z)?,
+        });
 
         // b(x) = s_y evaluated at circuit's omega^j
         self.bx.push(sy.clone());
@@ -714,101 +821,100 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+pub(super) fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
     eval: &'a native_eval::Evaluations<'dr, D, C::Profile>,
     query: &'a native_query::Output<'dr, D, C::Profile>,
     preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
-    d: &'a Denominators<'dr, D, C::Profile>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,
-) -> impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>, &'a Element<'dr, D>)> {
+) -> impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>, At)> {
     STATIC_F_QUERIES.into_iter().map(move |query_id| match query_id {
-        StaticFQuery::LeftP => (&eval.left.p_poly, &preamble.left.unified.v, &d.left.u),
-        StaticFQuery::RightP => (&eval.right.p_poly, &preamble.right.unified.v, &d.right.u),
+        StaticFQuery::LeftP => (&eval.left.p_poly, &preamble.left.unified.v, At::LeftU),
+        StaticFQuery::RightP => (&eval.right.p_poly, &preamble.right.unified.v, At::RightU),
         StaticFQuery::LeftRegistryXyAtW => (
             &eval.left.registry_xy_poly,
             &query.left.child_registry_xy_at_current_w,
-            &d.challenges.w,
+            At::W,
         ),
         StaticFQuery::RightRegistryXyAtW => (
             &eval.right.registry_xy_poly,
             &query.right.child_registry_xy_at_current_w,
-            &d.challenges.w,
+            At::W,
         ),
         StaticFQuery::RegistryWx0AtLeftY => (
             &eval.registry_wx0,
             &query.left.child_registry_xy_at_current_w,
-            &d.left.y,
+            At::LeftY,
         ),
         StaticFQuery::RegistryWx1AtRightY => (
             &eval.registry_wx1,
             &query.right.child_registry_xy_at_current_w,
-            &d.right.y,
+            At::RightY,
         ),
         StaticFQuery::RegistryWx0AtY => (
             &eval.registry_wx0,
             &query.left.current_registry_wy_at_child_x,
-            &d.challenges.y,
+            At::Y,
         ),
         StaticFQuery::RegistryWx1AtY => (
             &eval.registry_wx1,
             &query.right.current_registry_wy_at_child_x,
-            &d.challenges.y,
+            At::Y,
         ),
         StaticFQuery::RegistryWyAtLeftX => (
             &eval.registry_wy,
             &query.left.current_registry_wy_at_child_x,
-            &d.left.x,
+            At::LeftX,
         ),
         StaticFQuery::RegistryWyAtRightX => (
             &eval.registry_wy,
             &query.right.current_registry_wy_at_child_x,
-            &d.right.x,
+            At::RightX,
         ),
-        StaticFQuery::RegistryWyAtX => (&eval.registry_wy, &query.registry_wxy, &d.challenges.x),
-        StaticFQuery::RegistryXyAtW => (&eval.registry_xy, &query.registry_wxy, &d.challenges.w),
+        StaticFQuery::RegistryWyAtX => (&eval.registry_wy, &query.registry_wxy, At::X),
+        StaticFQuery::RegistryXyAtW => (&eval.registry_xy, &query.registry_wxy, At::W),
         StaticFQuery::RegistryXyAtCircuitId => (
             &eval.registry_xy,
             &query.registry_xy_at_circuit_id,
-            &d.challenges.circuit_id,
+            At::CircuitId,
         ),
         StaticFQuery::LeftAbAAtXz => (
             &eval.left.a_poly,
             &query.left.a_poly_at_xz,
-            &d.challenges.xz,
+            At::Xz,
         ),
-        StaticFQuery::LeftAbBAtX => (&eval.left.b_poly, &query.left.b_poly_at_x, &d.challenges.x),
+        StaticFQuery::LeftAbBAtX => (&eval.left.b_poly, &query.left.b_poly_at_x, At::X),
         StaticFQuery::RightAbAAtXz => (
             &eval.right.a_poly,
             &query.right.a_poly_at_xz,
-            &d.challenges.xz,
+            At::Xz,
         ),
         StaticFQuery::RightAbBAtX => (
             &eval.right.b_poly,
             &query.right.b_poly_at_x,
-            &d.challenges.x,
+            At::X,
         ),
-        StaticFQuery::CurrentAAtXz => (&eval.a_poly, computed_ax, &d.challenges.xz),
-        StaticFQuery::CurrentBAtX => (&eval.b_poly, computed_bx, &d.challenges.x),
+        StaticFQuery::CurrentAAtXz => (&eval.a_poly, computed_ax, At::Xz),
+        StaticFQuery::CurrentBAtX => (&eval.b_poly, computed_bx, At::X),
         StaticFQuery::CurrentApplicationAtXz => (
             &eval.application,
             &query.application_at_xz,
-            &d.challenges.xz,
+            At::Xz,
         ),
         StaticFQuery::CurrentApplicationStageAtXz => (
             &eval.application_stage,
             &query.application_stage_at_xz,
-            &d.challenges.xz,
+            At::Xz,
         ),
         StaticFQuery::RandomizerAAtXz => (
             &eval.randomizer_a,
             &query.randomizer_a_at_xz,
-            &d.challenges.xz,
+            At::Xz,
         ),
         StaticFQuery::RandomizerBAtX => (
             &eval.randomizer_b,
             &query.randomizer_b_at_x,
-            &d.challenges.x,
+            At::X,
         ),
     })
     // Stage and circuit rx evaluations at xz for each child proof.
@@ -818,13 +924,13 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, 
         .into_iter()
         .flat_map(move |(eval, query)|
             RxIndex::all::<C::Profile>().into_iter().map(move |id|
-                (eval.rx.get(id), query.rx.get(id), &d.challenges.xz))))
+                (eval.rx.get(id), query.rx.get(id), At::Xz))))
     // m(\omega^j, x, y) evaluations for each internal index j
     .chain(InternalCircuitIndex::all::<C::Profile>().into_iter().map(move |id| {
-        (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
+        (&eval.registry_xy, query.fixed_registry.get(id), At::Internal(id))
     }))
     // The online openings, in slot order.
     .chain((0..online::NUM_ONLINE_FP_QUERIES).map(move |i| {
-        (&eval.online[i], &preamble.own.online[i].y, &d.online[i])
+        (&eval.online[i], &preamble.own.online[i].y, At::Online(i))
     }))
 }

@@ -1632,6 +1632,20 @@ macro_rules! fuse_gates {
                     $H,
                     RevdotParameters<$P>,
                 >::new()),
+                Native::ComputeVCircuit if native::paged::<$P>() => {
+                    gates(&native::circuits::paged::export::Circuit::<$C, $R, $H>::new())
+                }
+                Native::Step(step) => {
+                    use native::circuits::paged::{Branch, OnEval, OnQuery, schedule};
+                    let position = step as usize + 1;
+                    let scheduled = schedule::<$P>()[position];
+                    let gates = match scheduled.branch() {
+                        Branch::Query => gates(&OnQuery::<$C, $R, $H>::new(position)),
+                        Branch::Eval => gates(&OnEval::<$C, $R, $H>::new(position)),
+                    };
+                    native_gates.push((alloc::format!("{scheduled:?}"), gates));
+                    continue;
+                }
                 Native::ComputeVCircuit => {
                     gates(&native::circuits::compute_v::Circuit::<$C, $R, $H>::new())
                 }
@@ -1751,7 +1765,7 @@ fn test_paged_nested_fuse_fits_the_wallet_rank() {
     use ragu_circuits::polynomials::WalletRank;
 
     use crate::{
-        internal::nested,
+        internal::{native, nested},
         profile::{
             Profiled,
             testing::{Grouped, Sized},
@@ -1760,43 +1774,56 @@ fn test_paged_nested_fuse_fits_the_wallet_rank() {
 
     let budget = WalletRank::blind_gate();
     let mut over = alloc::vec::Vec::new();
-    // Of the native circuits, the grouped walk's are cut.
-    let walk = |(name, _): &(alloc::string::String, usize)| {
-        ["EndoscalingStep", "WalkCheck", "BindEndoscalar"]
-            .iter()
-            .any(|circuit| name.starts_with(circuit))
+    // Of the native circuits, the grouped walk's and compute-v's are cut.
+    let cut = |(name, _): &(alloc::string::String, usize)| {
+        [
+            "EndoscalingStep",
+            "WalkCheck",
+            "BindEndoscalar",
+            "ComputeV",
+            "Masks",
+            "Fold",
+            "Quotients",
+            "Evaluations",
+        ]
+        .iter()
+        .any(|circuit| name.starts_with(circuit))
     };
     {
         type C = Profiled<Pasta, Grouped>;
         let (native, nested) = fuse_gates!(C, WalletRank, 4, Grouped);
         let native_over = report_fuse_gates("native, standard size", &native, budget);
-        over.extend(native_over.into_iter().filter(walk));
+        over.extend(native_over.into_iter().filter(cut));
         over.extend(report_fuse_gates("nested, standard size", &nested, budget));
     }
-    // The program's steps are pinned by the profile, and the pin is part of
-    // the sizes the schedule follows from: the candidate that pins its own
-    // schedule's count is the profile to measure.
-    let mut measured = 0;
-    macro_rules! at_pin {
-        ($($pin:literal)*) => {$({
-            type P = Sized<176, 134, $pin>;
-            type C = Profiled<Pasta, P>;
-            if nested::circuits::paged::num_fixed_steps::<P>() == $pin {
-                measured += 1;
-                let shape = crate::profile::Shape::of::<P>();
-                std::println!(
-                    "aggregator size: {} native and {} nested polynomials, {} pinned steps",
-                    shape.native_rx, shape.nested_rx, $pin
-                );
-                let (native, nested) = fuse_gates!(C, WalletRank, 4, P);
-                let native_over = report_fuse_gates("native, aggregator size", &native, budget);
-                over.extend(native_over.into_iter().filter(walk));
-                over.extend(report_fuse_gates("nested, aggregator size", &nested, budget));
-            }
-        })*};
+    {
+        // The pins are part of the sizes the schedules follow from: these
+        // are the pair that pins its own schedules.
+        type P = Sized<176, 134, 13, 16>;
+        type C = Profiled<Pasta, P>;
+        assert_eq!(
+            (
+                native::circuits::paged::num_step_circuits::<P>(),
+                nested::circuits::paged::num_fixed_steps::<P>()
+            ),
+            (13, 16),
+            "the test profile pins its own schedules"
+        );
+        let shape = crate::profile::Shape::of::<P>();
+        std::println!(
+            "aggregator size: {} native and {} nested polynomials",
+            shape.native_rx,
+            shape.nested_rx
+        );
+        let (native, nested) = fuse_gates!(C, WalletRank, 4, P);
+        let native_over = report_fuse_gates("native, aggregator size", &native, budget);
+        over.extend(native_over.into_iter().filter(cut));
+        over.extend(report_fuse_gates(
+            "nested, aggregator size",
+            &nested,
+            budget,
+        ));
     }
-    at_pin!(12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
-    assert_eq!(measured, 1, "one candidate pins its own schedule");
     assert!(over.is_empty(), "over the budget: {over:?}");
 }
 

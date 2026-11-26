@@ -332,7 +332,7 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    type Parent = crate::internal::native::MemoryStage<C, R, HEADER_SIZE>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C::Profile>];
 

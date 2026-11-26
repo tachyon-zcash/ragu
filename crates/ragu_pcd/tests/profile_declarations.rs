@@ -708,6 +708,7 @@ fn aggregator_declares_the_decompression() {
             0,
             0,
             0,
+            0,
         );
         shape.source_polynomials = 2;
         shape
@@ -778,6 +779,7 @@ fn solve_finds_a_fixed_point_for_wider_profiles() {
             0,
             4,
             4,
+            0,
             0,
             0,
             0,
@@ -987,8 +989,12 @@ where
     let compressed = app.compress(&fused, &mut rng)?;
     assert!(app.verify_compressed(&compressed)?);
 
-    // The native walk's extra polynomials are bound the same way.
-    for index in crate::internal::native::RxIndex::walk_extras::<Grouped>() {
+    // The native walk's and the native program's extra polynomials are
+    // bound the same way.
+    for index in crate::internal::native::RxIndex::walk_extras::<Grouped>()
+        .into_iter()
+        .chain(crate::internal::native::RxIndex::program_extras::<Grouped>())
+    {
         let mut proof = fused.proof().clone();
         proof.double_native_extension_rx(crate::pasta::baked_aggregator(), index);
         let changed = proof.carry::<()>(());
@@ -1013,7 +1019,6 @@ where
 }
 
 #[test]
-#[ignore = "the native compute-v of a paged profile is not cut yet: it outgrows the wallet rank"]
 fn a_paged_profile_proves_at_the_wallet_rank() -> Result<()> {
     a_paged_profile_proves_at::<13>()
 }

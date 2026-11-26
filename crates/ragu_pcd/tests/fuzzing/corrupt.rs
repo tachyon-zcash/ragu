@@ -248,6 +248,9 @@ impl NativeRx {
             I::WalkGroup(_) | I::WalkLinks | I::WalkCheck(_) => {
                 panic!("the standard profile's walk is not grouped")
             }
+            I::Memory | I::Step(_) => {
+                panic!("the standard profile has no native program")
+            }
         }
     }
 }

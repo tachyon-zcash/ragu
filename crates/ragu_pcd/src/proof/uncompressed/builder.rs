@@ -260,6 +260,9 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     /// A grouped native walk's polynomials, in `RxIndex::walk_extras`
     /// order.
     native_walk_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    /// A native program's polynomials: the memory stage's, then each
+    /// step circuit's.
+    native_program_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_points_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_registry_wx_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -391,6 +394,7 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     native_extension_circuit_commitments: OnceCell<Vec<C::HostCurve>>,
     native_extension_stage_commitments: OnceCell<Vec<C::HostCurve>>,
     native_walk_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_program_commitments: OnceCell<Vec<C::HostCurve>>,
     native_points_binding_commitment: OnceCell<C::HostCurve>,
     native_points_preamble_commitment: OnceCell<C::HostCurve>,
     native_points_registry_wx_commitment: OnceCell<C::HostCurve>,
@@ -605,6 +609,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_rxs: None,
             native_extension_stage_rxs: None,
             native_walk_rxs: None,
+            native_program_rxs: None,
             native_points_binding_rx: None,
             native_points_preamble_rx: None,
             native_points_registry_wx_rx: None,
@@ -695,6 +700,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_commitments: OnceCell::new(),
             native_extension_stage_commitments: OnceCell::new(),
             native_walk_commitments: OnceCell::new(),
+            native_program_commitments: OnceCell::new(),
             native_points_binding_commitment: OnceCell::new(),
             native_points_preamble_commitment: OnceCell::new(),
             native_points_registry_wx_commitment: OnceCell::new(),
@@ -909,6 +915,23 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         native_walk_rxs,
         Vec<sparse::Polynomial<C::CircuitField, R>>
     );
+    setter!(
+        set_native_program_rxs,
+        native_program_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
+    /// Lazily computes and caches the commitments of a native program's rx
+    /// polynomials. Returns the cached slice.
+    pub(crate) fn native_program_commitments(&self) -> &[C::HostCurve] {
+        self.native_program_commitments.get_or_init(|| {
+            self.host.commit_many(
+                self.native_program_rxs
+                    .as_ref()
+                    .expect("native_program_rxs not set"),
+            )
+        })
+    }
 
     /// Lazily computes and caches the commitments of the native extension
     /// circuits' rx polynomials. Returns the cached slice.
@@ -1443,6 +1466,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_extension_circuit_commitments();
         self.native_extension_stage_commitments();
         self.native_walk_commitments();
+        self.native_program_commitments();
         self.native_points_binding_commitment();
         self.native_points_preamble_commitment();
         self.native_points_registry_wx_commitment();
@@ -1582,6 +1606,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_rxs: take!(native_extension_circuit_rxs),
             native_extension_stage_rxs: take!(native_extension_stage_rxs),
             native_walk_rxs: take!(native_walk_rxs),
+            native_program_rxs: take!(native_program_rxs),
             native_points_binding_rx: take!(native_points_binding_rx),
             native_points_preamble_rx: take!(native_points_preamble_rx),
             native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
@@ -1729,6 +1754,13 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .native_walk_commitments
                 .take()
                 .expect("native_walk_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_program_commitments: self
+                .native_program_commitments
+                .take()
+                .expect("native_program_commitments not set")
                 .into_iter()
                 .map(Cached)
                 .collect(),
