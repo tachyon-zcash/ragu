@@ -20,19 +20,21 @@
 //! - proving ([`Prover`]): a trace per page, and the carry stage's values
 //!   off them.
 //!
-//! A [`Cut`] says how many pages a circuit is cut into, each loading every
-//! stage the circuit reserves, and how many values its carry stage holds.
-//! Both are the profile's to state: each page is a polynomial of the proof,
-//! which the circuits being paged fold and open with the rest, so a count
-//! the pager chose where a circuit is registered would change the circuits
-//! it had already cut. The census (`native_census` and `nested_census`,
-//! with the `test-utils` feature) cuts each circuit with fewer pages until
-//! it no longer cuts, and reports the fewest that do.
+//! A [`Cut`] says how many pages an unpaged circuit is cut into, each
+//! loading every stage the circuit reserves, and how many values its carry
+//! stage holds. Both are the profile's to state: each page is a polynomial
+//! of the proof, which the circuits being paged fold and open with the
+//! rest, so a count the pager chose where a circuit is registered would
+//! change the circuits it had already cut. The numbers come from a census
+//! pass (`native_census` and `nested_census`, with the `test-utils`
+//! feature), which is run offline when a circuit or the pager changes: it
+//! cuts each circuit with fewer pages until it no longer cuts, and reports
+//! the fewest that do and the values they carry.
 //!
-//! Where the cuts fall is not stated. The pager places them where a
-//! circuit is registered ([`Registrar`]), each time a registry is built,
-//! and the pages it gives are checked against the circuit before any of
-//! them is registered. The search has nothing random in it and gives the
+//! Where the cuts fall is not stated. Registration-time paging places
+//! them: the pager runs where a circuit is registered ([`Registrar`]),
+//! each time a registry is built, and the pages it gives are checked
+//! against the unpaged circuit before any of them is registered. The search has nothing random in it and gives the
 //! same cuts on any number of threads, so the cuts are a function of the
 //! circuit, of its [`Cut`], of the rank and of the pager's code. They are
 //! searched for rather than pinned for three reasons:
@@ -634,7 +636,7 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         let paged = split(which, circuit, slot.cut)?;
         // The pages are held to the circuit they were cut from before any
         // is registered, so nothing that chose the cuts is trusted: not
-        // the planner, and not a cut this process kept from before.
+        // the pager, and not a cut this process kept from before.
         paged.check()?;
         self.plans.0[position] = Some(paged.plan());
         let layout = paged.layout();

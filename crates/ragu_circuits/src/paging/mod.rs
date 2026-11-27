@@ -1,15 +1,35 @@
-//! Experimental paging: one circuit laid out over several trace polynomials.
+//! Experimental paging: one circuit proven as several.
 //!
-//! A circuit that needs more gates than a polynomial holds is cut into
-//! *pages*: its gates are placed in an order, that in which it allocates
+//! An *unpaged circuit* is a multi-stage circuit that is written once,
+//! whole, and needs more gates than a polynomial holds ([`Pageable`]). It
+//! loads its stages, allocates gates of its own, enforces linear
+//! constraints over the stages' wires and its own, and returns its public
+//! output. Paging cuts it into *paged circuits*, or *pages*: ordinary
+//! multi-stage circuits ([`Page`], and [`LastPage`] for the one that
+//! returns the public output) that each hold some of its gates and
+//! enforce some of its constraints. A page has its own trace polynomial,
+//! wiring polynomial and revdot claim, and nothing downstream needs to
+//! know it is a piece of something larger.
+//!
+//! Every page loads the stages the unpaged circuit loads, and then one
+//! more: the *carry stage* ([`CarryStage`]), the memory the pages share. A
+//! value that one page holds and another reads is copied to a slot of it.
+//!
+//! The *pager* (the `plan` module) chooses the page of each gate and of
+//! each constraint, and with them what the carry stage holds. It places
+//! the circuit's gates in an order, that in which the circuit allocates
 //! them or one that puts a gate allocated long before its use beside the
-//! gates it feeds, and each page takes a run of them. Which order, and
-//! where the runs end, is the planner's choice and is not trusted (see
-//! [The code](#the-code)). Each page is an ordinary
-//! [`Circuit`](crate::Circuit) ([`Page`], and [`LastPage`] for the one
-//! that carries the public output): it has its own trace polynomial,
-//! wiring polynomial and claim, and nothing downstream needs to know it is
-//! a piece of something larger.
+//! gates it feeds, and gives each page a run of them. It gives the same
+//! pages each time it runs on a circuit, and none of its choices is
+//! trusted: [`Paged::check`] holds its pages to the unpaged circuit (see
+//! [Invariants](#invariants)).
+//!
+//! The pager runs twice on a circuit. A *census pass*, offline, cuts the
+//! circuit to find how many pages it takes and how many values its pages
+//! carry; the two numbers are then written in code. *Registration-time
+//! paging* cuts the circuit again with those numbers, each time a registry
+//! is built, checks the pages and registers them. So the cut itself is
+//! written nowhere.
 //!
 //! # Layout
 //!
@@ -24,14 +44,14 @@
 //! The circuit's stages are polynomials of their own, each holding its
 //! values at fixed gates, one stage after another ([`Stages::spans`]).
 //! Every page loads every one of them, where the circuit has them. The
-//! *carry stage* ([`CarryStage`]) is one more stage, which paging adds
-//! after the circuit's last and every page loads. A page is a multi-stage
+//! carry stage is one more stage, which paging adds after the circuit's
+//! last and every page loads. A page is a multi-stage
 //! circuit whose last stage it is, so a page's own gates start where it
 //! ends.
 //!
-//! The carry stage's size is the circuit's to state ([`Pageable::Carry`]):
-//! a circuit that carries more values between its pages than the stage
-//! holds is not cut.
+//! The carry stage's size is the unpaged circuit's to state
+//! ([`Pageable::Carry`]): a circuit that carries more values between its
+//! pages than the stage holds is not cut.
 //!
 //! # Carrying
 //!
@@ -74,32 +94,57 @@
 //!   page that carried the output as the elements the circuit writes would
 //!   not, and every page would then be of one type.
 //!
-//! # What soundness rests on
+//! # Invariants
 //!
-//! - every page's claim is checked, on the sum of its own polynomial, the
-//!   carry polynomial and the polynomials of the circuit's stages;
-//! - the carry polynomial is the same one in the sum of every page, and
-//!   is zero off its own wires: the carry stage's stage mask holds it
-//!   ([`Paged::carry_mask`]);
-//! - a page's own polynomial is zero on the gates of the stages and of the
-//!   carry stage: the carry stage's final mask holds it, as any
-//!   multi-stage circuit's is held ([`Paged::page_mask`]);
-//! - the stages share no gate, and are those the circuit was cut over,
-//!   which [`Paged::check`] holds the plan to and the caller lays where
-//!   the stages' polynomials hold them;
-//! - the plan carries every combination a constraint names off its home
-//!   page, which [`Paged::check`] holds against the unpaged circuit.
+//! [`Paged::check`] holds the pager's pages to these, where the unpaged
+//! circuit is registered:
+//!
+//! - **Gates once.** Each gate of the unpaged circuit's own is on exactly
+//!   one page.
+//! - **Constraints once.** Each linear constraint of the unpaged circuit
+//!   is on exactly one page. Where it names wires that page does not hold,
+//!   the page names carry slots in their place.
+//! - **Carry slots are copies.** A slot that is read has a writer: a page
+//!   that enforces the slot equal to a linear combination of wires it
+//!   holds. The check replaces each slot with what its writer holds it to
+//!   and compares the pages' constraints with the unpaged circuit's, form
+//!   for form. A constraint that names a slot without a writer is then
+//!   none of the unpaged circuit's.
+//! - **Outputs once.** The public output is written once, in the unpaged
+//!   circuit's order, on one page: the last. Every other page has an empty
+//!   output, so its $k(Y)$ is constant.
+//! - **Preserve routines.** The gates of a routine the unpaged circuit
+//!   calls are on one page, together and in the order the circuit
+//!   allocates them.
+//! - **Deterministic pager.** [`Paged::cut`] refuses an unpaged circuit
+//!   that does not cut into the pages it is told, over the carry stage its
+//!   type states ([`Pageable::Carry`]).
+//!
+//! Two more are for whoever builds the revdot claims:
+//!
+//! - **Every page's revdot claim is checked.**
+//! - **Same stage ancestry.** A page's revdot claim is on the sum of the
+//!   page's own polynomial, the polynomials of the unpaged circuit's
+//!   stages and the carry polynomial: the same stage polynomials for every
+//!   page. A page is a multi-stage circuit whose last stage is the carry
+//!   stage ([`Carry`]). So the carry stage's stage mask holds the carry
+//!   polynomial to the stage's gates ([`Paged::carry_mask`]), and its
+//!   final mask holds a page's own polynomial off the gates of every stage
+//!   ([`Paged::page_mask`]), as any multi-stage circuit's is held.
+//!
+//! The order of the gates and of the constraints is not held, and neither
+//! is the page that returns the output: those are the pager's to choose.
 //!
 //! # Cutting
 //!
 //! A circuit is cut when it is registered, in every process that builds
 //! the registry: the cuts are not stored. They are a function of the
-//! circuit, of the number of its pages, of the gates a polynomial holds
-//! and of the planner. Each page is a registered circuit,
-//! so a change to the planner that moves a cut changes the registry as a
-//! change to the circuit would, and a proof made before it no longer
-//! verifies. [`Paged::check`] does not tell the two cuts apart: the pages
-//! are the circuit's either way.
+//! unpaged circuit, of the number of its pages, of its carry stage's size,
+//! of the gates a polynomial holds and of the pager. Each page is a
+//! registered circuit, so a change to the pager that moves a cut changes
+//! the registry as a change to the circuit would, and a proof made before
+//! it no longer verifies. [`Paged::check`] does not tell the two cuts
+//! apart: the pages are the circuit's either way.
 //!
 //! A circuit is taken to emit the same gates and constraints on every
 //! walk, whatever its witness, as any circuit is. One whose walk with a
@@ -112,14 +157,14 @@
 //!
 //! # The code
 //!
-//! The `plan` module chooses the cuts and compiles them; nothing in it is
-//! trusted, since [`Paged::check`] holds its pages to the circuit. What
-//! the check rests on is the rest. The `record` module walks a circuit for
-//! the gates and constraints it emits; the `check` module compares that
-//! recording of the circuit with those of its pages; and the `page` module
-//! is what is registered and proven: the pages. This module holds what
-//! they share: the carry stage, the stages, the layout, and the plan
-//! between them.
+//! The `plan` module is the pager: it chooses the cuts and compiles them.
+//! Nothing in it is trusted, since [`Paged::check`] holds its pages to the
+//! unpaged circuit. What the check rests on is the rest. The `record`
+//! module walks a circuit for the gates and constraints it emits; the
+//! `check` module compares that recording of the unpaged circuit with
+//! those of its pages; and the `page` module is what is registered and
+//! proven: the pages. This module holds what they share: the carry stage,
+//! the stages, the layout, and the plan between them.
 
 use alloc::{collections::BTreeMap, format, string::String, sync::Arc, vec::Vec};
 use core::{marker::PhantomData, ops::Range};
@@ -164,12 +209,12 @@ fn refuse<T>(what: String) -> Result<T> {
     Err(Error::Initialization(what.into()))
 }
 
-/// A multi-stage circuit that can be cut into pages.
+/// An unpaged circuit: a multi-stage circuit that can be cut into pages.
 pub trait Pageable<F: Field, R: Rank>: MultiStageCircuit<F, R> {
     /// The values the circuit's carry stage holds: at least as many as
-    /// the circuit's pages pass to one another. It is stated and not
-    /// found where the circuit is cut, since it sizes a stage every page
-    /// loads.
+    /// the circuit's pages pass to one another. A census pass finds how
+    /// many they pass. The size is stated and not found where the circuit
+    /// is cut, since it sizes a stage every page loads.
     type Carry: Len;
 }
 
@@ -302,8 +347,8 @@ impl Stages {
 /// Where a paged circuit's gates sit in its pages' polynomials.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
-    /// The first gate of the circuit's own, counted over the whole circuit:
-    /// past the SYSTEM gate and every stage's gates (see
+    /// The first gate of the circuit's own, counted over the unpaged
+    /// circuit: past the SYSTEM gate and every stage's gates (see
     /// [`Stages::own_start`]).
     pub own_start: usize,
     /// The carry stage's gates, the same in every page's polynomial:
@@ -367,7 +412,7 @@ pub struct PageReport {
     /// The distinct stage wires its constraints name.
     pub stage_wires: usize,
     /// The distinct gates of the stages those wires are at, counted over
-    /// the whole circuit, in order.
+    /// the unpaged circuit, in order.
     pub stage_gates: Vec<usize>,
 }
 
@@ -422,14 +467,14 @@ struct Plan<F: Field> {
     /// their home is the last page.
     outputs: Vec<Vec<Link<F>>>,
     /// Each slot's combination, over wires named `4 * gate + kind` with
-    /// the gate counted over the whole circuit.
+    /// the gate counted over the unpaged circuit.
     slots: Vec<Vec<(u32, F)>>,
     /// For each gate of the circuit's own, in the order it allocates them,
     /// the page that holds it and the gate's index in that page's
     /// polynomial.
     places: Vec<(u32, u32)>,
     /// For each page, the gates of the circuit's own it holds, counted
-    /// over the whole circuit, in the order of the page's polynomial.
+    /// over the unpaged circuit, in the order of the page's polynomial.
     held: Vec<Vec<u32>>,
     /// What each page allocates and enforces, once the plan is
     /// [compiled](Self::compile).
@@ -464,7 +509,7 @@ impl<F: Field> Plan<F> {
     }
 
     /// The page that holds a gate of the circuit's own, counted over the
-    /// whole circuit, and the gate's index in that page's polynomial.
+    /// unpaged circuit, and the gate's index in that page's polynomial.
     fn place(&self, gate: usize) -> Option<(usize, usize)> {
         let (page, local) = *self.places.get(gate.checked_sub(self.layout.own_start)?)?;
         Some((page as usize, local as usize))
@@ -488,7 +533,7 @@ fn diverged(what: &str) -> Error {
     Error::Initialization(format!("a paged circuit diverged from its plan: {what}").into())
 }
 
-/// A circuit cut into pages.
+/// An unpaged circuit and the pages the pager cut it into.
 pub struct Paged<F: Field, R: Rank, S: Pageable<F, R>> {
     circuit: Arc<MultiStage<F, R, S>>,
     plan: Arc<Plan<F>>,

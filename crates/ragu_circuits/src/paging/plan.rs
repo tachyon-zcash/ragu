@@ -1,11 +1,11 @@
-//! Choosing the cuts: where a circuit's gates go, which page is each
-//! constraint's home, what the carry stage holds, and what each page
-//! replays.
+//! The pager. It chooses the cuts: where an unpaged circuit's gates go,
+//! which page is each constraint's home, what the carry stage holds, and
+//! what each page replays.
 //!
 //! Nothing here is trusted. What this module produces is a [`Plan`], and
-//! [`Paged::check`] holds the pages a plan gives to the circuit they were
-//! cut from, whatever chose them: a profile's registrar runs it before it
-//! registers a page.
+//! [`Paged::check`] holds the pages a plan gives to the unpaged circuit
+//! they were cut from, whatever chose them: a profile's registrar runs it
+//! before it registers a page.
 
 use alloc::{
     collections::{BTreeMap, BTreeSet, btree_map::Entry},
@@ -669,7 +669,7 @@ impl Placement {
         self.rank = rank;
     }
 
-    /// The place of a gate counted over the whole circuit, counted from
+    /// The place of a gate counted over the unpaged circuit, counted from
     /// the first of the circuit's own likewise.
     fn place(&self, gate: usize) -> Option<usize> {
         let rank = *self.rank.get(gate.checked_sub(self.own_start)?)?;

@@ -6,8 +6,8 @@
 //! the recording of a circuit with the recordings of its pages, so a
 //! constraint this driver did not keep is one the check does not hold the
 //! pages to, and it holds the pages to the routines this driver noted
-//! ([`Recording::split_routine`]). The planner reads the same recording to choose its cuts, and
-//! takes nothing else of the circuit.
+//! ([`Recording::split_routine`]). The pager reads the same recording to
+//! choose its cuts, and takes nothing else of the circuit.
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::ops::Range;
@@ -90,7 +90,7 @@ pub(super) struct Recording<F> {
 impl<F: Field> Recording<F> {
     /// Every constraint emitted by `circuit`, including those made while
     /// writing its public output and the final `ONE` constraint, expanded to
-    /// gate wires. Unlike the planner's recording, this walk follows the
+    /// gate wires. Unlike the pager's recording, this walk follows the
     /// complete relation that a registered circuit enforces.
     pub(super) fn all_of<C: Circuit<F>>(circuit: &C) -> Result<(usize, Vec<Vec<(u32, F)>>)> {
         let mut dr = Prober {
@@ -123,7 +123,7 @@ impl<F: Field> Recording<F> {
     /// one page, next to one another in the order the circuit allocates
     /// them: what a page needs to call it as a routine of its own.
     ///
-    /// The planner refuses a layout by this, and the check a plan.
+    /// The pager refuses a layout by this, and the check a plan.
     pub(super) fn split_routine(
         &self,
         place: impl Fn(usize) -> Option<(usize, usize)>,

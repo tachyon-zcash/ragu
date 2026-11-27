@@ -102,8 +102,8 @@ use crate::{
 /// work on every polynomial of a proof, the pages' among them, so a profile
 /// states them and no circuit is cut otherwise: a circuit that takes more
 /// pages, or carries more values, is refused where it is registered. What
-/// a circuit takes is found by cutting it: the `paging` census does, with
-/// the crate's `test-utils` feature.
+/// a circuit takes is found by a census pass, which cuts it: the `paging`
+/// census, with the crate's `test-utils` feature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cut {
     pages: usize,
