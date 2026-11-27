@@ -1,7 +1,7 @@
 //! The decompression's two circuits, each side's verifier cut into pages,
 //! on real compressed proofs: each side's whole circuit is satisfied by
-//! the stages the prover's run of the side fills, a value tampered with
-//! after that run fails it, and each side exposes the other side's actual
+//! the stages the prover fills, which are what the circuit writes, a value
+//! tampered with after that fails it, and each side exposes the other side's actual
 //! stage commitments; the circuits cut into the pages the aggregator pins;
 //! and an aggregator over the profile decompresses a wallet proof into a
 //! proof of its own.
@@ -10,12 +10,14 @@ use alloc::vec::Vec;
 
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    CircuitExt, MaskObject,
+    Circuit, CircuitExt, MaskObject,
     polynomials::{AggregatorRank, Rank, WalletRank, sparse},
     staging::{Stage, StageExt, wire_degree},
 };
 use ragu_core::{
     Cycle, FixedGenerators,
+    drivers::emulator::{Emulator, Wireless},
+    maybe::{Always, Maybe, MaybeKind},
     pasta::{Fp, Fq, Pasta},
 };
 use ragu_primitives::{
@@ -34,13 +36,13 @@ use udon::{
 
 use super::{
     common::{
-        Prepared, Side, SideCircuit, StatementCircuit, Whole, WholeCarry, challenges_per_curve,
-        cut, fuse, squeezed,
+        Prepared, Side, SideCircuit, StatementCircuit, Whole, WholeCarry, Written,
+        challenges_per_curve, cut, fuse, squeezed,
     },
     native::Native,
     nested::Nested,
     online::{self, Values},
-    prover::{Prepare, Sides, Witness},
+    prover::{Sides, Witness},
     stages::{
         DigitsStage, Front, InstanceStage, LiftsStage, OnlineInputStage, OnlineQueryStage, Run,
         message_points, native_scalars, num_runs, runs,
@@ -197,41 +199,58 @@ fn rejected<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pa
     capture(prepared).is_err()
 }
 
-/// The points side `S`'s verifier exposes over `prepared`, as the prover's
-/// run of the side leaves them.
-fn exposed<S: Prepare<Pasta>>(prepared: &Prepared<Pasta, S>) -> Vec<S::P> {
-    prepared
-        .run::<TestR, HEADER_SIZE>(crate::pasta::baked_aggregator())
+/// What side `S`'s whole circuit writes over `prepared`, whether or not
+/// `prepared` satisfies it: the circuit run under an emulator, which checks
+/// no constraint, and its [`Written`] read off.
+fn written<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(
+    prepared: &Prepared<Pasta, S>,
+) -> Written<S::F, S::P> {
+    let mut dr = Emulator::<Wireless<Always<()>, S::F>>::execute();
+    circuit(prepared)
+        .witness(&mut dr, Always::maybe_just(|| prepared))
         .expect("the side runs")
-        .exposed
+        .into_parts()
+        .1
+        .take()
 }
 
-/// Fills `prepared`'s lifts and digits stages again, by the prover's run
-/// of the side over what `prepared` now holds.
-fn refill<S: Prepare<Pasta>>(prepared: &mut Prepared<Pasta, S>) {
-    let ran = prepared
-        .run::<TestR, HEADER_SIZE>(crate::pasta::baked_aggregator())
-        .expect("the side runs");
-    prepared.lifts.elements = ran.lifts;
-    prepared.digits.elements = ran.digits;
+/// The points side `S`'s whole circuit exposes over `prepared`.
+fn exposed<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(
+    prepared: &Prepared<Pasta, S>,
+) -> Vec<S::P> {
+    written(prepared).exposed
+}
+
+/// Fills `prepared`'s lifts and digits stages again, with what side `S`'s
+/// whole circuit writes over what `prepared` now holds: an honest
+/// prover's stages over it. What the circuit writes after a lift reads the
+/// lifts stage, so it runs until the stages hold what it writes.
+fn refill<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(prepared: &mut Prepared<Pasta, S>) {
+    for _ in 0..4 {
+        let written = written(prepared);
+        if written.lifts == prepared.lifts.elements && written.digits == prepared.digits.elements {
+            return;
+        }
+        prepared.lifts.elements = written.lifts;
+        prepared.digits.elements = written.digits;
+    }
+    panic!("the stages settle on what the circuit writes");
 }
 
 /// Asserts that what the prover fills for side `S`, its lifts and digits
-/// stages and the circuit-field side's digest, is what the side's verifier
-/// writes over `prepared`.
-fn filled_as_written<S: Prepare<Pasta>>(prepared: &Prepared<Pasta, S>) {
-    let ran = prepared
-        .run::<TestR, HEADER_SIZE>(crate::pasta::baked_aggregator())
-        .expect("the side runs");
-    assert_eq!(prepared.lifts.elements, ran.lifts, "the lifts stage");
-    assert_eq!(prepared.digits.elements, ran.digits, "the digits stage");
-    assert_eq!(prepared.digest, ran.digest, "the digest");
+/// stages, is what the side's whole circuit writes over `prepared`.
+fn filled_as_written<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pasta, S>) {
+    let written = written(prepared);
+    assert_eq!(prepared.lifts.elements, written.lifts, "the lifts stage");
+    assert_eq!(prepared.digits.elements, written.digits, "the digits stage");
 }
 
-/// The prover fills each side's stages as the side's verifier writes them,
-/// and the circuit-field side's again under the decompression flag.
+/// The prover fills each side's stages as the side's whole circuit writes
+/// them, and the circuit-field side's again under the decompression flag.
+/// The digest the prover stages under the flag is the transcript's, which
+/// `the_step_binding_holds_g_prime_to_the_host_batch_commitment` holds.
 #[test]
-fn the_prover_fills_the_stages_the_verifiers_write() {
+fn the_prover_fills_the_stages_the_circuits_write() {
     let setup = Setup::new();
     let sides = setup.sides();
     filled_as_written(&sides.native);
@@ -268,8 +287,7 @@ fn well_formed<S: Front<Pasta, TestR, R, HEADER_SIZE>>(
 }
 
 /// Each side's stage polynomials are well formed under their masks, and
-/// its whole circuit is satisfied by the stages the prover's run of the
-/// side fills.
+/// its whole circuit is satisfied by the stages the prover fills.
 #[test]
 fn the_whole_circuits_are_satisfied() {
     let setup = Setup::new();

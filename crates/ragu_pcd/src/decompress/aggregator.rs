@@ -51,10 +51,10 @@ use rand::CryptoRng;
 use super::{
     common,
     native::Native,
-    nested::Nested,
+    nested::{Nested, Runs},
     online,
     prover::{Decompressed, Decompression},
-    stages::{DigitsStage, Front, InstanceStage, LiftsStage, Runs, num_runs},
+    stages::{DigitsStage, Front, InstanceStage, LiftsStage, num_runs},
 };
 use crate::{
     SelectableBackend,

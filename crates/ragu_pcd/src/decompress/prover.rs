@@ -4,9 +4,9 @@
 //!
 //! [`Witness::prepare`] runs the native verifier over a compressed proof,
 //! keeping what both sides allocate; [`Prepared::new`] lays a side of it
-//! out as the side's stages ([`Prepare`]) and runs the side's verifier
-//! natively to fill the lifts and digits stages, which the side's whole
-//! circuit then holds what the verifier writes to.
+//! out as the side's stages ([`Prepare`]), the lifts and digits stages
+//! among them as the side's verifier writes them, which the side's whole
+//! circuit then holds what it writes to.
 //!
 //! Every proof of a profile carries every extension circuit's polynomial,
 //! so every fuse runs both sides' circuits over some compressed proof. A
@@ -36,16 +36,6 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::{Cycle, Error, FixedGenerators, Result};
-#[cfg(test)]
-use ragu_core::{
-    drivers::{
-        Driver,
-        emulator::{Emulator, Wireless},
-    },
-    maybe::{Always, Maybe},
-};
-#[cfg(test)]
-use ragu_primitives::{Element, Point};
 use ragu_primitives::{Uendo, extract_endoscalar, lift_endoscalar};
 use rand::CryptoRng;
 use udon::{
@@ -53,8 +43,6 @@ use udon::{
     field::Field,
 };
 
-#[cfg(test)]
-use super::common::{Cells, Run, View};
 use super::{
     common::{
         self, AbValue, Aux, Prepared, Side, SideCircuit, Supplied, Tables, challenges_per_curve,
@@ -92,8 +80,8 @@ use crate::{
 };
 
 /// A compressed proof prepared for decompression: both sides' stages
-/// filled from the prover's native run of their verifiers over it, which
-/// the decompression step's fuse proves the pages over in place of the
+/// filled from the native verifier's values over it, which the
+/// decompression step's fuse proves the pages over in place of the
 /// canonical proof.
 pub struct Decompressed<C: IpaCycle + ProfiledCycle<Profile = Standard>>(pub(crate) Sides<C>);
 
@@ -1409,57 +1397,9 @@ pub(crate) fn nested_inputs<C: Cycle>(witness: &Witness<C>) -> Result<Vec<C::Sca
     )
 }
 
-/// A stage's values allocated as witnesses under a driver, for the tests'
-/// native run of a side.
-#[cfg(test)]
-struct Allocated<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
-    points: Vec<Point<'dr, D, P>>,
-    elements: Vec<Element<'dr, D>>,
-}
-
-#[cfg(test)]
-impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
-    fn alloc(dr: &mut D, values: &Values<D::F, P>) -> Result<Self> {
-        Ok(Allocated {
-            points: values
-                .points
-                .iter()
-                .map(|&point| Point::alloc(dr, D::just(|| point)))
-                .collect::<Result<Vec<_>>>()?,
-            elements: values
-                .elements
-                .iter()
-                .map(|&value| Element::alloc(dr, &mut (), D::just(|| value)))
-                .collect::<Result<Vec<_>>>()?,
-        })
-    }
-
-    fn view(&self) -> View<'_, 'dr, D, P> {
-        View {
-            points: &self.points[..],
-            elements: &self.elements[..],
-        }
-    }
-}
-
-#[cfg(test)]
-type Executor<F> = Emulator<Wireless<Always<()>, F>>;
-
 /// The endoscalars of raw challenges, as their bits.
 fn bits<F: Field>(raw: &[F]) -> Result<Vec<Uendo>> {
     raw.iter().map(|&raw| extract_endoscalar(raw)).collect()
-}
-
-/// What a native run of a side's verifier leaves: the two stages it
-/// writes, its lifts and its digits, and, on the circuit-field side, the
-/// compression transcript's digest.
-#[cfg(test)]
-pub(crate) struct Ran<F, P> {
-    pub lifts: Vec<F>,
-    pub digits: Vec<F>,
-    pub digest: Option<F>,
-    /// The points the side exposes.
-    pub exposed: Vec<P>,
 }
 
 impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
@@ -1560,59 +1500,6 @@ impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
             tables,
             aux,
             supplied,
-        })
-    }
-
-    /// Runs the side's verifier natively over the stages' values, as its
-    /// whole circuit runs it over their wires, and returns what it leaves:
-    /// the lifts and digits stages it writes, the points it exposes and
-    /// its transcript's digest. The lifts and digits stages `self` holds
-    /// are not read. The tests' oracle for what the prover fills, and for
-    /// an honest prover's stages over what a test has changed.
-    ///
-    /// # Errors
-    ///
-    /// Fails if a gadget cannot be given its witness, which a verified
-    /// proof's side does not.
-    #[cfg(test)]
-    pub(crate) fn run<K: Rank, const HEADER_SIZE: usize>(
-        &self,
-        params: &C::Params,
-    ) -> Result<Ran<S::F, S::P>> {
-        let mut dr = Executor::<S::F>::execute();
-        let instance = Allocated::alloc(&mut dr, &self.instance)?;
-        let messages = Allocated::alloc(&mut dr, &self.messages)?;
-        let online_input = Allocated::alloc(&mut dr, &self.online_input)?;
-        let online_query = Allocated::alloc(&mut dr, &self.online_query)?;
-        let layout = self.tables.layout;
-        let mut run = Run::new(
-            &self.tables,
-            instance.view(),
-            messages.view(),
-            [&online_input.elements[..], &online_query.elements[..]],
-            Cells::blank(layout.lifts),
-            Cells::blank(layout.digits),
-            (S::generators(params), S::u(params), S::poseidon(params)),
-            Executor::<S::F>::just(|| self),
-        );
-        let exposed = S::verify::<_, K, HEADER_SIZE>(&mut dr, &mut run)?;
-        let written = |cells: Cells<'_, '_, Executor<S::F>>| -> Result<Vec<S::F>> {
-            cells
-                .filled()
-                .into_iter()
-                .flatten()
-                .map(|value| {
-                    value.map(|element| *element.value().take()).ok_or_else(|| {
-                        Error::InvalidWitness("a side writes every value of its stages".into())
-                    })
-                })
-                .collect()
-        };
-        Ok(Ran {
-            digest: run.digest.as_ref().map(|digest| *digest.value().take()),
-            lifts: written(run.lifts)?,
-            digits: written(run.digits)?,
-            exposed: exposed.iter().map(|point| point.value().take()).collect(),
         })
     }
 }

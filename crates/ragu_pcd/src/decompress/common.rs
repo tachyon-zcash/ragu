@@ -5,6 +5,41 @@
 //! with its whole circuit, are [`native`](super::native) and
 //! [`nested`](super::nested).
 //!
+//! # This module, in order
+//!
+//! 1. The interfaces: [`Side`], what a side is configured by, and
+//!    [`SideCircuit`], the side's whole circuit ([`Whole`]).
+//! 2. The paging of a whole circuit, over its carry stage ([`Carried`]):
+//!    [`cut`] into the pages the side pins, [`checked`] against the
+//!    circuit where a registry is built, and [`planned`] for a prover to
+//!    trace the pages a registry build cut.
+//! 3. The [`StatementCircuit`], the one place the decompressed statement
+//!    reaches a claim.
+//! 4. What the prover gives a side's circuit and what the circuit gives
+//!    back: [`Prepared`], the stages' values with the auxiliary witnesses
+//!    ([`Aux`]) and the values supplied beside the stages ([`Supplied`]),
+//!    and [`Written`].
+//! 5. What a side's verifier is laid out by, a pure function of the proof
+//!    system's constants: the claims' plans ([`ClaimPlan`],
+//!    [`native_claims`], [`nested_claims`]), the challenges' positions
+//!    ([`squeezed`], [`fuse`]), the `ab` bridge stage's layout
+//!    ([`ab_layout`]), and the [`Tables`] that gather them, built once per
+//!    side and ranks ([`tables`]).
+//! 6. The verifier's state under a driver ([`Run`]): the stages it reads
+//!    ([`View`]), the two it writes ([`Cells`]), and how it obtains a
+//!    challenge's endoscalar ([`Challenge`]).
+//! 7. The steps both sides' verifiers take, each a method of [`Run`]: reads
+//!    of the stages; sums, Horner chains and full-width scalings of points
+//!    ([`Run::add_scaled`], [`Run::horner`], [`Run::scale`]); the claims,
+//!    fold, batch and IPA ([`Run::claims`], [`Run::fold`],
+//!    [`Run::batch_ipa`]); the digits each side writes and recomputes
+//!    ([`Run::write_digits`], [`Run::digits_sum`]); and, from the reduction
+//!    on, [`Run::registry`], [`Run::reduction`], [`Run::point_checks`] and
+//!    [`Run::points_on_curve`]. Each side's own steps are in its circuit's
+//!    file, with the side's verifier
+//!    ([`native::circuit`](super::native::circuit) and
+//!    [`nested::circuit`](super::nested::circuit)).
+//!
 //! # The two sides
 //!
 //! A side runs in one field of the cycle over the points of the curve
@@ -63,14 +98,16 @@
 //!
 //! # The verifier
 //!
-//! A side's verifier is one function over a driver
-//! ([`native_side`](super::native::native_side) and
-//! [`nested_side`](super::nested::nested_side)): it reads the compressed
-//! proof off the side's stages, does the native verifier's arithmetic in
-//! its field, the scalar checks of the other curve's reduction and the
-//! point checks of its own curve's, and returns the points the side
-//! exposes. The prover runs the same function natively to fill the two
-//! stages a side writes, its lifts and its digits ([`Cells`]).
+//! A side's verifier is its whole circuit's
+//! [`witness`](MultiStageCircuit::witness): it reads the compressed proof
+//! off the side's stages, does the native verifier's arithmetic in its
+//! field, the scalar checks of the other curve's reduction and the point
+//! checks of its own curve's, and outputs the points the side exposes.
+//! Beside its output it gives what it wrote to the two stages a side
+//! writes, its lifts and its digits ([`Written`]), as the internal
+//! circuits give the unified instance they compute. The prover fills those
+//! stages itself, before the circuit runs, so the circuit's run is not on
+//! its path.
 //!
 //! The verifier's parts follow one another as the native verifier's do: the two
 //! transcripts; the challenges' lifts; the targets, the reduction, the batch
@@ -220,20 +257,6 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// Fails if the claims cannot be enumerated or a stage's wires cannot
     /// be read off its layout.
     fn tables<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Tables>;
-    /// The side's verifier for a proof at rank `K`, run over `run`'s
-    /// stages: returns the points the side exposes, in the order the
-    /// profile's [`Binding`](crate::profile::Binding) names what they hold
-    /// to. The side's circuit runs its verifier itself; this is the tests'
-    /// oracle's way in ([`Prepared::run`]).
-    ///
-    /// # Errors
-    ///
-    /// Fails if a gadget does, or if the witness is not the side's.
-    #[cfg(test)]
-    fn verify<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
-        dr: &mut D,
-        run: &mut Run<'_, '_, 'dr, D, C, Self>,
-    ) -> Result<Vec<Point<'dr, D, Self::P>>>;
 }
 
 /// A side with its whole circuit: the side's verifier as one circuit over
@@ -241,13 +264,18 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
 /// which the pager cuts into the side's pages. Each side's is its own,
 /// [`native::Circuit`](super::native::Circuit) and
 /// [`nested::Circuit`](super::nested::Circuit), and takes the side's
-/// prepared witness.
+/// prepared witness and gives what its verifier wrote ([`Written`]).
 pub(crate) trait SideCircuit<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     Front<C, K, R, HEADER_SIZE>
 {
     /// The side's whole circuit.
     type Circuit<'p>: Pageable<Self::F, R, Carry = Carried<C, Self>>
-        + for<'source> MultiStageCircuit<Self::F, R, Witness<'source> = &'source Prepared<C, Self>>;
+        + for<'source> MultiStageCircuit<
+            Self::F,
+            R,
+            Witness<'source> = &'source Prepared<C, Self>,
+            Aux<'source> = Written<Self::F, Self::P>,
+        >;
 
     /// The side's whole circuit, laid out by `tables`.
     fn circuit(tables: Arc<Tables>, params: &C::Params) -> Whole<'_, C, Self, K, R, HEADER_SIZE>;
@@ -455,20 +483,6 @@ impl<C: Cycle, S: Side<C>, K: Rank> Len for Exposed<C, S, K> {
     }
 }
 
-/// One stage's wires as a side's verifier reads them.
-pub(crate) struct View<'a, 'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
-    pub points: &'a [Point<'dr, D, P>],
-    pub elements: &'a [Element<'dr, D>],
-}
-
-impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Clone for View<'_, 'dr, D, P> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Copy for View<'_, 'dr, D, P> {}
-
 /// What a side's verifier allocates beyond the stages: the challenges
 /// squeezed on the other side as their endoscalars' bits, and the other
 /// field's full-width scalars.
@@ -536,8 +550,8 @@ pub(crate) struct Supplied<F, P> {
 }
 
 /// Everything a side's verifier needs: the stages' values, the lifts and
-/// digits stages as the prover's run of the side fills them, the auxiliary
-/// witnesses and the side's tables.
+/// digits stages as the prover fills them ([`Prepare`](super::prover::Prepare)),
+/// the auxiliary witnesses and the side's tables.
 pub(crate) struct Prepared<C: Cycle, S: Side<C>> {
     pub tables: Arc<Tables>,
     pub instance: Values<S::F, S::P>,
@@ -557,7 +571,7 @@ pub(crate) struct Prepared<C: Cycle, S: Side<C>> {
     pub supplied: Supplied<S::F, S::P>,
     pub extra: Arc<S::Extra>,
     /// Circuit-field side: the compression transcript's digest, its last
-    /// squeeze, as the prover's run of the side leaves it.
+    /// squeeze, as the side's verifier squeezes it.
     pub digest: Option<S::F>,
 }
 
@@ -577,6 +591,19 @@ impl<C: Cycle, S: Side<C>> Clone for Prepared<C, S> {
             digest: self.digest,
         }
     }
+}
+
+/// What a side's whole circuit gives beside its output: the values its
+/// verifier writes to the lifts and digits stages, as it computes them
+/// rather than as the stages hold them, and the points it exposes. The
+/// prover fills the stages before the circuit runs, so it does not read
+/// these; they are what an honest prover's stages are, over whatever the
+/// circuit was given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Written<F, P> {
+    pub lifts: Vec<F>,
+    pub digits: Vec<F>,
+    pub exposed: Vec<P>,
 }
 
 /// The scalings a challenge's bits are read for: a chain reads them again
@@ -891,8 +918,8 @@ pub(crate) struct Tables {
 struct Kept<C, S, K, R, const HEADER_SIZE: usize>(PhantomData<fn() -> (C, S, K, R)>);
 
 /// Side `S`'s tables for proofs at rank `K` in a circuit at rank `R`, built
-/// once ([`memo`]): what the side's whole circuit and the prover's run of
-/// the side are laid out by.
+/// once ([`memo`]): what the side's whole circuit and the prover's
+/// preparation of the side are laid out by.
 ///
 /// # Errors
 ///
@@ -907,54 +934,91 @@ where
     memo::<Kept<C, S, K, R, HEADER_SIZE>, _>(|| S::tables::<K, R, HEADER_SIZE>().map(Arc::new))
 }
 
-/// A stage the side writes, its lifts or its digits: the stage's wires
-/// where the side's circuit loads them, each held to what the side writes
-/// there. The prover fills the stage itself
-/// ([`Prepare`](super::prover::Prepare)); the tests' oracle runs the side
-/// natively to keep what it writes instead.
-pub(crate) enum Cells<'a, 'dr, D: Driver<'dr>> {
-    Loaded(&'a [Element<'dr, D>]),
-    #[cfg(test)]
-    Filled(Vec<Option<Element<'dr, D>>>),
+/// One stage's wires as a side's verifier reads them.
+pub(crate) struct View<'a, 'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
+    pub points: &'a [Point<'dr, D, P>],
+    pub elements: &'a [Element<'dr, D>],
 }
 
-impl<'dr, D: Driver<'dr>> Cells<'_, 'dr, D> {
-    /// A stage of `len` values for the side to fill.
-    #[cfg(test)]
-    pub(crate) fn blank(len: usize) -> Self {
-        Cells::Filled(vec![None; len])
+impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Clone for View<'_, 'dr, D, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Copy for View<'_, 'dr, D, P> {}
+
+/// A stage the side writes, its lifts or its digits: the stage's wires
+/// where the side's circuit loads them, each held to what the side writes
+/// there, and what it wrote. The prover fills the stage before the circuit
+/// runs ([`Prepare`](super::prover::Prepare)); the circuit gives what it
+/// wrote beside its output ([`Written`]).
+pub(crate) struct Cells<'a, 'dr, D: Driver<'dr>> {
+    wires: &'a [Element<'dr, D>],
+    written: Vec<Option<Element<'dr, D>>>,
+}
+
+impl<'a, 'dr, D: Driver<'dr>> Cells<'a, 'dr, D> {
+    /// The stage loaded as `wires`, nothing written yet.
+    pub(crate) fn new(wires: &'a [Element<'dr, D>]) -> Self {
+        Cells {
+            wires,
+            written: vec![None; wires.len()],
+        }
     }
 
-    /// Writes `value` at `slot`: holds the stage's wire to it, or keeps it.
+    /// Writes `value` at `slot`: holds the stage's wire to it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot was written before.
     pub(super) fn write(&mut self, dr: &mut D, slot: usize, value: Element<'dr, D>) -> Result<()> {
-        match self {
-            Cells::Loaded(wires) => value.enforce_equal(dr, &wires[slot]),
-            #[cfg(test)]
-            Cells::Filled(values) => {
-                values[slot] = Some(value);
-                Ok(())
-            }
-        }
+        assert!(
+            self.written[slot].is_none(),
+            "a stage's slot is written once"
+        );
+        value.enforce_equal(dr, &self.wires[slot])?;
+        self.written[slot] = Some(value);
+        Ok(())
     }
 
-    /// The stage's value at `slot`: its wire, or what the side wrote.
+    /// The stage's wire at `slot`, which the side has written.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the side has not written the slot: a verifier reads what
+    /// it wrote, so that a cut of the circuit carries a stage's value no
+    /// further back than its write.
     pub(super) fn read(&self, slot: usize) -> Result<Element<'dr, D>> {
-        match self {
-            Cells::Loaded(wires) => Ok(wires[slot].clone()),
-            #[cfg(test)]
-            Cells::Filled(values) => values[slot].clone().ok_or_else(|| {
-                Error::InvalidWitness("a side reads a stage's value before it writes it".into())
-            }),
+        if self.written[slot].is_none() {
+            return Err(Error::InvalidWitness(
+                "a side reads a stage's value before it writes it".into(),
+            ));
         }
+        Ok(self.wires[slot].clone())
     }
 
-    /// What the side wrote, slot by slot, where it filled the stage.
-    #[cfg(test)]
-    pub(crate) fn filled(self) -> Option<Vec<Option<Element<'dr, D>>>> {
-        match self {
-            Cells::Loaded(_) => None,
-            Cells::Filled(values) => Some(values),
-        }
+    /// The values the side wrote, slot by slot.
+    ///
+    /// # Errors
+    ///
+    /// Fails unless the side wrote every slot.
+    fn values(&self) -> Result<DriverValue<D, Vec<D::F>>> {
+        let written = self
+            .written
+            .iter()
+            .map(|value| {
+                value.clone().ok_or_else(|| {
+                    Error::InvalidWitness("a side writes every value of its stages".into())
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(D::just(|| {
+            written
+                .iter()
+                .map(|element| *element.value().take())
+                .collect()
+        }))
     }
 }
 
@@ -1073,11 +1137,6 @@ where
     /// Each foreign flag's part of it, by the flag's index, as the
     /// equalities under the flags leave them.
     pub(super) flag_bound: Vec<Option<Point<'dr, D, S::P>>>,
-    /// Circuit-field side: the compression transcript's digest, its last
-    /// squeeze, once the side has replayed the transcript, for the tests'
-    /// oracle.
-    #[cfg(test)]
-    pub digest: Option<Element<'dr, D>>,
 }
 
 impl<'a, 'w, 'dr, D, C, S> Run<'a, 'w, 'dr, D, C, S>
@@ -1086,9 +1145,9 @@ where
     C: Cycle,
     S: Side<C, F = D::F>,
 {
-    /// A run of side `S` over the stages' values `instance`, `messages`
-    /// and `online`, the input stage's then the query stage's, writing
-    /// `lifts` and `digits`.
+    /// A run of side `S` over the stages' wires `instance`, `messages` and
+    /// `online`, the input stage's then the query stage's, writing the
+    /// lifts and digits stages loaded as `lifts` and `digits`.
     ///
     /// # Panics
     ///
@@ -1100,8 +1159,8 @@ where
         instance: View<'a, 'dr, D, S::P>,
         messages: View<'a, 'dr, D, S::P>,
         online: [&'a [Element<'dr, D>]; 2],
-        lifts: Cells<'a, 'dr, D>,
-        digits: Cells<'a, 'dr, D>,
+        lifts: &'a [Element<'dr, D>],
+        digits: &'a [Element<'dr, D>],
         (generators, u, poseidon): (&'a [S::P], S::P, &'dr S::Poseidon),
         witness: DriverValue<D, &'w Prepared<C, S>>,
     ) -> Self {
@@ -1118,17 +1177,34 @@ where
             messages,
             online_input: online[0],
             online_query: online[1],
-            lifts,
-            digits,
+            lifts: Cells::new(lifts),
+            digits: Cells::new(digits),
             generators,
             u,
             poseidon,
             witness,
             bound: vec![None; scalars],
             flag_bound: vec![None; S::FLAGS],
-            #[cfg(test)]
-            digest: None,
         }
+    }
+
+    /// What the run wrote, with the points the side exposes, `exposed`:
+    /// what the side's whole circuit gives beside its output.
+    ///
+    /// # Errors
+    ///
+    /// Fails unless the side wrote every value of both stages.
+    pub(super) fn written(
+        &self,
+        exposed: &[Point<'dr, D, S::P>],
+    ) -> Result<DriverValue<D, Written<S::F, S::P>>> {
+        let lifts = self.lifts.values()?;
+        let digits = self.digits.values()?;
+        Ok(D::just(|| Written {
+            lifts: lifts.take(),
+            digits: digits.take(),
+            exposed: exposed.iter().map(|point| point.value().take()).collect(),
+        }))
     }
 
     /// The instance stage's commitment at `position` of the side's curve's

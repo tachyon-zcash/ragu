@@ -62,14 +62,19 @@
 //!   ([`ipa::s_at`](gadgets::ipa::s_at)), which the step binding checks
 //!   an opening against; and the signed-digit chains that scale the other
 //!   curve's points by full-width scalars.
-//! - [`native`] and [`nested`]: each side's circuit, its verifier as
-//!   straight-line code, reading the compressed proof's data from stages and
-//!   deriving the commitments, $\[H\]$ and the IPA's final check as endoscalar
-//!   chains over the other curve's points. [`common`] holds what the two share:
-//!   the [`Side`](common::Side) and [`SideCircuit`](common::SideCircuit)
-//!   interfaces, the paging of a side's circuit, the statement circuit, the
-//!   prepared witness and the verifier's steps from the reduction on;
-//!   [`stages`] holds the stages they read. The circuit takes two ranks, the
+//! - [`native`] and [`nested`]: each side, laid out as the internal
+//!   recursion's sides are: what the side is configured by, its whole
+//!   circuit ([`native::circuit`], [`nested::circuit`]), whose
+//!   [`witness`](ragu_circuits::staging::MultiStageCircuit::witness) is the
+//!   side's verifier as straight-line code, reading the compressed proof's
+//!   data from stages and deriving the commitments, $\[H\]$ and the IPA's
+//!   final check as endoscalar chains over the other curve's points, and the
+//!   stages that open its chain ([`native::stages`], [`nested::stages`]).
+//!   [`common`] holds what the two share: the [`Side`](common::Side) and
+//!   [`SideCircuit`](common::SideCircuit) interfaces, the paging of a side's
+//!   circuit, the statement circuit, the prepared witness and the verifier's
+//!   steps from the reduction on; [`stages`] holds the stage types and
+//!   layout both read. The circuit takes two ranks, the
 //!   compressed proof's and its own, an aggregator's being
 //!   [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank), and has
 //!   many times the gates of a polynomial at its own, so the pager
@@ -83,8 +88,9 @@
 //!   batches, which hold the registry evaluations the two sides read. A
 //!   registry build cuts each side's circuit once, holds the pages to the
 //!   circuit, and registers each page at its extension circuit.
-//! - [`prover`]: the prover's native run of each side's verifier, which
-//!   fills the two stages the side writes, and the extension's polynomials
+//! - [`prover`]: the prover's half of each side, which fills the side's
+//!   stages from the native verifier's values, the two the side's verifier
+//!   writes among them, and the extension's polynomials
 //!   for every proof from the canonical compressed proof the application
 //!   holds.
 //! - The decompression step
