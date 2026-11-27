@@ -1429,3 +1429,88 @@ fn a_returned_stage_wire_is_read() -> Result<()> {
     assert_eq!(read, [[4, 4]]);
     Ok(())
 }
+
+/// Consecutive gates linked by their a-wires, with extra reads and an
+/// optional public output from a d-wire.
+#[derive(Clone, Copy)]
+struct Linked {
+    gates: usize,
+    extra: &'static [(usize, usize)],
+    output: Option<usize>,
+}
+
+impl Circuit<Fp> for Linked {
+    type Instance<'source> = ();
+    type Witness<'source> = ();
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        _: DriverValue<D, ()>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(Element::zero(dr))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        _: DriverValue<D, ()>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+        let mut wires = Vec::new();
+        let mut output = Element::zero(dr);
+        for i in 0..self.gates {
+            let (a, _, _, extra) = dr.gate(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
+            let d = dr.assign_extra(extra, || Ok(Coeff::Zero))?;
+            if self.output == Some(i) {
+                output = Element::promote(d, D::just(|| Fp::ZERO));
+            }
+            wires.push(a);
+        }
+        for (i, j) in (0..self.gates - 1)
+            .map(|i| (i, i + 1))
+            .chain(self.extra.iter().copied())
+        {
+            dr.enforce_zero(|lc| lc.add(&wires[i]).sub(&wires[j]))?;
+        }
+        Ok(WithAux::new(output, D::unit()))
+    }
+}
+
+#[test]
+fn retry_counts_each_export_once() -> Result<()> {
+    let six = Linked {
+        gates: 6,
+        extra: &[(0, 2), (2, 5)],
+        output: None,
+    };
+    // Both carry stages take two gates, leaving room for two own gates per page.
+    let roomy = Pages::cut_within(MultiStage::new(Flat::<_, 4>(six)), 4, 5)?.check()?;
+    assert_eq!(roomy.pages().layout().starts, [1, 3, 5, 7]);
+    assert_eq!(roomy.pages().report().slots, 4);
+    let tight = Pages::cut_within(MultiStage::new(Flat::<_, 3>(six)), 4, 5)?.check()?;
+    assert_eq!(tight.pages().layout().starts, [1, 2, 4, 6]);
+    assert_eq!(tight.pages().report().slots, 3);
+    Ok(())
+}
+
+#[test]
+fn retry_shifts_the_grid_when_the_output_needs_an_extra_slot() -> Result<()> {
+    let room = GRID + 2;
+    let circuit = Linked {
+        gates: 2 * GRID,
+        extra: &[],
+        output: Some(room - 1),
+    };
+    // Both carry stages take one gate. The latest even cut leaves the output
+    // on the first page. The latest shifted cut puts it on the last page.
+    let limit = 2 + room;
+    let roomy = Pages::cut_within(MultiStage::new(Flat::<_, 2>(circuit)), 2, limit)?.check()?;
+    assert_eq!(roomy.pages().report().slots, 2);
+    assert_eq!(roomy.pages().layout().starts, [1, room + 1]);
+    let tight = Pages::cut_within(MultiStage::new(Flat::<_, 1>(circuit)), 2, limit)?.check()?;
+    assert_eq!(tight.pages().report().slots, 1);
+    assert_eq!(tight.pages().layout().starts, [1, room]);
+    Ok(())
+}

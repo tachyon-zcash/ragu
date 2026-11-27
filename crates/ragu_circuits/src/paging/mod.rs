@@ -19,7 +19,12 @@
 //! each constraint, and with them what the carry stage holds. It places
 //! the circuit's gates in an order, that in which the circuit allocates
 //! them or one that puts a gate allocated long before its use beside the
-//! gates it feeds, and gives each page a run of them. It gives the same
+//! gates it feeds, and gives each page a run of them. It first minimizes
+//! wire crossings. If every placement exceeds the carry capacity, it
+//! retries counting each wire at the boundary of its exporting page.
+//! If carry still exceeds capacity, it shifts the grid by half a stretch
+//! and tries that score once more. Each pass chooses the placement using
+//! the actual number of slots. It gives the same
 //! pages each time it runs on a circuit, and none of its choices is
 //! trusted: [`Pages::check`] holds its pages to the unpaged circuit (see
 //! [Invariants](#invariants)).
