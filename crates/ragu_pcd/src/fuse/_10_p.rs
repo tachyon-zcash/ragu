@@ -408,8 +408,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         if C::Profile::PAGE_COUNTS.nested_endoscaling_step.num_pages() > 1 {
             let mut pages = builder.take_nested_pages(&self.nested_plans);
             for step in 0..num_steps {
-                let (step_rx, _) = C::Profile::prove_internal(
-                    &mut pages,
+                let (step_rx, _) = pages.prove(
                     paging::Circuit::NestedEndoscalingStep(step as u32),
                     MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step)),
                     registry,
@@ -505,8 +504,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         if C::Profile::PAGE_COUNTS.endoscaling_step.num_pages() > 1 {
             let mut pages = builder.take_native_pages(&self.native_plans);
             for step in 0..num_steps {
-                let (step_rx, _) = C::Profile::prove_internal(
-                    &mut pages,
+                let (step_rx, _) = pages.prove(
                     paging::Circuit::EndoscalingStep(step as u32),
                     native::circuits::endoscaling_step::Circuit::<C, R>::new(step),
                     registry,

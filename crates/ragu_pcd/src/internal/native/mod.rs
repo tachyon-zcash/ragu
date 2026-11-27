@@ -1117,20 +1117,17 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::final_mask(
             )?),
-            BindEndoscalarCircuit => C::Profile::register_internal(
-                &mut pages,
+            BindEndoscalarCircuit => pages.circuit(
                 registry,
                 paging::Circuit::BindEndoscalar,
                 circuits::bind_endoscalar::Circuit::<C, R>::new(),
             )?,
-            EndoscalingStep(step) => C::Profile::register_internal(
-                &mut pages,
+            EndoscalingStep(step) => pages.circuit(
                 registry,
                 paging::Circuit::EndoscalingStep(step),
                 circuits::endoscaling_step::Circuit::<C, R>::new(step as usize),
             )?,
-            Hashes1Circuit => C::Profile::register_internal(
-                &mut pages,
+            Hashes1Circuit => pages.circuit(
                 registry,
                 paging::Circuit::Hashes1,
                 circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, RevdotParameters<C::Profile>>::new(
@@ -1138,39 +1135,30 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                     log2_circuits,
                 ),
             )?,
-            Hashes2Circuit => C::Profile::register_internal(
-                &mut pages,
+            Hashes2Circuit => pages.circuit(
                 registry,
                 paging::Circuit::Hashes2,
                 circuits::hashes_2::Circuit::<C, R, HEADER_SIZE, RevdotParameters<C::Profile>>::new(
                     params,
                 ),
             )?,
-            CollapseCircuit => C::Profile::register_internal(
-                &mut pages,
+            CollapseCircuit => pages.circuit(
                 registry,
                 paging::Circuit::Collapse,
                 circuits::collapse::Circuit::<C, R, HEADER_SIZE, RevdotParameters<C::Profile>>::new(
                 ),
             )?,
-            ComputeVCircuit => C::Profile::register_internal(
-                &mut pages,
+            ComputeVCircuit => pages.circuit(
                 registry,
                 paging::Circuit::ComputeV,
                 circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(),
             )?,
             BindChallengesCircuit(k) => {
                 crate::with_binder!(k, C, R, HEADER_SIZE, params, |circuit| {
-                    C::Profile::register_internal(
-                        &mut pages,
-                        registry,
-                        paging::Circuit::BindChallenges(k),
-                        circuit,
-                    )?
+                    pages.circuit(registry, paging::Circuit::BindChallenges(k), circuit)?
                 })
             }
-            BindBetaCircuit => C::Profile::register_internal(
-                &mut pages,
+            BindBetaCircuit => pages.circuit(
                 registry,
                 paging::Circuit::BindBeta,
                 circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(params),

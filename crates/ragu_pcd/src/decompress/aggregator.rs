@@ -302,8 +302,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         }
     };
 
-    crate::paged_internal_circuits!();
-
     type Context<'params, Base, R, B>
         = Decompression<'params, Base, R, HEADER_SIZE, B>
     where

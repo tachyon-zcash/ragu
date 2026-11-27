@@ -53,8 +53,6 @@ impl Profile for PagedEverything {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
-
-    ragu_pcd::paged_internal_circuits!();
 }
 
 /// Proves a leaf, a node over two leaves and a node over two nodes under

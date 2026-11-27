@@ -780,8 +780,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             EndoscalingStep(step) => {
                 let step_circuit =
                     self::EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step as usize);
-                C::Profile::register_internal(
-                    &mut pages,
+                pages.circuit(
                     registry,
                     paging::Circuit::NestedEndoscalingStep(step),
                     MultiStage::new(step_circuit),
@@ -789,8 +788,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             }
             Collapse => {
                 let circuit = circuits::collapse::Circuit::<C::HostCurve, R, C::Profile>::new();
-                C::Profile::register_internal(
-                    &mut pages,
+                pages.circuit(
                     registry,
                     paging::Circuit::NestedCollapse,
                     MultiStage::new(circuit),
@@ -798,8 +796,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             }
             ComputeV => {
                 let circuit = circuits::compute_v::Circuit::<C::HostCurve, R, C::Profile>::new();
-                C::Profile::register_internal(
-                    &mut pages,
+                pages.circuit(
                     registry,
                     paging::Circuit::NestedComputeV,
                     MultiStage::new(circuit),

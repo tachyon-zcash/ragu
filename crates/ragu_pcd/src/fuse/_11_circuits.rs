@@ -85,8 +85,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             native::InternalCircuitIndex::ExtensionCircuit(circuit).circuit_index::<C::Profile>()
         };
 
-        let (hashes_1_rx, unified) = C::Profile::prove_internal(
-            &mut pages,
+        let (hashes_1_rx, unified) = pages.prove(
             paging::Circuit::Hashes1,
             native::circuits::hashes_1::Circuit::<
                 C,
@@ -108,8 +107,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &mut *rng,
         )?;
 
-        let (hashes_2_rx, unified) = C::Profile::prove_internal(
-            &mut pages,
+        let (hashes_2_rx, unified) = pages.prove(
             paging::Circuit::Hashes2,
             native::circuits::hashes_2::Circuit::<
                 C,
@@ -127,8 +125,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &mut *rng,
         )?;
 
-        let (collapse_rx, unified) = C::Profile::prove_internal(
-            &mut pages,
+        let (collapse_rx, unified) = pages.prove(
             paging::Circuit::Collapse,
             native::circuits::collapse::Circuit::<
                 C,
@@ -168,8 +165,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             rng,
         )?;
 
-        let (compute_v_rx, unified) = C::Profile::prove_internal(
-            &mut pages,
+        let (compute_v_rx, unified) = pages.prove(
             paging::Circuit::ComputeV,
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(),
             &self.native_registry,
@@ -191,8 +187,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let mut bind_challenges_rxs = Vec::with_capacity(native::NUM_BINDERS);
         for k in 0..native::NUM_BINDERS {
             let (rx, updated) = crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
-                C::Profile::prove_internal(
-                    &mut pages,
+                pages.prove(
                     paging::Circuit::BindChallenges(k as u32),
                     circuit,
                     &self.native_registry,
@@ -217,8 +212,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder.set_native_collapse_rx(collapse_rx);
 
         // Native circuit binding the children's nested beta commitments.
-        let (bind_beta_rx, unified) = C::Profile::prove_internal(
-            &mut pages,
+        let (bind_beta_rx, unified) = pages.prove(
             paging::Circuit::BindBeta,
             native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params),
             &self.native_registry,
@@ -234,8 +228,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         // The native walk's inputs: the bits the endoscaling steps walked
         // with are pre_beta's, and the points lie on the curve.
-        let (bind_endoscalar_rx, unified) = C::Profile::prove_internal(
-            &mut pages,
+        let (bind_endoscalar_rx, unified) = pages.prove(
             paging::Circuit::BindEndoscalar,
             native::circuits::bind_endoscalar::Circuit::<C, R>::new(),
             &self.native_registry,
@@ -381,8 +374,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             nested::InternalCircuitIndex::ExtensionCircuit(circuit).circuit_index::<C::Profile>()
         };
 
-        let (collapse_rx, instance) = C::Profile::prove_internal(
-            &mut pages,
+        let (collapse_rx, instance) = pages.prove(
             paging::Circuit::NestedCollapse,
             MultiStage::new(nested::circuits::collapse::Circuit::<
                 C::HostCurve,
@@ -396,8 +388,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &mut *rng,
         )?;
 
-        let (compute_v_rx, instance) = C::Profile::prove_internal(
-            &mut pages,
+        let (compute_v_rx, instance) = pages.prove(
             paging::Circuit::NestedComputeV,
             MultiStage::new(nested::circuits::compute_v::Circuit::<
                 C::HostCurve,
