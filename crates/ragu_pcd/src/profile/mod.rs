@@ -63,10 +63,9 @@ use core::{
 };
 
 use ragu_circuits::{
-    Circuit, CircuitExt, WithAux,
-    paging::Pageable,
+    Circuit, WithAux,
     polynomials::{Rank, sparse},
-    registry::{CircuitIndex, Registry, RegistryBuilder},
+    registry::{Registry, RegistryBuilder},
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
 // Without `baked` the module docs are its only use.
@@ -118,12 +117,27 @@ impl PageCount {
 
     /// `pages` pages, over a carry stage that holds nothing yet
     /// ([`carrying`](Self::carrying)).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pages` is zero: a circuit takes a page. In a profile's
+    /// constant, that is a compile error.
     pub const fn new(pages: usize) -> Self {
+        assert!(pages >= 1, "a circuit takes at least one page");
         PageCount { pages, carry: 0 }
     }
 
     /// The same pages, over a carry stage of `values` values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit is whole and `values` is not zero: a circuit
+    /// in one page has no carry stage.
     pub const fn carrying(mut self, values: usize) -> Self {
+        assert!(
+            self.pages > 1 || values == 0,
+            "a circuit in one page has no carry stage"
+        );
         self.carry = values;
         self
     }
@@ -317,64 +331,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The pages the profile cuts each of the fuse's internal circuits
     /// into (see [`PageCounts`]). Experimental; the default leaves every
-    /// circuit whole. A profile that cuts any also takes the pager's hooks
-    /// ([`paged_internal_circuits!`](crate::paged_internal_circuits)).
+    /// circuit whole.
     const PAGE_COUNTS: PageCounts = PageCounts::WHOLE;
-
-    /// Registers one of the fuse's internal circuits. The default registers
-    /// it whole, and so compiles nothing of the pager into a profile that
-    /// pages nothing; a profile that pages takes the pager's
-    /// ([`paged_internal_circuits!`](crate::paged_internal_circuits)).
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from registering the circuit.
-    #[doc(hidden)]
-    fn register_internal<'params, F, R, S>(
-        pages: &mut paging::Registrar<'params, F, R>,
-        registry: RegistryBuilder<'params, F, R>,
-        which: paging::Circuit,
-        circuit: MultiStage<F, R, S>,
-    ) -> Result<RegistryBuilder<'params, F, R>>
-    where
-        F: Field,
-        R: Rank,
-        S: Pageable<F, R>,
-        MultiStage<F, R, S>: 'params,
-    {
-        let _ = (pages, which);
-        registry.register_internal_circuit(circuit)
-    }
-
-    /// Traces one of the fuse's internal circuits and assembles its
-    /// polynomial at registry index `own`. The default traces it whole, as
-    /// [`register_internal`](Self::register_internal) registers it.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from tracing or assembling the circuit.
-    #[doc(hidden)]
-    #[allow(clippy::too_many_arguments)]
-    fn prove_internal<'source, F, R, S, RNG>(
-        pages: &mut paging::Prover<F, R>,
-        which: paging::Circuit,
-        circuit: MultiStage<F, R, S>,
-        registry: &Registry<'_, F, R>,
-        own: CircuitIndex,
-        extension: impl Fn(u32) -> CircuitIndex,
-        witness: impl Fn() -> S::Witness<'source>,
-        rng: &mut RNG,
-    ) -> Result<(sparse::Polynomial<F, R>, S::Aux<'source>)>
-    where
-        F: Field,
-        R: Rank,
-        S: Pageable<F, R>,
-        RNG: CryptoRng,
-    {
-        let _ = (pages, which, extension);
-        let (trace, aux) = circuit.trace(witness())?.into_parts();
-        Ok((registry.assemble(&trace, own, rng)?, aux))
-    }
 
     /// What the profile's prover holds across proofs beyond the proof
     /// under construction: the extension's witness source, which an

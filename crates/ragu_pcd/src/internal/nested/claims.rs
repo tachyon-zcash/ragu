@@ -82,20 +82,17 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 }
 
 /// A nested circuit a profile can page: the polynomial of its own slot and
-/// the stages it reserves, in order, where its claim loads them. A step
-/// reserves the bridge-hash stage without loading it.
-fn pageable(circuit: paging::Circuit) -> (RxIndex, Vec<Option<RxIndex>>) {
-    let every = || RxIndex::STAGES.into_iter().map(Some).collect();
+/// the stages its claim loads, in the order it reserves them. A step
+/// reserves the bridge-hash stage without loading it, so that stage is not
+/// in its list.
+fn pageable(circuit: paging::Circuit) -> (RxIndex, Vec<RxIndex>) {
+    let every = || RxIndex::STAGES.into_iter().collect();
     match circuit {
         paging::Circuit::NestedCollapse => (RxIndex::INSTANCE[0], every()),
         paging::Circuit::NestedComputeV => (RxIndex::INSTANCE[1], every()),
         paging::Circuit::NestedEndoscalingStep(step) => (
             RxIndex::EndoscalingStep(step),
-            alloc::vec![
-                Some(RxIndex::EndoscalarStage),
-                None,
-                Some(RxIndex::PointsStage)
-            ],
+            alloc::vec![RxIndex::EndoscalarStage, RxIndex::PointsStage],
         ),
         _ => unreachable!("a nested circuit"),
     }
@@ -107,7 +104,6 @@ fn page_stages(placement: &paging::Placement) -> Vec<RxIndex> {
     pageable(placement.circuit)
         .1
         .into_iter()
-        .flatten()
         .chain([RxIndex::ExtensionStage(placement.carry)])
         .collect()
 }

@@ -13,19 +13,21 @@ use ragu_core::{
     Coeff, Result,
     convert::WireMap,
     drivers::{Driver, DriverTypes, DriverValue, LinearExpression},
-    gadgets::{Bound, Gadget},
+    gadgets::{Bound, Gadget, Kind},
     maybe::{Always, Maybe, MaybeKind},
 };
+use ragu_primitives::{Element, WithSuffix, vec::Len};
 use udon::field::Field;
 
 use super::{
-    Captured, Carry, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned, Program,
-    Stages, diverged,
+    Captured, Carry, Checked, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned,
+    Program, Stages, diverged,
 };
 use crate::{
-    Blind, Circuit, MaskObject, WithAux, floor_planner, into_wiring_object,
+    Blind, Circuit, CircuitExt, MaskObject, WithAux, floor_planner, into_wiring_object,
     polynomials::{Rank, sparse},
     staging::{MultiStage, MultiStageCircuit, StageBuilder, StageExt},
+    trace::Trace,
 };
 
 impl<F: Field> Program<F> {
@@ -42,20 +44,36 @@ impl<F: Field> Program<F> {
     ) -> Result<Vec<D::Wire>> {
         // The page's own gates start past the reserved ones.
         let first = reserved.len() / 2 + 1;
-        // A reserved gate has its $a$ and $d$ wires, which hold a stage's
-        // values, and no other: a program that names another is not one a
-        // plan of a circuit over stages compiles.
-        let named = |wire: u32| wire & DERIVED == 0 && (1..first as u32).contains(&(wire / 4));
-        let lists = self
+        // A program names the page's wires alone: `ONE`, the $a$ and $d$
+        // wires of a reserved gate, which hold a stage's values, the wires
+        // of the page's own gates, and the combinations made before the one
+        // that names them. A program that names another wire is not one a
+        // plan of a circuit over stages compiles, and nothing of the plan
+        // is trusted: it is refused before the page allocates.
+        let end = first + self.own;
+        let known = |wire: u32, made: usize| {
+            if wire & DERIVED != 0 {
+                return ((wire ^ DERIVED) as usize) < made;
+            }
+            match (wire / 4) as usize {
+                0 => wire == ONE,
+                gate if gate < first => matches!(wire % 4, 0 | 3),
+                gate => gate < end,
+            }
+        };
+        let sums = self
             .sums
             .iter()
-            .chain(&self.constraints)
-            .chain(&self.outputs);
-        if lists
+            .enumerate()
+            .all(|(made, terms)| terms.iter().all(|&(wire, _)| known(wire, made)));
+        let rest = self
+            .constraints
+            .iter()
+            .chain(&self.outputs)
             .flatten()
-            .any(|&(wire, _)| named(wire) && matches!(wire % 4, 1 | 2))
-        {
-            return Err(diverged("a page names a wire a stage does not hold"));
+            .all(|&(wire, _)| known(wire, self.sums.len()));
+        if !(sums && rest) {
+            return Err(diverged("a page names a wire it does not hold"));
         }
         let mut gates: Vec<[D::Wire; 4]> = Vec::with_capacity(self.own);
         for gate in 0..self.own {
@@ -145,19 +163,15 @@ impl<F: Field, K: MaybeKind> Shadow<F, K> {
         }
     }
 
-    /// Whether the circuit emitted what its plan saw.
-    fn follows(&self, plan: &Plan<F>, sums: usize) -> Result<()> {
-        if self.gates != plan.num_gates || self.constraints != plan.homes.len() || self.sums != sums
-        {
+    /// Whether the circuit emitted the `gates`, the constraints and the
+    /// combinations its plan was made from.
+    fn follows(&self, plan: &Plan<F>, gates: usize) -> Result<()> {
+        let (constraints, sums) = (plan.constraints, plan.sums);
+        if self.gates != gates || self.constraints != constraints || self.sums != sums {
             return Err(diverged(&format!(
                 "the walk saw {} gates, {} constraints and {} combinations where the plan has \
                  {}, {} and {}",
-                self.gates,
-                self.constraints,
-                self.sums,
-                plan.num_gates,
-                plan.homes.len(),
-                sums,
+                self.gates, self.constraints, self.sums, gates, constraints, sums,
             )));
         }
         Ok(())
@@ -233,14 +247,15 @@ impl<F: Field, K: MaybeKind, D: DriverTypes<ImplField = F>> WireMap<F> for Resol
 }
 
 impl<F: Field> Planned<F> {
-    /// The layout of the pages' polynomials.
+    /// The layout of the pages' polynomials, for the circuit the pages
+    /// were cut from.
     pub fn layout(&self) -> &Layout {
-        &self.plan.layout
+        &self.layout
     }
 
-    /// What the circuit was cut over.
+    /// What that circuit was cut over.
     pub fn stages(&self) -> &Stages {
-        &self.plan.stages
+        &self.stages
     }
 }
 
@@ -250,6 +265,8 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
         Planned {
             plan: self.plan.clone(),
             report: self.report.clone(),
+            stages: self.stages.clone(),
+            layout: self.layout.clone(),
         }
     }
 
@@ -261,37 +278,35 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     /// pages that are not the registered circuit's, as any other change
     /// to a registered circuit does.
     pub fn planned(circuit: impl Into<Arc<MultiStage<F, R, S>>>, planned: &Planned<F>) -> Self {
-        Pages {
-            circuit: circuit.into(),
-            plan: planned.plan.clone(),
-            report: planned.report.clone(),
-            stages: Stages::of::<F, R, S>().pages(planned.plan.pages()),
-        }
+        Self::over(circuit.into(), planned.plan.clone(), planned.report.clone())
     }
 
-    /// Checks the pages' complete constraints against the circuit's own,
-    /// including the equations defining every carry slot. Each page gate
-    /// is mapped to its original gate, a carry slot or an otherwise unused
-    /// wire; the resulting linear forms must match exactly after the carry
-    /// definitions are accounted for.
+    /// Holds the pages to the circuit: their complete constraints against
+    /// the circuit's own, including the equations defining every carry
+    /// slot. Each page gate is mapped to its original gate, a carry slot
+    /// or an otherwise unused wire; the resulting linear forms must match
+    /// exactly after the carry definitions are accounted for. Only the
+    /// pages this gives can be registered ([`Checked`]).
     ///
     /// # Errors
     ///
     /// Fails if the plan is laid over other stages than the circuit's, a
-    /// walk fails, a gate is missing or repeated, a carry slot lacks its
-    /// definition, or the constraints differ.
-    pub fn check(&self) -> Result<()> {
-        super::check::check(self)
+    /// walk fails, a page names a wire it does not hold, a gate is missing
+    /// or repeated, a carry slot lacks its definition, or the constraints
+    /// differ.
+    pub fn check(self) -> Result<Checked<F, R, S>> {
+        super::check::check(&self)?;
+        Ok(Checked(self))
     }
 
     /// The layout of the pages' polynomials.
     pub fn layout(&self) -> &Layout {
-        &self.plan.layout
+        &self.layout
     }
 
     /// What the circuit was cut over.
     pub fn stages(&self) -> &Stages {
-        &self.plan.stages
+        &self.stages
     }
 
     /// A digest of what a registry holds of the circuit in pages: each
@@ -305,7 +320,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     ///
     /// Fails if a page does not fit rank `R`.
     pub fn digest(&self) -> Result<[u8; 32]> {
-        let layout = &self.plan.layout;
+        let layout = &self.layout;
         let pages = self.plan.pages();
         let mut state = blake2b_simd::Params::new()
             .hash_length(32)
@@ -347,7 +362,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     /// # Panics
     ///
     /// Panics if `index` is the last page or past it.
-    pub fn page(&self, index: usize) -> MultiStage<F, R, PagedCircuit<F, R, S>> {
+    pub(super) fn page(&self, index: usize) -> MultiStage<F, R, PagedCircuit<F, R, S>> {
         assert!(
             index + 1 < self.plan.pages(),
             "the last page is `last`'s, with the public output"
@@ -360,11 +375,39 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     }
 
     /// The last page, which carries the circuit's public output.
-    pub fn last(&self) -> MultiStage<F, R, LastPagedCircuit<F, R, S>> {
+    pub(super) fn last(&self) -> MultiStage<F, R, LastPagedCircuit<F, R, S>> {
         MultiStage::new(LastPagedCircuit {
             circuit: self.circuit.clone(),
             plan: self.plan.clone(),
         })
+    }
+
+    /// The trace of page `index`, which is not the last, from the values
+    /// of its gates ([`Captured::pages`]).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the page is given too few values, or cannot be traced.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is the last page or past it.
+    pub fn trace_page(&self, index: usize, values: &[[F; 4]]) -> Result<Trace<F>> {
+        Ok(self.page(index).trace(values)?.into_output())
+    }
+
+    /// The trace of the last page, from the circuit's witness, and what
+    /// the circuit gives beside its output.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from the circuit's witness, and fails if the
+    /// circuit emits other counts than the walk it was cut from.
+    pub fn trace_last<'source>(
+        &self,
+        witness: S::Witness<'source>,
+    ) -> Result<WithAux<Trace<F>, S::Aux<'source>>> {
+        self.last().trace(witness)
     }
 
     /// What one walk of the circuit with `witness` gives its pages: the
@@ -381,7 +424,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
         self.circuit
             .witness(&mut dr, Always::maybe_just(|| witness))?;
         let plan = &*self.plan;
-        dr.follows(plan, plan.sums)?;
+        dr.follows(plan, self.num_gates())?;
         let value = |wire: u32| dr.values[(wire / 4) as usize][(wire % 4) as usize];
         Ok(Captured {
             pages: plan.held[..plan.pages() - 1]
@@ -410,6 +453,13 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
         blind: impl Into<Blind<F>>,
         values: &[F],
     ) -> Result<sparse::Polynomial<F, R>> {
+        let holds = <S::Carry as Len>::len();
+        if values.len() > holds {
+            return Err(diverged(&format!(
+                "the carry stage is given {} values and holds {holds}",
+                values.len()
+            )));
+        }
         <Carry<F, R, S> as StageExt<F, R>>::rx(blind, values)
     }
 
@@ -435,9 +485,32 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     }
 }
 
+impl<F: Field, R: Rank, S: Pageable<F, R>> Checked<F, R, S> {
+    /// The pages, for what does not need them held to the circuit.
+    pub fn pages(&self) -> &Pages<F, R, S> {
+        &self.0
+    }
+
+    /// Page `index`, which is not the last, to register.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is the last page or past it.
+    pub fn page(&self, index: usize) -> MultiStage<F, R, PagedCircuit<F, R, S>> {
+        self.0.page(index)
+    }
+
+    /// The last page, which carries the circuit's public output, to
+    /// register.
+    pub fn last(&self) -> MultiStage<F, R, LastPagedCircuit<F, R, S>> {
+        self.0.last()
+    }
+}
+
 /// A paged circuit other than the last of its [`Pages`]: a multi-stage circuit
-/// over the circuit's stages and its carry stage, with no public output,
-/// which allocates and enforces what the plan compiled for it. Its witness
+/// over the circuit's stages and its carry stage, which allocates and
+/// enforces what the plan compiled for it. Its public output is a zero and
+/// nothing else, so its $k(Y)$ is constant. Its witness
 /// is the values of the gates it holds, in the order of its polynomial
 /// ([`Pages::capture`]).
 pub struct PagedCircuit<F: Field, R, S> {
@@ -450,18 +523,18 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for PagedCirc
     type Last = Carry<F, R, S>;
     type Instance<'source> = ();
     type Witness<'source> = &'source [[F; 4]];
-    type Output = ();
+    type Output = Kind![F; @WithSuffix<'_, _, ()>];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
-        _: &mut D,
+        dr: &mut D,
         _: DriverValue<D, ()>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
     {
-        Ok(())
+        Ok(WithSuffix::new((), Element::zero(dr)))
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -472,10 +545,15 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for PagedCirc
     where
         Self: 'dr,
     {
-        let (reserved, builder) = builder.reserve_through::<Self::Last>()?;
+        let (reserved, builder) = builder.reserve_chain()?;
         let dr = builder.finish();
         self.plan.programs[self.index].replay(dr, &reserved, &witness)?;
-        Ok(WithAux::new((), D::unit()))
+        // The page's whole output: a zero, which keeps the page from
+        // satisfying an instance of any circuit that has an output.
+        Ok(WithAux::new(
+            WithSuffix::new((), Element::zero(dr)),
+            D::unit(),
+        ))
     }
 }
 
@@ -523,14 +601,14 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for LastPaged
         let last = plan.pages() - 1;
         let mut shadow = Shadow::<F, D::MaybeKind>::new();
         let (output, aux) = self.circuit.witness(&mut shadow, witness)?.into_parts();
-        shadow.follows(plan, plan.sums)?;
+        shadow.follows(plan, Stages::of::<F, R, S>().own_start() + plan.own())?;
         let values = D::just(|| {
             plan.held[last]
                 .iter()
                 .map(|&gate| shadow.values[gate as usize])
                 .collect::<Vec<_>>()
         });
-        let (reserved, builder) = builder.reserve_through::<Self::Last>()?;
+        let (reserved, builder) = builder.reserve_chain()?;
         let dr = builder.finish();
         let wires = plan.programs[last].replay(
             dr,

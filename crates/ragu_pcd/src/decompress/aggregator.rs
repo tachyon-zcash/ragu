@@ -216,6 +216,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     ///
     /// Fails if a schedule cannot be built or its circuits are not in
     /// transcript, work, digits order.
+    #[cfg(feature = "test-utils")]
     pub fn scheduled<Base, R>() -> Result<(Counts, Counts)>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -301,8 +302,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
             nested_endoscaling_step: PageCount::new(Self::NESTED_STEP_PAGES).carrying(32),
         }
     };
-
-    crate::paged_internal_circuits!();
 
     type Context<'params, Base, R, B>
         = Decompression<'params, Base, R, HEADER_SIZE, B>

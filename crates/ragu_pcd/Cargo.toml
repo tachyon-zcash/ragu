@@ -48,7 +48,7 @@ serde = ["dep:serde"]
 # Exposes `Application::verify_uncompressed` as a test oracle for the crate's
 # own tests, benchmarks and the fuzz harness. Production verification goes
 # through `Application::verify_compressed`.
-test-utils = []
+test-utils = ["ragu_circuits/test-utils"]
 # Exposes the hidden `fuzzing` module — proof corruption and the patcher seam
 # over the internal recursion circuits — used by the fuzz harness and the
 # crate's own tests. Not part of the stable public API. Its corruptions are

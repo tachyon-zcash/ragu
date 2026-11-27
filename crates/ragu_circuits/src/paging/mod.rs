@@ -166,7 +166,7 @@
 //! proven: the pages. This module holds what they share: the carry stage,
 //! the stages, the layout, and the plan between them.
 
-use alloc::{collections::BTreeMap, format, string::String, sync::Arc, vec::Vec};
+use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::{marker::PhantomData, ops::Range};
 
 use ragu_core::{
@@ -193,9 +193,11 @@ mod record;
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub use self::pager::reads;
 pub use self::{
     page::{LastPagedCircuit, PagedCircuit},
-    pager::{reads, size},
+    pager::size,
 };
 
 /// The flag of a planning wire that names a linear combination rather than
@@ -316,6 +318,7 @@ impl Stages {
     }
 
     /// The stage of a gate, and the gate's place in it.
+    #[cfg(any(test, feature = "test-utils"))]
     fn stage_of(&self, gate: usize) -> Option<(usize, usize)> {
         self.spans
             .iter()
@@ -369,6 +372,28 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// Where the pages of `plan` lie over `stages`: the carry stage after
+    /// the stages, and each page's run of the circuit's gates after the
+    /// page before it.
+    fn of<F: Field>(stages: &Stages, plan: &Plan<F>) -> Self {
+        let mut next = stages.own_start();
+        let starts = plan
+            .held
+            .iter()
+            .map(|held| {
+                let start = next;
+                next = next.saturating_add(held.len());
+                start
+            })
+            .collect();
+        Layout {
+            own_start: stages.own_start(),
+            carry: stages.carry_gates(),
+            limit: plan.limit,
+            starts,
+        }
+    }
+
     /// The pages.
     pub fn num_pages(&self) -> usize {
         self.starts.len()
@@ -437,50 +462,28 @@ pub struct PagingReport {
     pub cuts: Vec<usize>,
 }
 
-/// A carry slot a constraint reads off its home page.
-#[derive(Clone, Debug)]
-struct Link<F> {
-    /// The page whose wires the slot combines, which holds the slot to
-    /// them.
-    exporter: u32,
-    slot: u32,
-    /// The constraint names `scale` times the slot's combination.
-    scale: F,
-    /// Whether this constraint is the first to name the slot: the one its
-    /// exporter holds the slot to.
-    defines: bool,
-}
-
-/// Each constraint's home page and carry slots, fixed by one walk of the
-/// circuit, and what each page replays of it.
+/// What the pager hands over, and all it hands over: what each page holds
+/// and runs. Nothing of it is trusted, and [`Pages::check`] holds it to
+/// the circuit. Where the stages and the carry stage lie, where a gate of
+/// the circuit's is placed and how many gates the circuit has are not the
+/// pager's to say: they follow from the circuit's type and from `held`.
 #[derive(Clone, Debug)]
 struct Plan<F: Field> {
-    layout: Layout,
-    stages: Stages,
-    /// The gates the circuit allocates, the SYSTEM gate included.
-    num_gates: usize,
-    /// The home page of each constraint, in emission order.
-    homes: Vec<u32>,
-    /// The slots of the constraints that read any, by constraint.
-    links: BTreeMap<u32, Vec<Link<F>>>,
-    /// The slots of each wire of the public output, in traversal order;
-    /// their home is the last page.
-    outputs: Vec<Vec<Link<F>>>,
-    /// Each slot's combination, over wires named `4 * gate + kind` with
-    /// the gate counted over the unpaged circuit.
-    slots: Vec<Vec<(u32, F)>>,
-    /// For each gate of the circuit's own, in the order it allocates them,
-    /// the page that holds it and the gate's index in that page's
-    /// polynomial.
-    places: Vec<(u32, u32)>,
+    /// The gates a page's polynomial holds: a page's own gates end before
+    /// this one.
+    limit: usize,
     /// For each page, the gates of the circuit's own it holds, counted
     /// over the unpaged circuit, in the order of the page's polynomial.
     held: Vec<Vec<u32>>,
-    /// What each page allocates and enforces, once the plan is
-    /// [compiled](Self::compile).
+    /// Each slot's combination, over wires named `4 * gate + kind` with
+    /// the gate counted over the unpaged circuit.
+    slots: Vec<Vec<(u32, F)>>,
+    /// What each page allocates and enforces.
     programs: Vec<Program<F>>,
-    /// The linear combinations the circuit makes, likewise.
+    /// The linear combinations and the constraints the circuit makes: with
+    /// its gates, what a walk of it is counted against.
     sums: usize,
+    constraints: usize,
 }
 
 /// What one page allocates and enforces, taken off the plan and a walk of
@@ -505,27 +508,12 @@ struct Program<F: Field> {
 
 impl<F: Field> Plan<F> {
     fn pages(&self) -> usize {
-        self.layout.starts.len()
+        self.held.len()
     }
 
-    /// The page that holds a gate of the circuit's own, counted over the
-    /// unpaged circuit, and the gate's index in that page's polynomial.
-    fn place(&self, gate: usize) -> Option<(usize, usize)> {
-        let (page, local) = *self.places.get(gate.checked_sub(self.layout.own_start)?)?;
-        Some((page as usize, local as usize))
-    }
-
-    /// Refuses a carry stage too small for its slots.
-    fn fits(&self) -> Result<()> {
-        let holds = self.stages.carry;
-        if self.slots.len() > holds {
-            return refuse(format!(
-                "the circuit carries {} values between pages, more than the {holds} their carry \
-                 stage holds",
-                self.slots.len(),
-            ));
-        }
-        Ok(())
+    /// The gates of the circuit's own the pages hold between them.
+    fn own(&self) -> usize {
+        self.held.iter().map(Vec::len).sum()
     }
 }
 
@@ -539,11 +527,40 @@ pub struct Pages<F: Field, R: Rank, S: Pageable<F, R>> {
     circuit: Arc<MultiStage<F, R, S>>,
     plan: Arc<Plan<F>>,
     report: PagingReport,
-    /// What the circuit was cut over, as its type says: what
-    /// [`Pages::check`] holds the plan's to, since nothing of the plan is
-    /// trusted.
+    /// What the circuit is cut over, as its type says, and where its
+    /// pages' gates then lie: neither is the plan's to say.
     stages: Stages,
+    layout: Layout,
 }
+
+impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
+    /// `circuit` in the pages of `plan`, over the stages its type states.
+    fn over(circuit: Arc<MultiStage<F, R, S>>, plan: Arc<Plan<F>>, report: PagingReport) -> Self {
+        let stages = Stages::of::<F, R, S>().pages(plan.pages());
+        let layout = Layout::of(&stages, &plan);
+        Pages {
+            circuit,
+            plan,
+            report,
+            stages,
+            layout,
+        }
+    }
+
+    /// The gates the circuit allocates, the SYSTEM gate included, as the
+    /// pages hold them.
+    fn num_gates(&self) -> usize {
+        self.stages.own_start() + self.plan.own()
+    }
+}
+
+/// Pages that [`Pages::check`] held to their unpaged circuit: the only
+/// ones that hand out circuits to register.
+///
+/// The pager, and whatever kept its plan, is not trusted. A registry
+/// takes a page only through this type, so no page is registered that the
+/// check did not hold to the circuit.
+pub struct Checked<F: Field, R: Rank, S: Pageable<F, R>>(Pages<F, R, S>);
 
 /// The pages a circuit was cut into, apart from the circuit: what
 /// [`Pages::planned`] takes to page the same circuit again without cutting
@@ -552,6 +569,10 @@ pub struct Pages<F: Field, R: Rank, S: Pageable<F, R>> {
 pub struct Planned<F: Field> {
     plan: Arc<Plan<F>>,
     report: PagingReport,
+    /// Where the pages lay for the circuit they were cut from, to report:
+    /// [`Pages::planned`] derives them again for the circuit it is given.
+    stages: Stages,
+    layout: Layout,
 }
 
 /// What one walk of a circuit with a witness gives its pages

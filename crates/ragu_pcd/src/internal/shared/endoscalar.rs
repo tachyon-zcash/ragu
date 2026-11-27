@@ -286,6 +286,11 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G> Clone for EndoscalingStep<C, R, N, E
 }
 
 impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
+    /// The step of the walk this is.
+    pub(crate) fn step(&self) -> usize {
+        self.step
+    }
+
     /// Creates a new endoscaling step.
     ///
     /// Panics if `step >= NumStepsLen::<N, E>::len()`.

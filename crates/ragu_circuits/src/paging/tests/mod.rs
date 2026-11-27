@@ -88,7 +88,7 @@ fn fitted<S: Pageable<Fp, R>>(
     let fewest = own.div_ceil(page_gates).max(1);
     let mut last = None;
     for pages in fewest..fewest + 16 {
-        match Pages::cut(circuit.clone(), pages, limit) {
+        match Pages::cut_within(circuit.clone(), pages, limit) {
             Err(Error::GateBoundExceeded { .. }) => last = Some(pages),
             paged => return paged,
         }
@@ -280,7 +280,7 @@ fn every_page_of_a_paged_circuit_satisfies_its_claim() -> Result<()> {
     assert!(paged.num_pages() >= 4, "the chain takes several pages");
     assert!(paged.report().slots > 0, "the chain carries values");
     assert!(holds.iter().all(|&hold| hold), "{holds:?}");
-    paged.check()
+    check::check(&paged)
 }
 
 #[test]
@@ -294,7 +294,7 @@ fn the_pages_constraints_are_the_circuits() -> Result<()> {
     // sixty-four values, in as many pages as that takes and in more.
     for pages in 5..9 {
         let circuit = MultiStage::new(Flat::<_, 64>(Chain::<100, 3>));
-        let cut = Pages::cut(circuit, pages, 57)?;
+        let cut = Pages::cut_within(circuit, pages, 57)?;
         let (layout, report) = (cut.layout(), cut.report());
         assert_eq!(layout.carry, 1..33);
         assert_eq!(layout.window(), 33..57);
@@ -302,7 +302,7 @@ fn the_pages_constraints_are_the_circuits() -> Result<()> {
         for held in &report.pages {
             assert!(held.gates <= layout.room());
         }
-        cut.check()?;
+        check::check(&cut)?;
     }
     Ok(())
 }
@@ -310,45 +310,56 @@ fn the_pages_constraints_are_the_circuits() -> Result<()> {
 #[test]
 fn pages_without_the_room_are_refused() {
     assert!(matches!(
-        Pages::cut(MultiStage::new(Flat::<_, 64>(Chain::<100, 3>)), 2, 57),
+        Pages::cut_within(MultiStage::new(Flat::<_, 64>(Chain::<100, 3>)), 2, 57),
         Err(Error::GateBoundExceeded { .. })
     ));
 }
 
-/// `paged` with its plan passed through `tamper`, and its pages
-/// compiled from the plan it leaves.
+/// `paged` with the pager's draft of it passed through `tamper`, and its
+/// pages compiled from the draft it leaves.
 fn tampered<S: Pageable<Fp, R>>(
     paged: &Pages<Fp, R, S>,
-    tamper: impl FnOnce(&mut Plan<Fp>),
+    tamper: impl FnOnce(&mut Draft<Fp>),
 ) -> Pages<Fp, R, S> {
-    let mut plan = (*paged.plan).clone();
-    tamper(&mut plan);
-    plan.compile(&Recording::of(&*paged.circuit).expect("the circuit walks"));
-    Pages {
-        circuit: paged.circuit.clone(),
-        plan: Arc::new(plan),
-        report: paged.report.clone(),
-        stages: paged.stages.clone(),
-    }
+    let (mut draft, report, recording) = drafted(paged);
+    tamper(&mut draft);
+    draft.compile(&recording);
+    Pages::over(paged.circuit.clone(), Arc::new(draft.finish()), report)
+}
+
+/// The pager's draft of `paged`, before it is compiled, with its report
+/// and the walk it was made from.
+fn drafted<S: Pageable<Fp, R>>(
+    paged: &Pages<Fp, R, S>,
+) -> (Draft<Fp>, PagingReport, Recording<Fp>) {
+    Pages::<Fp, R, S>::drafted(&paged.circuit, paged.num_pages(), paged.plan.limit)
+        .expect("the circuit cuts as it did")
 }
 
 #[test]
 fn a_plan_that_miscarries_is_caught() -> Result<()> {
     let paged = fitted(flat(Chain::<100, 3>), 8)?;
-    paged.check()?;
-    let (&constraint, _) = paged.plan.links.iter().next().expect("the chain carries");
+    check::check(&paged)?;
+    let draft = drafted(&paged).0;
+    let (&constraint, _) = draft.links.iter().next().expect("the chain carries");
 
     // A slot read at the wrong scale.
     let wrong = tampered(&paged, |plan| {
         plan.links.get_mut(&constraint).unwrap()[0].scale += Fp::ONE;
     });
-    assert!(wrong.check().is_err());
+    assert!(refused(
+        &wrong,
+        "a carry slot lacks its defining constraint"
+    ));
 
     // A slot the constraint no longer reads: the term is dropped.
     let wrong = tampered(&paged, |plan| {
         plan.links.remove(&constraint);
     });
-    assert!(wrong.check().is_err());
+    assert!(refused(
+        &wrong,
+        "a carry slot lacks its defining constraint"
+    ));
 
     // A slot no page holds to its wires.
     let wrong = tampered(&paged, |plan| {
@@ -358,49 +369,47 @@ fn a_plan_that_miscarries_is_caught() -> Result<()> {
             }
         }
     });
-    assert!(wrong.check().is_err());
+    assert!(refused(
+        &wrong,
+        "a carry slot lacks its defining constraint"
+    ));
 
     // A constraint homed on a page that lacks its wires.
     let wrong = tampered(&paged, |plan| {
         let moved = plan.homes.iter().position(|&home| home == 2).unwrap();
         plan.homes[moved] = 0;
     });
-    assert!(wrong.check().is_err());
+    assert!(refused(&wrong, "constraints are not the circuit's"));
     Ok(())
 }
 
 #[test]
 fn a_missing_carry_definition_cannot_hide_behind_a_zero_constraint() -> Result<()> {
     let paged = fitted(flat(Chain::<100, 3>), 8)?;
-    paged.check()?;
-    let (&constraint, links) = paged
-        .plan
+    check::check(&paged)?;
+    let (mut draft, report, recording) = drafted(&paged);
+    let (&constraint, links) = draft
         .links
         .iter()
         .find(|(_, links)| links.iter().any(|link| link.defines))
         .expect("the chain has a defined carry slot");
     let exporter = links.iter().find(|link| link.defines).unwrap().exporter as usize;
 
-    let mut plan = (*paged.plan).clone();
-    plan.links
+    draft
+        .links
         .get_mut(&constraint)
         .unwrap()
         .iter_mut()
         .find(|link| link.defines)
         .unwrap()
         .defines = false;
-    plan.compile(&Recording::of(&*paged.circuit)?);
+    draft.compile(&recording);
     // The old value-based check included one zero for each slot definition.
     // A planner could replace a missing definition with 0 = 0 and pass it.
-    plan.programs[exporter].constraints.push(Vec::new());
-    let wrong = Pages {
-        circuit: paged.circuit.clone(),
-        plan: Arc::new(plan),
-        report: paged.report.clone(),
-        stages: paged.stages.clone(),
-    };
+    draft.programs[exporter].constraints.push(Vec::new());
+    let wrong = Pages::over(paged.circuit.clone(), Arc::new(draft.finish()), report);
     assert!(matches!(
-        wrong.check(),
+        check::check(&wrong),
         Err(Error::Initialization(message)) if message.to_string().contains("a carry slot lacks its defining constraint")
     ));
     Ok(())
@@ -409,19 +418,14 @@ fn a_missing_carry_definition_cannot_hide_behind_a_zero_constraint() -> Result<(
 #[test]
 fn the_public_output_keeps_its_order() -> Result<()> {
     let paged = fitted(flat(TwoOutputs), 8)?;
-    paged.check()?;
+    check::check(&paged)?;
     let mut plan = (*paged.plan).clone();
     assert_eq!(plan.programs.len(), 1);
     assert_eq!(plan.programs[0].outputs.len(), 2);
     plan.programs[0].outputs.swap(0, 1);
-    let wrong = Pages {
-        circuit: paged.circuit.clone(),
-        plan: Arc::new(plan),
-        report: paged.report.clone(),
-        stages: paged.stages.clone(),
-    };
+    let wrong = Pages::over(paged.circuit.clone(), Arc::new(plan), paged.report.clone());
     assert!(matches!(
-        wrong.check(),
+        check::check(&wrong),
         Err(Error::Initialization(message)) if message.to_string().contains("public output")
     ));
     Ok(())
@@ -470,18 +474,13 @@ fn misplaced<S: Pageable<Fp, R>>(
 ) -> Pages<Fp, R, S> {
     let mut plan = (*paged.plan).clone();
     tamper(&mut plan);
-    Pages {
-        circuit: paged.circuit.clone(),
-        plan: Arc::new(plan),
-        report: paged.report.clone(),
-        stages: paged.stages.clone(),
-    }
+    Pages::over(paged.circuit.clone(), Arc::new(plan), paged.report.clone())
 }
 
 /// Whether the check refuses `paged` for `what`.
 fn refused<S: Pageable<Fp, R>>(paged: &Pages<Fp, R, S>, what: &str) -> bool {
     matches!(
-        paged.check(),
+        check::check(paged),
         Err(Error::Initialization(message)) if message.to_string().contains(what)
     )
 }
@@ -489,21 +488,22 @@ fn refused<S: Pageable<Fp, R>>(paged: &Pages<Fp, R, S>, what: &str) -> bool {
 #[test]
 fn a_plan_that_misplaces_a_gate_is_caught() -> Result<()> {
     let paged = fitted(flat(Chain::<100, 3>), 8)?;
-    paged.check()?;
+    check::check(&paged)?;
     let last = paged.num_pages() - 1;
     assert!(last >= 2, "the chain takes several pages");
     assert!(!paged.layout().carry.is_empty(), "the chain carries values");
 
     // A gate on two pages, in place of one of the second's.
     let wrong = misplaced(&paged, |plan| plan.held[1][0] = plan.held[0][0]);
-    assert!(refused(&wrong, "duplicates or misplaces a gate"));
+    assert!(refused(&wrong, "duplicates a gate"));
 
-    // Two gates of a page at each other's place.
+    // Two gates of a page at each other's place: the page's constraints
+    // are then over other gates than the circuit's.
     let wrong = misplaced(&paged, |plan| plan.held[0].swap(0, 1));
-    assert!(refused(&wrong, "duplicates or misplaces a gate"));
+    assert!(check::check(&wrong).is_err());
 
     // A gate that is not the circuit's.
-    let wrong = misplaced(&paged, |plan| plan.held[0][0] = plan.num_gates as u32);
+    let wrong = misplaced(&paged, |plan| plan.held[0][0] = u32::MAX);
     assert!(refused(&wrong, "holds a gate outside the circuit"));
 
     // A gate no page holds: the last page gives up its last.
@@ -511,41 +511,16 @@ fn a_plan_that_misplaces_a_gate_is_caught() -> Result<()> {
         plan.held[last].pop();
         plan.programs[last].own -= 1;
     });
-    assert!(refused(&wrong, "omit a gate of the circuit"));
-
-    // A page that starts where the page before it has not ended.
-    let wrong = misplaced(&paged, |plan| plan.layout.starts[1] += 1);
-    assert!(refused(&wrong, "inconsistent gate layout"));
-
-    // A page that allocates other gates than its layout gives it.
-    let wrong = misplaced(&paged, |plan| plan.programs[0].own += 1);
-    assert!(refused(&wrong, "allocates other gates than its layout"));
-
-    // The carry stage elsewhere than after the circuit's stages, where
-    // its type lays it.
-    let wrong = misplaced(&paged, |plan| plan.layout.carry.start += 1);
-    assert!(refused(&wrong, "not laid after the circuit's stages"));
-    let wrong = misplaced(&paged, |plan| plan.layout.carry.end -= 1);
-    assert!(refused(&wrong, "not laid after the circuit's stages"));
-
-    // A page with more gates than a polynomial holds.
-    let wrong = misplaced(&paged, |plan| plan.layout.limit = plan.layout.carry.end);
-    assert!(refused(&wrong, "more gates than a polynomial has"));
-
-    // A page's own gates over those of the circuit's stage.
-    let staged = fitted(MultiStage::new(Seeded::<90>), 8)?;
-    staged.check()?;
-    let wrong = misplaced(&staged, |plan| plan.layout.own_start -= 1);
     assert!(refused(&wrong, "does not cover the circuit"));
 
-    // Other stages than the circuit's own, even if the cut is said to
-    // have been asked for them.
-    let mut wrong = misplaced(&staged, |plan| plan.stages.spans[0].start += 1);
-    wrong.stages = wrong.plan.stages.clone();
-    assert!(refused(
-        &wrong,
-        "other stages than the circuit was cut over"
-    ));
+    // A page that allocates other gates than it holds.
+    let wrong = misplaced(&paged, |plan| plan.programs[0].own += 1);
+    assert!(refused(&wrong, "allocates other gates than it holds"));
+
+    // A page with more gates than a polynomial holds.
+    let limit = paged.layout().carry.end;
+    let wrong = misplaced(&paged, |plan| plan.limit = limit);
+    assert!(refused(&wrong, "more gates than a polynomial has"));
     Ok(())
 }
 
@@ -585,7 +560,7 @@ fn a_circuit_that_walks_otherwise_than_it_was_cut_is_refused() -> Result<()> {
     let longer = Arc::new(AtomicBool::new(false));
     let paged = fitted(flat(Fickle(longer.clone())), 8)?;
     assert!(paged.num_pages() > 1, "the squarings take several pages");
-    paged.check()?;
+    check::check(&paged)?;
     let witness = Fp::from(3u64);
     paged.capture(witness)?;
 
@@ -596,42 +571,27 @@ fn a_circuit_that_walks_otherwise_than_it_was_cut_is_refused() -> Result<()> {
         paged.capture(witness),
         Err(Error::Initialization(message)) if message.to_string().contains("diverged from its plan")
     ));
-    assert!(paged.check().is_err());
+    assert!(refused(&paged, "does not cover the circuit"));
     Ok(())
 }
 
 #[test]
 fn a_plan_out_of_shape_is_caught() -> Result<()> {
     let paged = fitted(flat(Chain::<100, 3>), 8)?;
-    paged.check()?;
+    check::check(&paged)?;
     assert!(paged.report().slots > 2, "the chain carries several values");
 
-    // Fewer places than the circuit has gates.
-    let wrong = misplaced(&paged, |plan| {
-        plan.places.pop();
-    });
-    assert!(refused(&wrong, "does not cover the circuit"));
-
-    // Stages that take more gates than the circuit has, or a carry stage
-    // of another size: not the circuit's, even if the cut is said to have
-    // been asked for them.
-    let mut wrong = misplaced(&paged, |plan| plan.stages.spans.push(1..1_000_000));
-    wrong.stages = wrong.plan.stages.clone();
-    assert!(refused(
-        &wrong,
-        "other stages than the circuit was cut over"
-    ));
-    let mut wrong = misplaced(&paged, |plan| plan.stages.carry = 2);
-    wrong.stages = wrong.plan.stages.clone();
-    assert!(refused(
-        &wrong,
-        "other stages than the circuit was cut over"
-    ));
+    // A plan says nothing of the circuit's stages, of its carry stage's
+    // gates or of where a gate is placed, so none of them can be other
+    // than the circuit's: the pages are laid over what its type states.
+    let stages = Stages::of::<Fp, R, Flat<Chain<100, 3>>>();
+    assert_eq!(paged.layout().own_start, stages.own_start());
+    assert_eq!(paged.layout().carry, stages.carry_gates());
 
     // A slot another constraint defines, read at another scale: the
     // pages' constraints are no longer the circuit's.
-    let (constraint, link) = paged
-        .plan
+    let draft = drafted(&paged).0;
+    let (constraint, link) = draft
         .links
         .iter()
         .find_map(|(&constraint, links)| {
@@ -731,7 +691,7 @@ fn a_digest_tells_two_cuts_apart() -> Result<()> {
 
     // Where the search places the cuts, and in more pages.
     let placed = |pages: usize| -> Result<[u8; 32]> {
-        Pages::cut(MultiStage::new(Flat::<_, 64>(Chain::<100, 3>)), pages, 57)?.digest()
+        Pages::cut_within(MultiStage::new(Flat::<_, 64>(Chain::<100, 3>)), pages, 57)?.digest()
     };
     assert_eq!(placed(6)?, placed(6)?);
     assert_ne!(placed(6)?, placed(7)?);
@@ -825,7 +785,7 @@ fn a_staged_circuit_pages_after_its_stage() -> Result<()> {
         "the SYSTEM gate and the stage's two gates"
     );
     assert_eq!(stages.carry_gates(), 3..131, "its values after the stage");
-    let paged = Pages::cut(MultiStage::new(Seeded::<90>), 5, 155)?;
+    let paged = Pages::cut_within(MultiStage::new(Seeded::<90>), 5, 155)?;
     let pages = paged.num_pages();
     // The stage's wires are every page's: none is carried, and every
     // page names them.
@@ -917,9 +877,9 @@ fn a_gate_is_placed_with_the_first_gate_it_feeds() -> Result<()> {
     // the product that takes it, and a cut carries the running product
     // and the witness.
     let witness = Fp::from(3u64);
-    let paged = Pages::cut(MultiStage::new(Flat::<_, 16>(Batch::<40>)), 4, 34)?;
+    let paged = Pages::cut_within(MultiStage::new(Flat::<_, 16>(Batch::<40>)), 4, 34)?;
     assert!(paged.report().slots <= 3 * 3, "{:?}", paged.report().cuts);
-    paged.check()?;
+    check::check(&paged)?;
 
     let captured = paged.capture(witness)?;
     let carry = paged.carry_rx(Blind::<Fp>::random(&mut rand::rng()), &captured.carry)?;
@@ -1040,11 +1000,11 @@ impl Pageable<Fp, R> for Tie {
 #[test]
 fn a_circuit_without_gates_pages_too() -> Result<()> {
     let stages = Stages::of::<Fp, R, Tie>();
-    let paged = Pages::cut(MultiStage::new(Tie), 2, stages.carry_gates().end + 8)?;
+    let paged = Pages::cut_within(MultiStage::new(Tie), 2, stages.carry_gates().end + 8)?;
     assert_eq!(paged.num_pages(), 2);
     assert_eq!(paged.report().slots, 0);
     assert_eq!(paged.report().num_gates, stages.own_start());
-    paged.check()?;
+    check::check(&paged)?;
 
     // Each page's claim, on both stages and the carry stage, which holds
     // nothing: every page loads both stages, so nothing is carried, and
@@ -1073,24 +1033,9 @@ fn a_circuit_without_gates_pages_too() -> Result<()> {
 }
 
 #[test]
-fn a_plan_over_other_stages_is_refused() -> Result<()> {
-    let seeded = fitted(MultiStage::new(Seeded::<90>), 8)?;
-    seeded.check()?;
-    let wrong = misplaced(&seeded, |plan| {
-        let span = plan.stages.spans[0].clone();
-        plan.stages.spans[0] = span.start + 1..span.end + 1;
-    });
-    assert!(refused(
-        &wrong,
-        "other stages than the circuit was cut over"
-    ));
-    Ok(())
-}
-
-#[test]
 fn the_masks_are_the_carry_stages() -> Result<()> {
     let stages = Stages::of::<Fp, R, Seeded<90>>();
-    let paged = Pages::cut(MultiStage::new(Seeded::<90>), 5, 155)?;
+    let paged = Pages::cut_within(MultiStage::new(Seeded::<90>), 5, 155)?;
     let layout = paged.layout();
     // The carry stage follows the circuit's stage, and every page's own
     // gates follow it.
@@ -1148,8 +1093,8 @@ fn a_cut_falls_between_blocks() -> Result<()> {
     // sevens.
     let circuit = Blocks::<1024>;
     assert_eq!(own_gates(&circuit)?, 7 * GRID + 1);
-    let paged = Pages::cut(flat(circuit), 20, 647)?;
-    paged.check()?;
+    let paged = Pages::cut_within(flat(circuit), 20, 647)?;
+    check::check(&paged)?;
     let report = paged.report();
     assert!(report.pages.iter().filter(|page| page.gates > 0).count() > 1);
     assert!(
@@ -1225,18 +1170,13 @@ fn a_routine_is_not_cut() -> Result<()> {
     // on one page all the same.
     let routines = Recording::of(&flat(Called::<30>))?.routines;
     assert_eq!(routines.len(), 30);
-    let paged = Pages::cut(flat(Called::<30>), 3, 354)?;
-    paged.check()?;
+    let paged = Pages::cut_within(flat(Called::<30>), 3, 354)?;
+    check::check(&paged)?;
+    let draft = drafted(&paged).0;
     for routine in routines {
         assert_eq!(routine.len(), 6);
         let pages: Vec<usize> = routine
-            .map(|gate| {
-                paged
-                    .plan
-                    .place(gate)
-                    .expect("a gate of the circuit's own")
-                    .0
-            })
+            .map(|gate| draft.place(gate).expect("a gate of the circuit's own").0)
             .collect();
         assert!(pages.iter().all(|&page| page == pages[0]), "{pages:?}");
     }
@@ -1248,13 +1188,14 @@ fn a_routine_is_not_cut() -> Result<()> {
 /// its pages' constraints are the circuit's.
 #[test]
 fn a_plan_that_splits_a_routine_is_caught() -> Result<()> {
-    let paged = Pages::cut(flat(Called::<30>), 3, 354)?;
-    paged.check()?;
+    let paged = Pages::cut_within(flat(Called::<30>), 3, 354)?;
+    check::check(&paged)?;
     let routine = Recording::of(&flat(Called::<30>))?.routines[0].clone();
     // The routine's last gate and the gate after it, which is not the
     // routine's, on the page that holds them, at each other's place.
-    let (page, at) = paged.plan.place(routine.end - 1).expect("a gate");
-    assert_eq!(paged.plan.place(routine.end), Some((page, at + 1)));
+    let draft = drafted(&paged).0;
+    let (page, at) = draft.place(routine.end - 1).expect("a gate");
+    assert_eq!(draft.place(routine.end), Some((page, at + 1)));
     let wrong = tampered(&paged, |plan| {
         let own_start = plan.layout.own_start;
         let first = plan.layout.carry.end;
@@ -1263,5 +1204,228 @@ fn a_plan_that_splits_a_routine_is_caught() -> Result<()> {
             .swap(routine.end - 1 - own_start, routine.end - own_start);
     });
     assert!(refused(&wrong, "split a routine the circuit calls"));
+    Ok(())
+}
+
+/// The compiled plan of `paged`, tampered with as it is: what a page runs.
+fn compiled<S: Pageable<Fp, R>>(
+    paged: &Pages<Fp, R, S>,
+    tamper: impl FnOnce(&mut Plan<Fp>),
+) -> Pages<Fp, R, S> {
+    misplaced(paged, tamper)
+}
+
+#[test]
+fn a_program_that_names_a_wire_it_does_not_hold_is_refused() -> Result<()> {
+    let paged = fitted(flat(Chain::<100, 3>), 8)?;
+    check::check(&paged)?;
+    let one = Coeff::Arbitrary(Fp::ONE);
+    let refusal = "names a wire it does not hold";
+
+    // A combination the page never makes.
+    let wrong = compiled(&paged, |plan| {
+        plan.programs[0].constraints[0].push((DERIVED | 0x00ff_ffff, one));
+    });
+    assert!(refused(&wrong, refusal));
+
+    // A combination made after the one that names it.
+    let wrong = compiled(&paged, |plan| {
+        let made = plan.programs[1].sums.len() as u32;
+        plan.programs[1].sums[0].push((DERIVED | (made - 1), one));
+    });
+    assert!(refused(&wrong, refusal));
+
+    // A gate past the page's own.
+    let first = paged.layout().carry.end;
+    let wrong = compiled(&paged, |plan| {
+        let past = (first + plan.programs[0].own) as u32;
+        plan.programs[0].constraints[0].push((4 * past, one));
+    });
+    assert!(refused(&wrong, refusal));
+
+    // A wire of the SYSTEM gate other than `ONE`.
+    let wrong = compiled(&paged, |plan| {
+        plan.programs[0].constraints[0].push((0, one));
+    });
+    assert!(refused(&wrong, refusal));
+    Ok(())
+}
+
+#[test]
+fn a_dropped_constraint_is_caught() -> Result<()> {
+    let paged = fitted(flat(Chain::<100, 3>), 8)?;
+    check::check(&paged)?;
+    let page = paged.num_pages() / 2;
+    let constraints = paged.plan.programs[page].constraints.len();
+    assert!(constraints > 2, "a page in the middle enforces constraints");
+
+    // Without any one of its constraints the page is refused: for the
+    // constraints of the circuit, as a missing one of the circuit's, and
+    // for a slot's definition, as a slot without one.
+    let mut missing = 0;
+    for dropped in 0..constraints {
+        let wrong = compiled(&paged, |plan| {
+            plan.programs[page].constraints.remove(dropped);
+        });
+        assert!(check::check(&wrong).is_err(), "constraint {dropped}");
+        missing += usize::from(refused(&wrong, "constraints are not the circuit's"));
+    }
+    assert!(missing > 0, "a constraint of the circuit's was dropped");
+
+    // The same with another of the page's constraints in its place, or an
+    // empty one, which keeps the count.
+    for dropped in 0..constraints {
+        let other = (dropped + 1) % constraints;
+        let wrong = compiled(&paged, |plan| {
+            let filler = plan.programs[page].constraints[other].clone();
+            plan.programs[page].constraints[dropped] = filler;
+        });
+        assert!(check::check(&wrong).is_err(), "constraint {dropped}");
+        let wrong = compiled(&paged, |plan| {
+            plan.programs[page].constraints[dropped].clear();
+        });
+        assert!(check::check(&wrong).is_err(), "constraint {dropped}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_slot_no_page_writes_cannot_be_read() -> Result<()> {
+    // A carry stage of three values takes two gates: the last wire of the
+    // second is padding, and the chain writes one slot of the three.
+    let paged = fitted(MultiStage::new(Flat::<_, 3>(Chain::<40, 50>)), 24)?;
+    check::check(&paged)?;
+    let carry = paged.layout().carry.clone();
+    assert_eq!((carry.len(), paged.plan.slots.len()), (2, 1));
+    let last = paged.num_pages() - 1;
+    let one = Coeff::Arbitrary(Fp::ONE);
+
+    // The second and third slots, which no page writes, and the padding
+    // wire: a constraint that reads one is none of the circuit's.
+    for wire in [
+        4 * carry.start as u32 + 3,
+        4 * (carry.start as u32 + 1),
+        4 * (carry.start as u32 + 1) + 3,
+    ] {
+        for page in [0, last] {
+            let wrong = compiled(&paged, |plan| {
+                plan.programs[page].constraints[0].push((wire, one));
+            });
+            assert!(
+                refused(&wrong, "constraints are not the circuit's"),
+                "wire {wire} on page {page}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_slot_is_written_by_the_page_that_holds_its_wires() -> Result<()> {
+    let paged = fitted(flat(Chain::<100, 3>), 8)?;
+    check::check(&paged)?;
+    let carry = paged.layout().carry.clone();
+    let slot = |wire: u32| wire & DERIVED == 0 && carry.contains(&((wire / 4) as usize));
+    // The first page reads no slot, so a constraint of its own that names
+    // one writes it. One over gates' wires alone is as well formed on the
+    // next page, which holds as many gates.
+    let definition = paged.plan.programs[0]
+        .constraints
+        .iter()
+        .position(|terms| {
+            terms.iter().any(|&(wire, _)| slot(wire))
+                && terms.iter().all(|&(wire, _)| wire & DERIVED == 0)
+        })
+        .expect("the first page writes a slot over its gates' wires");
+    assert_eq!(paged.plan.programs[0].own, paged.plan.programs[1].own);
+
+    // The same constraint on the next page is over that page's gates: the
+    // slot is left without the page that holds its wires.
+    let wrong = compiled(&paged, |plan| {
+        let moved = plan.programs[0].constraints.remove(definition);
+        plan.programs[1].constraints.push(moved);
+    });
+    assert!(refused(
+        &wrong,
+        "a carry slot lacks its defining constraint"
+    ));
+    Ok(())
+}
+
+#[test]
+fn pages_planned_for_another_circuit_are_refused() -> Result<()> {
+    let paged = fitted(flat(Chain::<100, 3>), 8)?;
+    check::check(&paged)?;
+    // The same plan over a circuit it was not cut from.
+    let other = Pages::planned(flat(Chain::<100, 5>), &paged.plan());
+    assert!(other.check().is_err());
+    Ok(())
+}
+
+#[test]
+fn a_carry_stage_takes_no_more_values_than_it_holds() -> Result<()> {
+    let paged = fitted(MultiStage::new(Flat::<_, 3>(Chain::<40, 50>)), 24)?;
+    let mut rng = rand::rng();
+    assert!(
+        paged
+            .carry_rx(Blind::<Fp>::random(&mut rng), &[Fp::ONE; 3])
+            .is_ok()
+    );
+    assert!(
+        paged
+            .carry_rx(Blind::<Fp>::random(&mut rng), &[Fp::ONE; 4])
+            .is_err()
+    );
+    Ok(())
+}
+
+/// Returns a value of [`Left`] and does nothing else with the stage.
+struct Returned;
+
+impl Pageable<Fp, R> for Returned {
+    type Carry = ConstLen<2>;
+}
+
+impl MultiStageCircuit<Fp, R> for Returned {
+    type Last = Left;
+    type Instance<'source> = Fp;
+    type Witness<'source> = [Fp; 4];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Fp>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, [Fp; 4]>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>>
+    where
+        Self: 'dr,
+    {
+        let (left, builder) = builder.add_stage::<Left>()?;
+        let dr = builder.finish();
+        let left = left.unenforced(dr, witness)?;
+        Ok(WithAux::new(left[2].clone(), D::unit()))
+    }
+}
+
+/// A stage's wire that a circuit only returns is read of the stage: the
+/// public output binds it, though no constraint of the body names it.
+#[test]
+fn a_returned_stage_wire_is_read() -> Result<()> {
+    let stages = Stages::of::<Fp, R, Returned>();
+    let read = reads(&MultiStage::<Fp, R, _>::new(Returned), &stages, 1)?;
+    assert_eq!(read, [[1]]);
+    // A circuit that names the stage's wires in its body reads them there.
+    let stages = Stages::of::<Fp, R, Tie>();
+    let read = reads(&MultiStage::<Fp, R, _>::new(Tie), &stages, 1)?;
+    assert_eq!(read, [[4, 4]]);
     Ok(())
 }

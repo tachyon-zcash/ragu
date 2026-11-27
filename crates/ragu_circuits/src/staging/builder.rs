@@ -94,25 +94,27 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Target: Stage<D::F, R>>
         }
     }
 
-    /// Reserves the gates of `Through` and of every stage before it, as
-    /// [`skip_stage`](Self::skip_stage) does for each in turn, and returns
-    /// the wires of those gates: the $a$ wire then the $d$ wire of each,
-    /// from the first gate after the SYSTEM gate.
+    /// Reserves the gates of the circuit's whole chain, its last stage and
+    /// every stage before it, as [`skip_stage`](Self::skip_stage) does for
+    /// each in turn, and returns the wires of those gates: the $a$ wire
+    /// then the $d$ wire of each, from the first gate after the SYSTEM
+    /// gate.
     ///
-    /// This is for a circuit that reads the stages of a chain by gate
-    /// rather than as each stage's gadget, as a [page](crate::paging) of a
-    /// circuit over that chain does. No stage is loaded, so no stage's
-    /// output contract is emitted.
+    /// This is for a [page](crate::paging), which reads the stages of its
+    /// chain by gate rather than as each stage's gadget. No stage is
+    /// loaded, so no stage's output contract is emitted, and the wires
+    /// include a stage's padding: it is not for a circuit to call, and it
+    /// is the crate's alone.
     ///
     /// # Errors
     ///
     /// Propagates any error from allocating the gates.
-    pub fn reserve_through<Through: Stage<D::F, R>>(
+    pub(crate) fn reserve_chain(
         self,
-    ) -> Result<(Vec<D::Wire>, StageBuilder<'a, 'dr, D, R, Through, Target>)> {
+    ) -> Result<(Vec<D::Wire>, StageBuilder<'a, 'dr, D, R, Target, Target>)> {
         // Every stage takes whole gates, two wires each, so one allocator
         // over the chain's gates allocates what one per stage does.
-        let gates = Through::skip_gates() + Through::num_gates() - 1;
+        let gates = Target::skip_gates() + Target::num_gates() - 1;
         let allocator = &mut Standard::new();
         let mut wires = Vec::with_capacity(2 * gates);
         for _ in 0..2 * gates {
@@ -446,7 +448,7 @@ mod tests {
             let first = witness.as_ref().map(|witness| witness.0);
             let second = witness.as_ref().map(|witness| witness.1);
             let (dr, left, right) = if self.reserved {
-                let (wires, builder) = builder.reserve_through::<Second>()?;
+                let (wires, builder) = builder.reserve_chain()?;
                 let dr = builder.finish();
                 // The second value of the first stage is the $d$ wire of
                 // gate 1, and the third of the second the $a$ wire of

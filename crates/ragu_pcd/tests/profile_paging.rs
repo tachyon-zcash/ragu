@@ -90,8 +90,6 @@ impl Profile for AllPaged {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
-
-    crate::paged_internal_circuits!();
 }
 
 /// A wire of a gate that holds a value of a stage.
@@ -959,10 +957,39 @@ fn widest_aggregator_claims_bind_pages_and_carries() -> Result<()> {
     aggregator_claims_bind_pages_and_carries::<195>()
 }
 
-/// A page before its circuit's last is registered with the zero suffix
-/// every extension circuit's public output takes. Its k(Y) is still 1, the
-/// target its claim is held to: the suffix adds a zero term, and the page's
-/// only output is its ONE.
+/// A registry has a slot for each page its profile pins, so pages are held
+/// to the pinned count before they are checked or registered: a cut of the
+/// same circuit into one page more is a valid cut whose pages check, and
+/// registering it would leave a page out.
+#[test]
+fn pages_are_held_to_the_count_their_profile_pins() -> Result<()> {
+    let params = crate::pasta::baked();
+    let circuit = || {
+        native::circuits::hashes_2::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            native::RevdotParameters<AllPaged>,
+        >::new(params)
+    };
+    // The profile pins two pages for this circuit.
+    let pinned = super::split(Circuit::Hashes2, circuit(), 2)?;
+    super::held_to_pin(Circuit::Hashes2, &pinned)?;
+
+    let other = super::split(Circuit::Hashes2, circuit(), 3)?;
+    assert!(super::held_to_pin(Circuit::Hashes2, &other).is_err());
+    // The same plan, kept and attached to the circuit again.
+    let kept = ragu_circuits::paging::Pages::planned(circuit(), &other.plan());
+    assert!(super::held_to_pin(Circuit::Hashes2, &kept).is_err());
+    // It is refused for its count alone: its pages are the circuit's.
+    other.check()?;
+    Ok(())
+}
+
+/// A page before its circuit's last ends its public output with the zero
+/// suffix every extension circuit's takes, and has no other output. Its
+/// k(Y) is still 1, the target its claim is held to: the suffix adds a zero
+/// term, and the page's only other output is its ONE.
 #[test]
 fn a_registered_page_is_held_to_one() -> Result<()> {
     use ragu_circuits::CircuitExt;
@@ -977,18 +1004,16 @@ fn a_registered_page_is_held_to_one() -> Result<()> {
                 HEADER_SIZE,
                 native::RevdotParameters<AllPaged>,
             >::new(params),
-            PageCount::new(2),
+            2,
         )?;
-    paged.check()?;
+    let checked = paged.check()?;
     let mut rng = StdRng::seed_from_u64(0x5ff1);
     let y = Fp::random(|bytes| rng.fill_bytes(bytes));
-    for page in 0..paged.num_pages() - 1 {
-        let page = paged.page(page);
-        assert_eq!(page.ky((), y)?, Fp::ONE, "a page's k(y) is one");
+    for page in 0..checked.pages().num_pages() - 1 {
         assert_eq!(
-            crate::profile::Suffixed(page).ky((), y)?,
+            checked.page(page).ky((), y)?,
             Fp::ONE,
-            "the page as it is registered is held to one"
+            "a page's k(y) is one"
         );
     }
     Ok(())

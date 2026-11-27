@@ -10,7 +10,7 @@ use core::ops::Range;
 use ragu_core::{Error, Result};
 use udon::field::Field;
 
-use super::{Carry, Pageable, Pages, Plan, Stages, record::Recording, refuse};
+use super::{Carry, Layout, Pageable, Pages, Plan, Stages, record::Recording, refuse};
 use crate::{polynomials::Rank, staging::Stage};
 
 /// A wire of the unpaged circuit, or one of the independent carry values
@@ -157,38 +157,31 @@ fn multiset<F: Field>(forms: impl IntoIterator<Item = Form<F>>) -> BTreeMap<Key,
     counts
 }
 
-/// Checks that every original gate has exactly one place, that the page
-/// programs allocate the layout's gates, and that the carry stage follows
-/// the stages and a page's own gates follow it. The symbolic comparison
-/// below relies on this map.
-fn layout<F: Field>(plan: &Plan<F>, body_gates: usize) -> Result<()> {
-    let (stages, layout) = (&plan.stages, &plan.layout);
+/// Checks that every gate of the circuit's own is on exactly one page and
+/// that each page allocates the gates it holds, and gives where each gate
+/// is: for each, in the order the circuit allocates them, its page and its
+/// index in that page's polynomial. The symbolic comparison below relies on
+/// this map, which is derived here and is not the pager's.
+///
+/// Where the stages and the carry stage lie is not checked: `layout` is
+/// derived from the circuit's type, and the plan does not say.
+fn places<F: Field>(
+    plan: &Plan<F>,
+    stages: &Stages,
+    layout: &Layout,
+    body_gates: usize,
+) -> Result<Vec<(usize, usize)>> {
     stages.check()?;
-    let pages = stages.num_pages();
+    let pages = plan.pages();
     let Some(own) = body_gates.checked_sub(stages.own_start()) else {
         return refuse("the circuit has fewer gates than its stages".into());
     };
-    if layout.own_start != stages.own_start()
-        || plan.num_gates != body_gates
-        || layout.starts.len() != pages
-        || plan.held.len() != pages
-        || plan.programs.len() != pages
-        || plan.places.len() != own
-    {
+    if plan.programs.len() != pages || plan.own() != own {
         return refuse("the pages' layout does not cover the circuit".into());
     }
-    // The carry stage is where its type lays it: after the stages, as
-    // many gates as its values take.
-    let carry = &layout.carry;
-    if *carry != stages.carry_gates() {
-        return refuse("the carry stage is not laid after the circuit's stages".into());
-    }
-
-    let mut seen = vec![false; own];
-    let mut next = stages.own_start();
-    for page in 0..pages {
-        let held = &plan.held[page];
-        let first = carry.end;
+    let first = layout.carry.end;
+    let mut places = vec![None; own];
+    for (page, held) in plan.held.iter().enumerate() {
         let Some(own_end) = first.checked_add(held.len()) else {
             return refuse("a page's gate range overflows".into());
         };
@@ -197,32 +190,34 @@ fn layout<F: Field>(plan: &Plan<F>, body_gates: usize) -> Result<()> {
                 "page {page} holds more gates than a polynomial has"
             ));
         }
-        if layout.starts[page] != next {
-            return refuse(format!("page {page} has an inconsistent gate layout"));
-        }
-        next = next
-            .checked_add(held.len())
-            .ok_or_else(|| Error::Initialization("the pages have too many gates".into()))?;
         for (offset, &gate) in held.iter().enumerate() {
             let gate = gate as usize;
             if gate < stages.own_start() || gate >= body_gates {
                 return refuse(format!("page {page} holds a gate outside the circuit"));
             }
-            let index = gate - stages.own_start();
-            if seen[index] || plan.places[index] != (page as u32, (first + offset) as u32) {
-                return refuse(format!("page {page} duplicates or misplaces a gate"));
+            let place = &mut places[gate - stages.own_start()];
+            if place.is_some() {
+                return refuse(format!("page {page} duplicates a gate"));
             }
-            seen[index] = true;
+            *place = Some((page, first + offset));
         }
-
         if plan.programs[page].own != held.len() {
-            return refuse(format!("page {page} allocates other gates than its layout"));
+            return refuse(format!("page {page} allocates other gates than it holds"));
         }
     }
-    if next != body_gates || seen.iter().any(|&seen| !seen) {
-        return refuse("the pages omit a gate of the circuit".into());
+    if plan.slots.len() > stages.carry {
+        return refuse(format!(
+            "the circuit carries {} values between pages, more than the {} their carry stage \
+             holds",
+            plan.slots.len(),
+            stages.carry,
+        ));
     }
-    plan.fits()
+    // As many places as gates, none twice: every gate has one.
+    places
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| Error::Initialization("the pages omit a gate of the circuit".into()))
 }
 
 fn carry_symbol(page: usize, gate: usize, kind: u32, range: &Range<usize>) -> Option<Symbol> {
@@ -238,6 +233,7 @@ fn carry_symbol(page: usize, gate: usize, kind: u32, range: &Range<usize>) -> Op
 /// The original wire, carry slot, or unused wire a page's local wire names.
 fn page_symbol<F: Field>(
     plan: &Plan<F>,
+    layout: &Layout,
     page: usize,
     wire: u32,
     body_gates: usize,
@@ -246,7 +242,7 @@ fn page_symbol<F: Field>(
     if gate == 0 {
         return Ok(Symbol::One);
     }
-    let page_body = plan.layout.carry.end + plan.programs[page].own;
+    let page_body = layout.carry.end + plan.programs[page].own;
     if gate >= page_body {
         // Only the last page writes the public output. Its extra gates are
         // allocated in the same order as the unpaged circuit's output gates.
@@ -259,14 +255,14 @@ fn page_symbol<F: Field>(
         return Symbol::wire(global, kind);
     }
 
-    if let Some(symbol) = carry_symbol(page, gate, kind, &plan.layout.carry) {
+    if let Some(symbol) = carry_symbol(page, gate, kind, &layout.carry) {
         return Ok(symbol);
     }
     // A stage's gate is the circuit's, at the same place.
-    if gate < plan.layout.own_start {
+    if gate < layout.own_start {
         return Symbol::wire(gate, kind);
     }
-    if let Some(offset) = gate.checked_sub(plan.layout.carry.end)
+    if let Some(offset) = gate.checked_sub(layout.carry.end)
         && let Some(&original) = plan.held[page].get(offset)
     {
         return Symbol::wire(original as usize, kind);
@@ -277,27 +273,22 @@ fn page_symbol<F: Field>(
 /// Checks the complete emitted relations, treating carry slots as
 /// independent wires until their defining equations have been found.
 pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>) -> Result<()> {
-    let plan = &*paged.plan;
-    // Every wire a page names in a stage is read where the plan lays the
-    // stage, which is where the stage's polynomial holds it only if the
-    // plan's stages are the circuit's; and a page reads the carry stage
-    // where the stage's type lays it, right after them.
+    let (plan, stages, layout) = (&*paged.plan, &paged.stages, &paged.layout);
+    // The stages and the layout are derived from the circuit's type, not
+    // taken from the plan. A page reads the carry stage where the stage's
+    // type lays it, which is right after the circuit's stages.
     let carry = <Carry<F, R, S> as Stage<F, R>>::skip_gates();
-    if plan.stages != paged.stages
-        || paged.stages != Stages::of::<F, R, S>().pages(plan.pages())
-        || carry != paged.stages.own_start()
-    {
-        return refuse(
-            "the plan lays its pages over other stages than the circuit was cut over".into(),
-        );
+    if carry != stages.own_start() {
+        return refuse("the carry stage is not laid after the circuit's stages".into());
     }
     // The circuit's body, before it writes its public output and the final
     // `ONE` constraint.
     let body = Recording::<F>::raw_of(&*paged.circuit)?;
     let (body_gates, body_constraints) = (body.num_gates, body.raw.len());
-    layout(plan, body_gates)?;
+    let places = places(plan, stages, layout, body_gates)?;
     // A routine the circuit calls is on one page, whole.
-    if let Some(routine) = body.split_routine(|gate| plan.place(gate)) {
+    let place = |gate: usize| places.get(gate.checked_sub(stages.own_start())?).copied();
+    if let Some(routine) = body.split_routine(place) {
         return refuse(format!(
             "the pages split a routine the circuit calls, at gates {routine:?}"
         ));
@@ -319,7 +310,7 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
         } else {
             Recording::<F>::all_of(&paged.page(page))?
         };
-        let page_body = plan.layout.carry.end + plan.programs[page].own;
+        let page_body = layout.carry.end + plan.programs[page].own;
         let expected_gates = page_body
             + if page + 1 == plan.pages() {
                 output_gates
@@ -333,24 +324,34 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
         }
         let body_len = plan.programs[page].constraints.len();
         if constraints.len() <= body_len
-            || (page + 1 != plan.pages() && constraints.len() != body_len + 1)
+            || (page + 1 != plan.pages() && constraints.len() != body_len + 2)
         {
             return refuse(format!("page {page} has an inconsistent constraint layout"));
         }
         let (body, output) = constraints.split_at(body_len);
         for terms in body {
             found_body.push(Form::from_page(terms, |wire| {
-                page_symbol(plan, page, wire, body_gates)
+                page_symbol(plan, layout, page, wire, body_gates)
             })?);
         }
         let output: Vec<_> = output
             .iter()
-            .map(|terms| Form::from_page(terms, |wire| page_symbol(plan, page, wire, body_gates)))
+            .map(|terms| {
+                Form::from_page(terms, |wire| {
+                    page_symbol(plan, layout, page, wire, body_gates)
+                })
+            })
             .collect::<Result<_>>()?;
         if page + 1 == plan.pages() {
             found_output = output;
-        } else if output[0].key() != Form::<F>::one().key() {
-            return refuse(format!("page {page} lacks its final ONE constraint"));
+        } else if output[0].key() != Form::<F>::default().key()
+            || output[1].key() != Form::<F>::one().key()
+        {
+            // A page before the last writes a zero and nothing else: its
+            // output is the zero suffix and the final `ONE`.
+            return refuse(format!(
+                "page {page} writes another output than a zero and its final ONE"
+            ));
         }
     }
 

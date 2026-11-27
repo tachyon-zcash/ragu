@@ -53,8 +53,6 @@ impl Profile for PagedEverything {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
-
-    ragu_pcd::paged_internal_circuits!();
 }
 
 /// Proves a leaf, a node over two leaves and a node over two nodes under
@@ -382,46 +380,46 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         4,
         &[
-            ("native.compute_v", "a612f8899c11be63"),
-            ("native.bind_challenges_0", "d408e435433338b9"),
-            ("native.bind_challenges_1", "eba2db5872d00ed4"),
-            ("native.bind_challenges_2", "6d9a50ff44e6e074"),
-            ("native.bind_challenges_3", "8cbc39a99ff86b7a"),
-            ("native.bind_endoscalar", "ee3db3190ed8794c"),
-            ("native.endoscaling_step", "908a658ee5ac1356"),
-            ("nested.collapse", "5cbc2d30bc8ae5d4"),
-            ("nested.compute_v", "425e6b36ecff9a97"),
-            ("nested.endoscaling_step", "44df3e6a6581e85e"),
+            ("native.compute_v", "2f57329f0139eb3b"),
+            ("native.bind_challenges_0", "b915080a1f26a0ed"),
+            ("native.bind_challenges_1", "04d1ba39bae1f42a"),
+            ("native.bind_challenges_2", "754f6dd13663d2d5"),
+            ("native.bind_challenges_3", "44850573f56d8b03"),
+            ("native.bind_endoscalar", "694522fc7c1da8b6"),
+            ("native.endoscaling_step", "39b10a7513167ace"),
+            ("nested.collapse", "aa54fefedb49832a"),
+            ("nested.compute_v", "a44f3913c6174b77"),
+            ("nested.endoscaling_step", "9065a01c4731bf03"),
         ],
     ),
     (
         9,
         &[
-            ("native.compute_v", "334ee03d85a04622"),
-            ("native.bind_challenges_0", "02e41b461b5d4e59"),
-            ("native.bind_challenges_1", "998707b10ff0e1a0"),
-            ("native.bind_challenges_2", "2094fb384ae8b9a9"),
-            ("native.bind_challenges_3", "2fd3e3a9d275ca05"),
-            ("native.bind_endoscalar", "ee3db3190ed8794c"),
-            ("native.endoscaling_step", "908a658ee5ac1356"),
-            ("nested.collapse", "5cbc2d30bc8ae5d4"),
-            ("nested.compute_v", "425e6b36ecff9a97"),
-            ("nested.endoscaling_step", "44df3e6a6581e85e"),
+            ("native.compute_v", "0f661a93670e2378"),
+            ("native.bind_challenges_0", "fe9df88edc2c9427"),
+            ("native.bind_challenges_1", "ac403889c67cd80c"),
+            ("native.bind_challenges_2", "b726d640413d9ac7"),
+            ("native.bind_challenges_3", "d8a982e0da9ad62b"),
+            ("native.bind_endoscalar", "694522fc7c1da8b6"),
+            ("native.endoscaling_step", "39b10a7513167ace"),
+            ("nested.collapse", "aa54fefedb49832a"),
+            ("nested.compute_v", "a44f3913c6174b77"),
+            ("nested.endoscaling_step", "9065a01c4731bf03"),
         ],
     ),
     (
         195,
         &[
-            ("native.compute_v", "2c0eecb0109c3e43"),
-            ("native.bind_challenges_0", "48388cb1efcb4fa4"),
-            ("native.bind_challenges_1", "312b29c392b3879d"),
-            ("native.bind_challenges_2", "f53be0ff9aeb493d"),
-            ("native.bind_challenges_3", "defe58ee5c565fc3"),
-            ("native.bind_endoscalar", "ee3db3190ed8794c"),
-            ("native.endoscaling_step", "908a658ee5ac1356"),
-            ("nested.collapse", "e19de96ec76af7c2"),
-            ("nested.compute_v", "b0334937402d26b1"),
-            ("nested.endoscaling_step", "837e82006b6bed15"),
+            ("native.compute_v", "d6c88219a925e044"),
+            ("native.bind_challenges_0", "11336ec491b5ccc1"),
+            ("native.bind_challenges_1", "111f56a2140de5a2"),
+            ("native.bind_challenges_2", "0f2c45332cdb26de"),
+            ("native.bind_challenges_3", "b12d391c5e60927e"),
+            ("native.bind_endoscalar", "694522fc7c1da8b6"),
+            ("native.endoscaling_step", "39b10a7513167ace"),
+            ("nested.collapse", "87106c0aae25d3ad"),
+            ("nested.compute_v", "ddf7a1f5a075b169"),
+            ("nested.endoscaling_step", "729586c9e79b1cbd"),
         ],
     ),
 ];
@@ -501,8 +499,8 @@ fn walk_cuts<const H: usize>() -> Result<(usize, String, String)> {
 }
 
 const WALK_CUTS: [(usize, &str, &str); 2] = [
-    (4, "071da5850c01c7cb", "e6d1cfe4d4aa7fcd"),
-    (195, "071da5850c01c7cb", "1b136e1450ef8631"),
+    (4, "04241d632e7e07dd", "7e95de79b937b5be"),
+    (195, "04241d632e7e07dd", "9cbe9b48ebf3d61e"),
 ];
 
 #[test]

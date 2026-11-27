@@ -357,6 +357,11 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
         }
     }
 
+    /// The staged circuit.
+    pub fn inner(&self) -> &S {
+        &self.circuit
+    }
+
     /// Proxy for [`S::Last::final_mask`](StageExt::final_mask).
     ///
     /// # Errors

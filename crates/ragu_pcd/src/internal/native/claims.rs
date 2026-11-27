@@ -199,7 +199,6 @@ where
 fn page_stages<P: Profile>(placement: &paging::Placement) -> Vec<RxIndex> {
     loaded::<P>(placement.circuit)
         .into_iter()
-        .flatten()
         .chain([RxIndex::ExtensionStage(placement.carry)])
         .collect()
 }
@@ -207,15 +206,14 @@ fn page_stages<P: Profile>(placement: &paging::Placement) -> Vec<RxIndex> {
 /// The fuse's stages a pageable circuit's claim loads, which each of its
 /// pages' claims loads too. [`build`] sums these for every pageable
 /// circuit, whole or its last page, so the pages and the last page read
-/// one list. A circuit that reserves a stage whose polynomial its claim
-/// leaves out has nothing in its place: the circuit reserves that stage's
-/// gates and names none of its wires.
-fn loaded<P: Profile>(circuit: paging::Circuit) -> Vec<Option<RxIndex>> {
+/// one list. A stage a circuit reserves and whose polynomial its claim
+/// leaves out is not in the list: the circuit reserves that stage's gates
+/// and names none of its wires.
+fn loaded<P: Profile>(circuit: paging::Circuit) -> Vec<RxIndex> {
     use RxIndex::*;
-    let all = |stages: &[RxIndex]| stages.iter().copied().map(Some).collect();
     match circuit {
-        paging::Circuit::Hashes1 => all(&[Preamble, OuterError]),
-        paging::Circuit::Hashes2 => all(&[OuterError]),
+        paging::Circuit::Hashes1 => alloc::vec![Preamble, OuterError],
+        paging::Circuit::Hashes2 => alloc::vec![OuterError],
         paging::Circuit::Collapse => {
             let bound = crate::profile::native_extension::<P>().binding.is_some()
                 || !P::NESTED_ONLINE.is_empty();
@@ -223,24 +221,20 @@ fn loaded<P: Profile>(circuit: paging::Circuit) -> Vec<Option<RxIndex>> {
                 .then_some(PointsBinding)
                 .into_iter()
                 .chain([Preamble, InnerError, OuterError])
-                .map(Some)
                 .collect()
         }
-        paging::Circuit::ComputeV => alloc::vec![
-            (!P::NESTED_ONLINE.is_empty()).then_some(PointsBinding),
-            Some(Preamble),
-            Some(Query),
-            Some(Eval),
-        ],
-        paging::Circuit::BindChallenges(_) => {
-            alloc::vec![None, Some(Preamble), Some(Query), Some(Eval)]
-        }
-        paging::Circuit::BindBeta => all(&[PointsBinding, Preamble]),
+        paging::Circuit::ComputeV => (!P::NESTED_ONLINE.is_empty())
+            .then_some(PointsBinding)
+            .into_iter()
+            .chain([Preamble, Query, Eval])
+            .collect(),
+        // A binder reserves the points-binding stage without loading it.
+        paging::Circuit::BindChallenges(_) => alloc::vec![Preamble, Query, Eval],
+        paging::Circuit::BindBeta => alloc::vec![PointsBinding, Preamble],
         paging::Circuit::BindEndoscalar | paging::Circuit::EndoscalingStep(_) => {
             POINTS_INPUT_STAGES
                 .into_iter()
                 .chain([PointsWalk])
-                .map(Some)
                 .collect()
         }
         paging::Circuit::NestedCollapse
@@ -292,7 +286,7 @@ where
         let circuit = pageable(own);
         match placed(circuit) {
             Some(placement) => page_stages::<P>(placement),
-            None => loaded::<P>(circuit).into_iter().flatten().collect(),
+            None => loaded::<P>(circuit),
         }
     };
 
