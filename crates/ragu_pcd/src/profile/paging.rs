@@ -361,13 +361,13 @@ impl Placement {
     }
 }
 
-/// One side's extension before paging's entries.
-fn base<P: Profile>(nested: bool) -> Extension {
-    if nested {
-        online::stages::layout::<P, online::stages::Nested>()
-    } else {
-        online::stages::layout::<P, online::stages::Native>()
-    }
+/// The extension before fuse paging, and the number of circuits the profile
+/// may page, captured before the online helper is appended.
+fn base<P: Profile, S: online::stages::Side>() -> (Extension, usize) {
+    let mut extension = online::stages::declared::<P, S>();
+    let user_circuits = extension.circuits.len();
+    online::stages::extend::<P, S>(&mut extension);
+    (extension, user_circuits)
 }
 
 /// Where each paged circuit's entries sit over `base`: the pages after its
@@ -560,6 +560,8 @@ pub struct Registrar<'params, F: Field, R: Rank> {
     placements: Vec<Placement>,
     /// The stages and final masks of the extension before paging's entries.
     base: (usize, usize),
+    /// Ordered stage IDs used by the claims for each profile-owned circuit.
+    user_stages: Vec<Vec<u32>>,
     pending: Vec<Option<Pending<'params, F, R>>>,
     /// The pages of the circuits cut ahead of their registration
     /// ([`warm`](Self::warm)), until each is registered.
@@ -627,6 +629,13 @@ pub struct ExtensionPages<'params, F: Field, R: Rank> {
     planned: Planned<F>,
 }
 
+/// The registered last extension page, including its public zero suffix.
+fn extension_last<F: Field, R: Rank, S: Pageable<F, R>>(
+    checked: &Checked<F, R, S>,
+) -> impl ragu_circuits::Circuit<F> + use<F, R, S> {
+    super::Suffixed(checked.last())
+}
+
 impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
     /// The pages of `checked`, at the extension circuits from `first` on,
     /// the last page's last.
@@ -634,7 +643,8 @@ impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
     /// # Errors
     ///
     /// Fails if the pages are not as many as `count` pins, or if their
-    /// carry stage is not of the size it pins.
+    /// carry stage differs from the size it pins, or if their circuit indices
+    /// overflow.
     pub fn new<S>(first: u32, count: PageCount, checked: &Checked<F, R, S>) -> Result<Self>
     where
         S: Pageable<F, R>,
@@ -653,6 +663,10 @@ impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
                 ),
             );
         }
+        let end = u32::try_from(pages)
+            .ok()
+            .and_then(|pages| first.checked_add(pages))
+            .ok_or_else(|| Error::Initialization("extension page indices overflow".into()))?;
         let last = pages - 1;
         let registers = (0..pages)
             .map(|page| {
@@ -663,16 +677,14 @@ impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
                     let page = checked.page(page);
                     Box::new(move |registry| registry.register_internal_circuit(page))
                 } else {
-                    let page = checked.last();
-                    Box::new(move |registry| {
-                        registry.register_internal_circuit(super::Suffixed(page))
-                    })
+                    let page = extension_last(checked);
+                    Box::new(move |registry| registry.register_internal_circuit(page))
                 };
                 Some(register)
             })
             .collect();
         Ok(ExtensionPages {
-            circuits: first..first + pages as u32,
+            circuits: first..end,
             pages: registers,
             stages: <Carry<F, R, S> as Stage<F, R>>::gate_ranges(),
             planned: paged.plan(),
@@ -690,8 +702,13 @@ impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
 impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
     /// A registrar for one side of profile `P`.
     pub(crate) fn new<P: Profile>(nested: bool) -> Self {
-        let base = base::<P>(nested);
+        let (mut base, user_circuits) = if nested {
+            base::<P, online::stages::Nested>()
+        } else {
+            base::<P, online::stages::Native>()
+        };
         let placements = placements_over::<P>(&base, nested);
+        base.circuits.truncate(user_circuits);
         Registrar {
             pending: placements.iter().map(|_| None).collect(),
             warmed: placements.iter().map(|_| None).collect(),
@@ -701,6 +718,7 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
             },
             placements,
             base: (base.stages, base.final_masks.len()),
+            user_stages: base.circuits,
             extension: Vec::new(),
         }
     }
@@ -711,9 +729,26 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
     ///
     /// # Errors
     ///
-    /// Fails if two of them take one extension circuit.
+    /// Fails if groups overlap, reach beyond the profile's own circuits,
+    /// or load different stage polynomials on different pages of one group.
     pub(crate) fn declare(&mut self, extension: Vec<ExtensionPages<'params, F, R>>) -> Result<()> {
         for (index, pages) in extension.iter().enumerate() {
+            let range = &pages.circuits;
+            let Some(stages) = self.user_stages.get(range.start as usize..range.end as usize)
+            else {
+                return refuse(
+                    format_args!("extension circuit {}", range.start),
+                    "takes a circuit outside the profile's own extension".into(),
+                );
+            };
+            // Equal gate ranges can belong to different commitments. Each
+            // page must read the very same stage polynomials as its peers.
+            if stages.windows(2).any(|pair| pair[0] != pair[1]) {
+                return refuse(
+                    format_args!("extension circuit {}", range.start),
+                    "loads different stage IDs across its pages".into(),
+                );
+            }
             let overlaps = |other: &ExtensionPages<'params, F, R>| {
                 pages.circuits.start < other.circuits.end
                     && other.circuits.start < pages.circuits.end
@@ -1107,9 +1142,8 @@ pub struct Sizing {
         ),
         String,
     >,
-    /// A digest of its pages as a registry holds them
-    /// ([`Pages::digest`]), where it cuts: what tells one cut of the
-    /// circuit from another.
+    /// The digest of the underlying cut ([`Pages::digest`]), before any
+    /// extension suffix. Present only if the registered pages fit the rank.
     pub digest: Option<[u8; 32]>,
     /// For a circuit that does not cut: how it would spread over the same
     /// pages in polynomials of [`SLACK`] more gates, if it then cuts, which
@@ -1128,40 +1162,17 @@ pub struct Sizing {
 #[cfg(feature = "test-utils")]
 pub const RAISES: usize = 16;
 
-/// `circuit` in `pages` pages as a registry takes them: cut, held to the
-/// circuit, and each page with a wiring polynomial at rank `R`, which is
-/// where a page that writes more gates or enforces more constraints than
-/// the rank has is refused. A cut alone budgets a page's own gates. Gives
-/// the pages and their digest.
+/// Tries adjacent counts until one fits, then descends until the first failure.
 #[cfg(feature = "test-utils")]
-fn accepted<F: Field, R: Rank, S: Pageable<F, R>>(
-    name: &'static str,
-    circuit: alloc::sync::Arc<MultiStage<F, R, S>>,
-    pages: usize,
-) -> Result<(ragu_circuits::paging::Checked<F, R, S>, [u8; 32])> {
-    let checked = split(name, circuit, pages)?.check()?;
-    let digest = checked.pages().digest()?;
-    Ok((checked, digest))
-}
-
-/// The fewest pages a registry takes `circuit` in ([`accepted`]): raised
-/// from `count`'s until it does, then lowered for as long as it still
-/// does, to one at the least.
-#[cfg(feature = "test-utils")]
-fn fewest<F: Field, R: Rank, S: Pageable<F, R>>(
-    name: &'static str,
-    circuit: &alloc::sync::Arc<MultiStage<F, R, S>>,
-    count: PageCount,
-) -> Option<usize> {
-    let cuts = |pages: usize| accepted(name, circuit.clone(), pages).is_ok();
-    let mut pages = count.num_pages();
+fn fewest(mut pages: usize, mut fits: bool, cuts: impl Fn(usize) -> bool) -> Option<usize> {
     let mut raises = 0;
-    while !cuts(pages) {
+    while !fits {
         if raises == RAISES {
             return None;
         }
         raises += 1;
         pages += 1;
+        fits = cuts(pages);
     }
     while pages > 1 && cuts(pages - 1) {
         pages -= 1;
@@ -1178,11 +1189,36 @@ pub const SLACK: usize = 600;
 /// pins, or as `counts` says if they name it; with `solve` finds the
 /// fewest pages it cuts in ([`Sizing::fewest`]).
 #[cfg(feature = "test-utils")]
-pub(crate) fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
+fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
+    name: &'static str,
+    count: PageCount,
+    counts: (&[(&'static str, PageCount)], bool),
+    circuit: MultiStage<F, R, S>,
+) -> Result<Sizing> {
+    sized_with(name, count, counts, circuit, |_| Ok(()))
+}
+
+/// Sizes an extension's pages with the same last page its registrar takes.
+#[cfg(feature = "test-utils")]
+pub(crate) fn sized_extension<F: Field, R: Rank, S: Pageable<F, R>>(
+    name: &'static str,
+    count: PageCount,
+    solve: bool,
+    circuit: MultiStage<F, R, S>,
+) -> Result<Sizing> {
+    sized_with(name, count, (&[], solve), circuit, |checked| {
+        RegistryBuilder::<F, R>::new().register_internal_circuit(extension_last(checked))?;
+        Ok(())
+    })
+}
+
+#[cfg(feature = "test-utils")]
+fn sized_with<F: Field, R: Rank, S: Pageable<F, R>>(
     name: &'static str,
     count: PageCount,
     (counts, solve): (&[(&'static str, PageCount)], bool),
     circuit: MultiStage<F, R, S>,
+    check_last: impl Fn(&Checked<F, R, S>) -> Result<()>,
 ) -> Result<Sizing> {
     let circuit = alloc::sync::Arc::new(circuit);
     let count = counts
@@ -1191,15 +1227,20 @@ pub(crate) fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
         .map_or(count, |&(_, count)| count);
     let (gates, constraints) = ragu_circuits::paging::size(&*circuit)?;
     let stages = ragu_circuits::paging::Stages::of::<F, R, S>();
-    let mut digest = None;
-    let pages = accepted(name, circuit.clone(), count.num_pages())
-        .map(|(checked, pages)| {
-            digest = Some(pages);
-            let paged = checked.pages();
-            (paged.layout().clone(), paged.report().clone())
-        })
-        .map_err(|error| format!("{error:?}"));
-    let fewest = solve.then(|| fewest(name, &circuit, count)).flatten();
+    let accepted = |pages| -> Result<_> {
+        let checked = split(name, circuit.clone(), pages)?.check()?;
+        check_last(&checked)?;
+        let paged = checked.pages();
+        let digest = paged.digest()?;
+        Ok(((paged.layout().clone(), paged.report().clone()), digest))
+    };
+    let (pages, digest) = match accepted(count.num_pages()) {
+        Ok((pages, digest)) => (Ok(pages), Some(digest)),
+        Err(error) => (Err(format!("{error:?}")), None),
+    };
+    let fewest = solve
+        .then(|| fewest(count.num_pages(), pages.is_ok(), |n| accepted(n).is_ok()))
+        .flatten();
     let unbounded = match pages {
         Ok(_) => None,
         Err(_) => split_within(name, circuit, count.num_pages(), R::blind_gate() + SLACK)

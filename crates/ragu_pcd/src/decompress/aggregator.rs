@@ -213,19 +213,19 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
         use super::{verifier::tables, whole::WholeCircuit};
         type Whole<'p, Base, S, R, const H: usize> = WholeCircuit<'p, Base, S, WalletRank, R, H>;
         Ok(vec![
-            crate::profile::paging::sized(
+            crate::profile::paging::sized_extension(
                 "decompression.native",
                 NATIVE_PAGES,
-                (&[], fewest),
+                fewest,
                 Whole::<Base, Native, R, HEADER_SIZE>::new(
                     tables::<Base, Native, WalletRank, R, HEADER_SIZE>()?,
                     params,
                 ),
             )?,
-            crate::profile::paging::sized(
+            crate::profile::paging::sized_extension(
                 "decompression.nested",
                 NESTED_PAGES,
-                (&[], fewest),
+                fewest,
                 Whole::<Base, Nested, R, HEADER_SIZE>::new(
                     tables::<Base, Nested, WalletRank, R, HEADER_SIZE>()?,
                     params,

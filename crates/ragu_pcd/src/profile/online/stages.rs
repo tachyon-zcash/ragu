@@ -406,6 +406,12 @@ pub(crate) fn helper<P: Profile, S: Side>() -> Option<u32> {
 /// The complete extension declaration used by registry and claim indexing.
 pub(crate) fn layout<P: Profile, S: Side>() -> Extension {
     let mut extension = declared::<P, S>();
+    extend::<P, S>(&mut extension);
+    extension
+}
+
+/// Adds the online stage prefix and helper to a profile's own declaration.
+pub(crate) fn extend<P: Profile, S: Side>(extension: &mut Extension) {
     let offset = stage_offset::<P, S>() as u32;
     if offset != 0 {
         let users = consumers::<P, S>();
@@ -439,7 +445,6 @@ pub(crate) fn layout<P: Profile, S: Side>() -> Extension {
             *stage += other_offset;
         }
     }
-    extension
 }
 
 /// Checks consumer indices and that the merged declarations remain consistent.

@@ -1020,3 +1020,90 @@ fn a_registered_page_is_held_to_one() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn extension_pages_share_their_stages_and_stay_inside_the_user_declaration() {
+    use crate::decompress::{side::Nested, whole};
+    use super::{ExtensionPages, Registrar};
+
+    type Profile = Aggregator<HEADER_SIZE>;
+    let checked = whole::checked::<Pasta, Nested, WalletRank, AggregatorRank, HEADER_SIZE>(
+        crate::pasta::baked_aggregator(),
+    )
+    .unwrap();
+    let group = |first| ExtensionPages::new(first, Profile::NESTED_PAGES, &checked);
+    let registrar = || Registrar::new::<Profile>(true);
+    registrar().declare(vec![group(0).unwrap()]).unwrap();
+    assert!(group(u32::MAX).is_err());
+    // The next circuit belongs to the online helper.
+    assert!(registrar().declare(vec![group(1).unwrap()]).is_err());
+
+    let mut different = registrar();
+    // A different commitment may have exactly the same gate range.
+    *different.user_stages[1].last_mut().unwrap() += 1;
+    assert!(different.declare(vec![group(0).unwrap()]).is_err());
+}
+
+#[test]
+fn extension_census_counts_the_last_output_at_the_constraint_limit() -> Result<()> {
+    use ragu_circuits::{
+        WithAux,
+        paging::Pageable,
+        polynomials::TestRank,
+        staging::{MultiStage, MultiStageCircuit, StageBuilder},
+    };
+    use ragu_core::{
+        drivers::{Driver, DriverValue},
+        gadgets::Bound,
+    };
+    use ragu_primitives::vec::ConstLen;
+
+    struct Constraints(usize);
+
+    impl Pageable<Fp, TestRank> for Constraints {
+        type Carry = ConstLen<0>;
+    }
+
+    impl MultiStageCircuit<Fp, TestRank> for Constraints {
+        type Last = ();
+        type Instance<'source> = ();
+        type Witness<'source> = ();
+        type Output = ();
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _: &mut D,
+            _: DriverValue<D, ()>,
+        ) -> Result<Bound<'dr, D, ()>> {
+            Ok(())
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, TestRank, (), ()>,
+            _: DriverValue<D, ()>,
+        ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
+            let dr = builder.finish();
+            for _ in 0..self.0 {
+                dr.enforce_zero(|lc| lc)?;
+            }
+            Ok(WithAux::new((), D::unit()))
+        }
+    }
+
+    let count = PageCount::new(1);
+    // The registry reserves one coefficient. Orchestration adds the ONE
+    // constraint, and the extension adds one public output.
+    let body = TestRank::num_coeffs() - 2;
+    let circuit = |n| MultiStage::new(Constraints(n));
+    assert!(super::sized("plain", count, (&[], false), circuit(body))?.pages.is_ok());
+    let overflow = super::sized_extension("extension", count, true, circuit(body))?;
+    assert!(overflow.pages.unwrap_err().contains("ConstraintBoundExceeded"));
+    assert!(overflow.digest.is_none());
+    assert_ne!(overflow.fewest, Some(1));
+    let fits = super::sized_extension("extension", count, true, circuit(body - 1))?;
+    assert!(fits.pages.is_ok());
+    assert_eq!(fits.fewest, Some(1));
+    Ok(())
+}
