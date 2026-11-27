@@ -291,8 +291,17 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Paged<F, R, S>
             "the plan lays its pages over other stages than the circuit was cut over".into(),
         );
     }
-    let (body_gates, body_constraints) = Recording::<F>::body_shape(&*paged.circuit)?;
+    // The circuit's body, before it writes its public output and the final
+    // `ONE` constraint.
+    let body = Recording::<F>::raw_of(&*paged.circuit)?;
+    let (body_gates, body_constraints) = (body.num_gates, body.raw.len());
     layout(plan, body_gates)?;
+    // A routine the circuit calls is on one page, whole.
+    if let Some(routine) = body.split_routine(|gate| plan.place(gate)) {
+        return refuse(format!(
+            "the pages split a routine the circuit calls, at gates {routine:?}"
+        ));
+    }
     let (all_gates, original) = Recording::<F>::all_of(&*paged.circuit)?;
     let Some(output_gates) = all_gates.checked_sub(body_gates) else {
         return refuse("the circuit's output gates precede its body".into());

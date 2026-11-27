@@ -1242,3 +1242,26 @@ fn a_routine_is_not_cut() -> Result<()> {
     }
     Ok(())
 }
+
+/// The check holds the pages to the routines the circuit calls, whatever
+/// chose the cuts: a plan that parts a routine's gates is refused though
+/// its pages' constraints are the circuit's.
+#[test]
+fn a_plan_that_splits_a_routine_is_caught() -> Result<()> {
+    let paged = Paged::cut(flat(Called::<30>), 3, 354)?;
+    paged.check()?;
+    let routine = Recording::of(&flat(Called::<30>))?.routines[0].clone();
+    // The routine's last gate and the gate after it, which is not the
+    // routine's, on the page that holds them, at each other's place.
+    let (page, at) = paged.plan.place(routine.end - 1).expect("a gate");
+    assert_eq!(paged.plan.place(routine.end), Some((page, at + 1)));
+    let wrong = tampered(&paged, |plan| {
+        let own_start = plan.layout.own_start;
+        let first = plan.layout.carry.end;
+        plan.held[page].swap(at - first, at + 1 - first);
+        plan.places
+            .swap(routine.end - 1 - own_start, routine.end - own_start);
+    });
+    assert!(refused(&wrong, "split a routine the circuit calls"));
+    Ok(())
+}

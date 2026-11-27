@@ -94,10 +94,10 @@ impl<F: Field> Program<F> {
             })
         }
         // TODO(#503): a routine the circuit calls is replayed here as part
-        // of the page's flat run, so its segment is not one a memo can
-        // key on. Its gates are all on this page, together and in order;
-        // what is left is for the page to call the routine on `dr`, in a
-        // segment the floor planner places among the page's gates.
+        // of the page's flat run, so it has no segment a memo can key on.
+        // The check holds its gates to this page, together and in order
+        // (`Recording::split_routine`); what is left is for the page to
+        // call it as a routine on `dr`.
         let one = D::ONE;
         let wires = (reserved, &gates[..]);
         let mut sums: Vec<D::Wire> = Vec::with_capacity(self.sums.len());
@@ -516,6 +516,9 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for LastPage<
         // The circuit's own walk gives the public output and, with a
         // witness, the values of the page's gates; the page allocates and
         // enforces what the plan compiled for it, as the others do.
+        //
+        // TODO: the walk is for the output gadget's type alone. A page
+        // whose output is the elements the circuit writes needs none.
         let plan = &*self.plan;
         let last = plan.pages() - 1;
         let mut shadow = Shadow::<F, D::MaybeKind>::new();

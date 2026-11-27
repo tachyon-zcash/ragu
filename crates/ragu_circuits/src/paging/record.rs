@@ -5,7 +5,8 @@
 //! [`Paged::check`](super::Paged::check) rests on this module: it compares
 //! the recording of a circuit with the recordings of its pages, so a
 //! constraint this driver did not keep is one the check does not hold the
-//! pages to. The planner reads the same recording to choose its cuts, and
+//! pages to, and it holds the pages to the routines this driver noted
+//! ([`Recording::split_routine`]). The planner reads the same recording to choose its cuts, and
 //! takes nothing else of the circuit.
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
@@ -116,11 +117,29 @@ impl<F: Field> Recording<F> {
         ))
     }
 
-    /// The gates and constraints of the circuit body, before writing its
-    /// public output and the final `ONE` constraint.
-    pub(super) fn body_shape<C: Circuit<F>>(circuit: &C) -> Result<(usize, usize)> {
-        let recording = Self::raw_of(circuit)?;
-        Ok((recording.num_gates, recording.raw.len()))
+    /// The first routine the circuit calls that `place` does not keep
+    /// whole, by its gates. `place` gives a gate of the circuit's its page
+    /// and its place there, and a routine is whole where its gates are on
+    /// one page, next to one another in the order the circuit allocates
+    /// them: what a page needs to call it as a routine of its own.
+    ///
+    /// The planner refuses a layout by this, and the check a plan.
+    pub(super) fn split_routine(
+        &self,
+        place: impl Fn(usize) -> Option<(usize, usize)>,
+    ) -> Option<Range<usize>> {
+        self.routines
+            .iter()
+            .find(|routine| {
+                let mut places = (routine.start..routine.end).map(&place);
+                let Some(Some((page, first))) = places.next() else {
+                    return true;
+                };
+                !places
+                    .enumerate()
+                    .all(|(gate, at)| at == Some((page, first + gate + 1)))
+            })
+            .cloned()
     }
 
     /// Walks `circuit` for what it emits, as emitted.

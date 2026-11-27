@@ -821,6 +821,17 @@ fn arrange<F: Field>(
         places.push((page as u32, (layout.carry.end + held[page].len()) as u32));
         held[page].push(gate as u32);
     }
+    // A routine the circuit calls stays whole, by what the check holds the
+    // pages to.
+    let placed = |gate: usize| {
+        let &(page, at) = places.get(gate.checked_sub(layout.own_start)?)?;
+        Some((page as usize, at as usize))
+    };
+    if let Some(routine) = recording.split_routine(placed) {
+        return refuse(format!(
+            "the layout splits a routine the circuit calls, at gates {routine:?}"
+        ));
+    }
 
     let mut arranger = Arranger {
         own_start: layout.own_start,

@@ -56,10 +56,23 @@
 //! walks the circuit, on a driver that only counts what it emits, for the
 //! public output's shape and its witness. A page is one flat run of gates
 //! and constraints: a routine the circuit calls is not a routine of the
-//! page, though no cut falls within one, so its gates are on one page,
-//! together and in the order the circuit allocates them.
+//! page yet. No cut falls within one, though: its gates are on one page,
+//! together and in the order the circuit allocates them, which
+//! [`Paged::check`] holds the pages to.
 //!
 //! The `ONE` wire is on every page and is never carried.
+//!
+//! # Not yet
+//!
+//! - TODO(#503): a page does not call the routines the circuit calls. It
+//!   holds each one whole and replays its gates and constraints as part of
+//!   its own, so a page is one segment and a routine on a page has no
+//!   segment or fingerprint of its own. Calling them as routines is left
+//!   for when a floor planner or an evaluator reads segments.
+//! - TODO: the last page walks the circuit each time it is synthesized, on
+//!   a driver that only counts, to build the public output's gadget. A
+//!   page that carried the output as the elements the circuit writes would
+//!   not, and every page would then be of one type.
 //!
 //! # What soundness rests on
 //!
