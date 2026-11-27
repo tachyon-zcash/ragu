@@ -24,7 +24,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
 };
-use ragu_core::Result;
+use ragu_core::{Error, Result};
 use udon::field::Field;
 
 use crate::{
@@ -283,6 +283,34 @@ fn with_masked<Id: Copy, F: Field>(
         b: Vec::new(),
     }));
     shapes
+}
+
+/// The wire bindings a proof's native claims end with: the preamble,
+/// query, eval, points `ab` and points `f` stages'.
+pub(crate) const NATIVE_BINDINGS: usize = 5;
+
+/// The wire bindings a proof's nested claims end with: the preamble, query
+/// and eval stages'.
+pub(crate) const NESTED_BINDINGS: usize = 3;
+
+/// Refuses profile `P` if a proof's claims on either curve, the decider's
+/// and the wire bindings', take more error terms than one fold in
+/// polynomials of rank `R` holds: the fold takes a proof's claims at once.
+pub(crate) fn check_fits<P: Profile, R: Rank, F: Field, G: Field>() -> Result<()> {
+    let native = native_shapes::<P, F>(F::ZERO, &[])?.len() + NATIVE_BINDINGS;
+    let nested = nested_shapes::<P, G>(G::ZERO, &[])?.len() + NESTED_BINDINGS;
+    for (side, claims) in [("native", native), ("nested", nested)] {
+        if !super::fold::Layout::new(claims).fits(R::num_coeffs()) {
+            return Err(Error::Initialization(
+                alloc::format!(
+                    "the profile's {claims} {side} claims take more error terms than one fold \
+                     of the rank holds"
+                )
+                .into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The shapes of the native claims of a proof in profile `P`, in the

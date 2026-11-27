@@ -691,8 +691,10 @@ impl<C: ProfiledCycle> Instance<C> {
         let [gx, gy] = coordinates(self.nested_registry_xy)?;
         let points_f = claim(Rx(PointsF), points_f, vec![gx, gy]);
 
+        let masked: [_; super::revdot::claims::NATIVE_BINDINGS] =
+            [preamble, query, eval, points_ab, points_f];
         Ok(Bindings {
-            masked: vec![preamble, query, eval, points_ab, points_f],
+            masked: masked.into(),
             registry_xy,
         })
     }
@@ -784,8 +786,9 @@ impl<C: ProfiledCycle> Instance<C> {
             ],
         );
 
+        let masked: [_; super::revdot::claims::NESTED_BINDINGS] = [preamble, query, eval];
         Ok(Bindings {
-            masked: vec![preamble, query, eval],
+            masked: masked.into(),
             registry_xy,
         })
     }

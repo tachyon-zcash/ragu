@@ -365,6 +365,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
         C::Profile::check_context(&context, params, &self.header_map)?;
+        // Compression folds a proof's claims at once, in one polynomial of
+        // the rank on each curve.
+        crate::compress::revdot::claims::check_fits::<
+            C::Profile,
+            R,
+            C::CircuitField,
+            C::ScalarField,
+        >()?;
 
         // The decompression step, which a profile with a statement circuit
         // registers below, stages a value: the application stage, which
