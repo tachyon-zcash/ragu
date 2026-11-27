@@ -251,16 +251,19 @@ mod tests {
     fn envelope_bounds_the_shape_before_any_payload_is_buffered() {
         for (envelope, reason) in [
             (
-                envelope(PayloadKind::Compressed, 13, 0),
+                envelope(PayloadKind::Compressed, WalletRank::RANK, 0),
                 "proof payload kind mismatch",
             ),
-            (envelope(PayloadKind::Proof, 12, 0), "proof rank mismatch"),
             (
-                envelope(PayloadKind::Proof, 13, 4),
+                envelope(PayloadKind::Proof, WalletRank::RANK - 1, 0),
+                "proof rank mismatch",
+            ),
+            (
+                envelope(PayloadKind::Proof, WalletRank::RANK, 4),
                 "proof header size must be zero",
             ),
             (
-                envelope(PayloadKind::Proof, 13, u64::MAX),
+                envelope(PayloadKind::Proof, WalletRank::RANK, u64::MAX),
                 "proof header size must be zero",
             ),
         ] {

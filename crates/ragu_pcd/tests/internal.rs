@@ -51,10 +51,10 @@ where
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
 //
-// The largest header the production rank fits: the challenge binders load
-// the preamble, query and eval stages, and with the step's own output header
-// and online openings in the preamble beside the children's bridge hashes
-// the last binder fills the gate budget here.
+// The largest header the fuse fit at rank 13, where the last challenge
+// binder filled the gate budget. The production rank fits far larger ones
+// (see `test_header_capacity_at_finalize`); the census keeps this one so
+// its counts stay comparable across changes to the fuse.
 pub const HEADER_SIZE: usize = 194;
 const AGGREGATOR_HEADER_SIZE: usize = 195;
 
@@ -237,20 +237,20 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes1Circuit,              mul = 1785, lin = 3018);
     check_constraints!(Hashes2Circuit,              mul = 1873, lin = 2991);
     check_constraints!(CollapseCircuit,             mul = 1599, lin = 2560);
-    check_constraints!(ComputeVCircuit,             mul = 1981, lin = 2986);
-    check_constraints!(BindChallengesCircuit(0),    mul = 2031, lin = 3061);
-    check_constraints!(BindChallengesCircuit(1),    mul = 2036, lin = 3071);
-    check_constraints!(BindChallengesCircuit(2),    mul = 2036, lin = 3071);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2047, lin = 3093);
+    check_constraints!(ComputeVCircuit,             mul = 1672, lin = 2458);
+    check_constraints!(BindChallengesCircuit(0),    mul = 1986, lin = 3061);
+    check_constraints!(BindChallengesCircuit(1),    mul = 1991, lin = 3071);
+    check_constraints!(BindChallengesCircuit(2),    mul = 1991, lin = 3071);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2002, lin = 3093);
     check_constraints!(BindBetaCircuit,             mul = 1888, lin = 3125);
-    check_constraints!(BindEndoscalarCircuit,       mul = 970,  lin = 1809);
-    // Every native endoscaling step but the last walks four points and has
-    // the same layout; the last walks the 107 inputs' remaining three.
+    check_constraints!(BindEndoscalarCircuit,       mul = 792,  lin = 1529);
+    // Every native endoscaling step but the last walks eight points and has
+    // the same layout; the last walks the 67 inputs' remaining three.
     let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
     for step in 0..last {
-        check_constraints!(EndoscalingStep(step),   mul = 2004, lin = 3502);
+        check_constraints!(EndoscalingStep(step),   mul = 3694, lin = 6998);
     }
-    check_constraints!(EndoscalingStep(last),       mul = 1567, lin = 2628);
+    check_constraints!(EndoscalingStep(last),       mul = 1509, lin = 2628);
 }
 
 #[rustfmt::skip]
@@ -267,13 +267,13 @@ fn test_internal_stage_parameters() {
     check_stage!(Preamble, skip = 29, num = 339);
     check_stage!(OuterError, skip = 368, num = 20);
     check_stage!(InnerError, skip = 388, num = 53);
-    check_stage!(Query, skip = 368, num = 83);
-    check_stage!(Eval, skip = 451, num = 64);
-    check_stage!(PointsPreamble, skip = 29, num = 70);
-    check_stage!(PointsRegistryWx, skip = 99, num = 4);
-    check_stage!(PointsAb, skip = 103, num = 3);
-    check_stage!(PointsF, skip = 106, num = 3);
-    check_stage!(PointsWalk, skip = 109, num = 146);
+    check_stage!(Query, skip = 368, num = 56);
+    check_stage!(Eval, skip = 424, num = 46);
+    check_stage!(PointsPreamble, skip = 29, num = 30);
+    check_stage!(PointsRegistryWx, skip = 59, num = 4);
+    check_stage!(PointsAb, skip = 63, num = 3);
+    check_stage!(PointsF, skip = 66, num = 3);
+    check_stage!(PointsWalk, skip = 69, num = 128);
 }
 
 /// Every native internal circuit's claim in [`native::claims`] composes its
@@ -701,19 +701,19 @@ fn nested_circuits() -> impl Iterator<Item = nested::InternalCircuitIndex> {
 #[rustfmt::skip]
 #[test]
 fn test_nested_circuit_constraint_counts() {
-    // Every nested endoscaling step but the last walks four points and has
-    // the same layout; the last walks the 121 inputs' remaining one.
+    // Every nested endoscaling step but the last walks eight points and has
+    // the same layout; the last walks the 85 inputs' remaining five.
     let steps = crate::internal::endoscalar::num_steps(
         nested::ENDOSCALINGS_PER_STEP,
         nested::NUM_ENDOSCALING_POINTS,
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps - 1 {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2023, 3501)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (3715, 6997)));
     }
-    expected.push((nested::InternalCircuitIndex::EndoscalingStep(steps as u32 - 1), (712, 879)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (1713, 2908)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1581, 1961)));
+    expected.push((nested::InternalCircuitIndex::EndoscalingStep(steps as u32 - 1), (2404, 4375)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1403, 2444)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1145, 1373)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -736,16 +736,16 @@ fn test_nested_stage_parameters() {
 
     check_stage!(endoscalar::EndoscalarStage, skip = 1, num = 119);
     check_stage!(stages::bridge_hash::Stage<EqAffine>, skip = 120, num = 1);
-    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 121, num = 153);
-    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 274, num = 118);
-    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 392, num = 7);
-    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 399, num = 51);
-    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 450, num = 13);
-    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 463, num = 3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 466, num = 76);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 542, num = 3);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 545, num = 55);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 600, num = 10);
+    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 121, num = 97);
+    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 218, num = 82);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 300, num = 7);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 307, num = 51);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 358, num = 13);
+    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 371, num = 3);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 374, num = 46);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 420, num = 3);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 423, num = 35);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 458, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -913,7 +913,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x26276ff1e6006327a3ff501213fb68404690eedf5bee8dd81c0cb969a85dd710"
+        "0x15e1244997a913601ca39cea481fc94f553a1b578c0831cfa267ab0e414d312f"
     ));
 
     assert_eq!(
@@ -935,7 +935,7 @@ fn test_nested_registry_tag() {
         .unwrap();
 
     let expected = Fq::new(udon::fq_hex!(
-        "0x0f977c1018ab54a1fdffde723e2782406c46e83a93f686a112d22f135f01a8c2"
+        "0x2f00bcb773d16ed4fb552dd6f91702b30bf94fb0197a68f6e1e727128a2ce3c8"
     ));
 
     assert_eq!(
@@ -1494,10 +1494,10 @@ fn test_extension_hooks_register_without_a_prover() {
     );
 }
 
-/// A sixth native extension circuit overflows the gate budget, since the
-/// fuse's own circuits grow with every polynomial a proof carries; five
-/// still fit. Both at a small header, where the challenge binders leave
-/// room.
+/// Enough native extension circuits overflow the gate budget, since the
+/// fuse's own circuits grow with every polynomial a proof carries: 160
+/// do, and 128 still fit. Both at a small header, where the challenge
+/// binders leave room.
 #[test]
 fn test_extension_overflowing_the_fuse_is_rejected() {
     use alloc::string::ToString;
@@ -1505,13 +1505,13 @@ fn test_extension_overflowing_the_fuse_is_rejected() {
     use crate::profile::{NO_NATIVE_EXTENSION_PROVER, Profiled, testing::Hooked};
 
     let params = crate::pasta::baked();
-    let fitting = ApplicationBuilder::<Profiled<Pasta, Hooked<5>>, R, 4>::new().finalize(params);
+    let fitting = ApplicationBuilder::<Profiled<Pasta, Hooked<128>>, R, 4>::new().finalize(params);
     assert!(
         matches!(fitting, Err(Error::Initialization(source))
             if source.to_string() == NO_NATIVE_EXTENSION_PROVER),
-        "five extension circuits should fit"
+        "128 extension circuits should fit"
     );
-    let result = ApplicationBuilder::<Profiled<Pasta, Hooked<6>>, R, 4>::new().finalize(params);
+    let result = ApplicationBuilder::<Profiled<Pasta, Hooked<160>>, R, 4>::new().finalize(params);
     assert!(
         matches!(result, Err(Error::GateBoundExceeded { .. })),
         "the fuse should exceed its gate budget before any prover runs"
@@ -1528,31 +1528,31 @@ fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
     let params = crate::pasta::baked();
-    let standard = ApplicationBuilder::<Pasta, R, 194>::new().finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 647>::new().finalize(params);
     assert!(
         standard.is_ok(),
-        "194 fields must fit: {:?}",
+        "647 fields must fit: {:?}",
         standard.err()
     );
-    let oversized = ApplicationBuilder::<Pasta, R, 195>::new().finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 648>::new().finalize(params);
     assert!(matches!(
         oversized,
-        Err(Error::GateBoundExceeded { limit: 2047 })
+        Err(Error::GateBoundExceeded { limit: 4095 })
     ));
 
     type Extended = Profiled<Pasta, Decompressing>;
     let extended =
-        ApplicationBuilder::<Extended, R, 157>::new().finalize_with(params, Default::default());
+        ApplicationBuilder::<Extended, R, 373>::new().finalize_with(params, Default::default());
     assert!(
         extended.is_ok(),
-        "157 fields must fit: {:?}",
+        "373 fields must fit: {:?}",
         extended.err()
     );
     let oversized =
-        ApplicationBuilder::<Extended, R, 158>::new().finalize_with(params, Default::default());
+        ApplicationBuilder::<Extended, R, 374>::new().finalize_with(params, Default::default());
     assert!(
-        matches!(oversized, Err(Error::GateBoundExceeded { limit: 2047 })),
-        "158 fields must exceed the gate budget, got {:?}",
+        matches!(oversized, Err(Error::GateBoundExceeded { limit: 4095 })),
+        "374 fields must exceed the gate budget, got {:?}",
         oversized.err()
     );
 }
@@ -1568,8 +1568,8 @@ fn test_fold_groups_follow_the_profile() {
         profile::{Standard, testing::Wider},
     };
 
-    assert_eq!(native::num_claims::<Standard>(), 95);
-    assert_eq!(nested::num_claims::<Standard>(), 82);
+    assert_eq!(native::num_claims::<Standard>(), 59);
+    assert_eq!(nested::num_claims::<Standard>(), 42);
     assert_eq!(
         native::NumFoldGroups::<Standard>::len(),
         native::NUM_FOLD_GROUPS
@@ -1583,12 +1583,16 @@ fn test_fold_groups_follow_the_profile() {
     assert!(capacity::<nested::RevdotParameters<Standard>>() >= nested::num_claims::<Standard>());
 
     // Wider adds two native circuits and four masks, one nested circuit
-    // and two masks, and lengthens both walks by a few steps.
+    // and two masks, and lengthens both walks by a step. The standard
+    // nested grid still has room for its claims, so it keeps the grid.
     assert!(native::num_claims::<Wider>() > native::num_claims::<Standard>() + 7);
     assert!(nested::num_claims::<Wider>() > nested::num_claims::<Standard>() + 4);
     assert!(capacity::<native::RevdotParameters<Wider>>() >= native::num_claims::<Wider>());
     assert!(capacity::<nested::RevdotParameters<Wider>>() >= nested::num_claims::<Wider>());
-    assert!(nested::NumFoldGroups::<Wider>::len() > nested::NUM_FOLD_GROUPS);
+    assert_eq!(
+        nested::NumFoldGroups::<Wider>::len(),
+        nested::NUM_FOLD_GROUPS
+    );
 }
 
 /// The gates of every fuse circuit of profile `P` over cycle `C` at rank
@@ -1704,31 +1708,68 @@ fn report_fuse_gates(
         .collect()
 }
 
-/// Every fuse circuit of the aggregator profile fits the aggregator rank's
-/// budget with the decompression extension's polynomials, for a small
-/// header and the aggregator's pinned 195-element header.
+/// The fuse circuits the aggregator profile registers whole fit the
+/// aggregator rank's budget with the decompression extension's
+/// polynomials, for a small header and the aggregator's pinned 195-element
+/// header. The others the profile cuts into pages, each a polynomial of
+/// that rank, which registering them holds to the same budget.
 #[test]
 fn test_aggregator_fuse_fits_the_budget() {
     use ragu_circuits::polynomials::AggregatorRank;
 
-    use crate::profile::{Aggregator, Profiled};
+    use crate::profile::{Aggregator, PageCount, PageCounts, Profile, Profiled};
+
+    /// The circuits of `gates` that `pages` leaves whole, by their indices'
+    /// names: the native side's, or the nested side's.
+    fn whole(
+        pages: &PageCounts,
+        nested: bool,
+        gates: alloc::vec::Vec<(alloc::string::String, usize)>,
+    ) -> alloc::vec::Vec<(alloc::string::String, usize)> {
+        gates
+            .into_iter()
+            .filter(|(name, _)| {
+                let cut = match (nested, name.as_str()) {
+                    (true, "Collapse") => pages.nested_collapse,
+                    (true, "ComputeV") => pages.nested_compute_v,
+                    (true, _) => pages.nested_endoscaling_step,
+                    (false, "Hashes1Circuit") => pages.hashes_1,
+                    (false, "Hashes2Circuit") => pages.hashes_2,
+                    (false, "CollapseCircuit") => pages.collapse,
+                    (false, "ComputeVCircuit") => pages.compute_v,
+                    (false, "BindBetaCircuit") => pages.bind_beta,
+                    (false, "BindEndoscalarCircuit") => pages.bind_endoscalar,
+                    (false, name) if name.starts_with("BindChallengesCircuit") => {
+                        pages.bind_challenges
+                    }
+                    (false, _) => pages.endoscaling_step,
+                };
+                cut == PageCount::WHOLE
+            })
+            .collect()
+    }
 
     let budget = AggregatorRank::blind_gate();
     let mut over = alloc::vec::Vec::new();
     {
         type C = Profiled<Pasta, Aggregator<4>>;
+        let pages = <Aggregator<4> as Profile>::PAGE_COUNTS;
         let (native, nested) = fuse_gates!(C, AggregatorRank, 4, Aggregator<4>);
+        let (native, nested) = (whole(&pages, false, native), whole(&pages, true, nested));
+        assert!(!native.is_empty(), "the profile keeps some circuit whole");
         over.extend(report_fuse_gates("native, header size 4", &native, budget));
         over.extend(report_fuse_gates("nested, header size 4", &nested, budget));
     }
     {
         type C = Profiled<Pasta, Aggregator<AGGREGATOR_HEADER_SIZE>>;
+        let pages = <Aggregator<AGGREGATOR_HEADER_SIZE> as Profile>::PAGE_COUNTS;
         let (native, nested) = fuse_gates!(
             C,
             AggregatorRank,
             AGGREGATOR_HEADER_SIZE,
             Aggregator<AGGREGATOR_HEADER_SIZE>
         );
+        let (native, nested) = (whole(&pages, false, native), whole(&pages, true, nested));
         over.extend(report_fuse_gates(
             &alloc::format!("native, header size {AGGREGATOR_HEADER_SIZE}"),
             &native,

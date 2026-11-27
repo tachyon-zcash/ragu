@@ -24,7 +24,7 @@ use udon::field::Field;
 use super::{InternalCircuitIndex, RxComponent, RxIndex};
 use crate::{
     internal::revdot::{Builder, Source, sum_polynomials},
-    profile::Profile,
+    profile::{Profile, paging},
 };
 
 /// Trait for processing nested claim values into accumulated outputs.
@@ -81,6 +81,50 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
     }
 }
 
+/// A nested circuit a profile can page: the polynomial of its own slot and
+/// the stages its claim loads, in the order it reserves them. A step
+/// reserves the bridge-hash stage without loading it, so that stage is not
+/// in its list.
+fn pageable(circuit: paging::Circuit) -> (RxIndex, Vec<RxIndex>) {
+    let every = || RxIndex::STAGES.into_iter().collect();
+    match circuit {
+        paging::Circuit::NestedCollapse => (RxIndex::INSTANCE[0], every()),
+        paging::Circuit::NestedComputeV => (RxIndex::INSTANCE[1], every()),
+        paging::Circuit::NestedEndoscalingStep(step) => (
+            RxIndex::EndoscalingStep(step),
+            alloc::vec![RxIndex::EndoscalarStage, RxIndex::PointsStage],
+        ),
+        _ => unreachable!("a nested circuit"),
+    }
+}
+
+/// The stages each page of a paged circuit loads, which are its circuit's,
+/// and its carry stage.
+fn page_stages(placement: &paging::Placement) -> Vec<RxIndex> {
+    pageable(placement.circuit)
+        .1
+        .into_iter()
+        .chain([RxIndex::ExtensionStage(placement.carry)])
+        .collect()
+}
+
+/// The polynomials at `indices`, for each proof.
+fn per_proof<S>(source: &S, indices: impl IntoIterator<Item = RxIndex>) -> Vec<Vec<S::Rx>>
+where
+    S: Source<RxComponent = RxComponent>,
+{
+    let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+    for index in indices {
+        for (i, rx) in source.rx(RxComponent::Rx(index)).enumerate() {
+            if per_proof.len() <= i {
+                per_proof.push(Vec::new());
+            }
+            per_proof[i].push(rx);
+        }
+    }
+    per_proof
+}
+
 /// Build nested claims in unified interleaved order from a source.
 ///
 /// The ordering is:
@@ -105,9 +149,32 @@ where
         processor.raw_claim(a, b);
     }
 
+    // A circuit its profile pages is its last page, which loads the
+    // circuit's stages and its carry stage, as every page of it does.
+    let pages = paging::placements::<P>(true);
+    let paged = |circuit: InternalCircuitIndex| {
+        let which = match circuit {
+            InternalCircuitIndex::Collapse => paging::Circuit::NestedCollapse,
+            InternalCircuitIndex::ComputeV => paging::Circuit::NestedComputeV,
+            InternalCircuitIndex::EndoscalingStep(step) => {
+                paging::Circuit::NestedEndoscalingStep(step)
+            }
+            _ => return None,
+        };
+        pages.iter().find(|placement| placement.circuit == which)
+    };
+
     for id in InternalCircuitIndex::all::<P>() {
         use InternalCircuitIndex::*;
         match id {
+            // A paged step is its last page.
+            EndoscalingStep(step) if paged(id).is_some() => {
+                let placement = paged(id).expect("a paged step");
+                let loaded = once(RxIndex::EndoscalingStep(step)).chain(page_stages(placement));
+                for rxs in per_proof(source, loaded) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
             EndoscalingStep(step) => {
                 for ((step_rx, endo_rx), pts_rx) in source
                     .rx(Rx(RxIndex::EndoscalingStep(step)))
@@ -124,17 +191,11 @@ where
                     .iter()
                     .position(|&circuit| circuit == id)
                     .expect("an instance circuit")];
-                let loaded = once(own).chain(RxIndex::STAGES);
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in loaded {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
-                }
-                for rxs in per_proof {
+                let stages = match paged(id) {
+                    Some(placement) => page_stages(placement),
+                    None => RxIndex::STAGES.to_vec(),
+                };
+                for rxs in per_proof(source, once(own).chain(stages)) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -142,20 +203,20 @@ where
             // (k(y) = 1).
             ExtensionCircuit(k) => {
                 let extension = crate::profile::nested_extension::<P>();
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
-                    extension.circuits[k as usize]
+                // A page loads its circuit's stages beside its carry
+                // stage, which is the extension stage it is declared to
+                // load.
+                let loaded = match pages
+                    .iter()
+                    .find_map(|placement| placement.page(k).map(|_| page_stages(placement)))
+                {
+                    Some(stages) => stages,
+                    None => extension.circuits[k as usize]
                         .iter()
-                        .map(|&stage| RxIndex::ExtensionStage(stage)),
-                ) {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
-                }
-                for rxs in per_proof {
+                        .map(|&stage| RxIndex::ExtensionStage(stage))
+                        .collect(),
+                };
+                for rxs in per_proof(source, once(RxIndex::ExtensionCircuit(k)).chain(loaded)) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -166,19 +227,31 @@ where
                 if (j as usize) < extension.stages {
                     processor.mask_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
+                    // The mask of a circuit's last page covers the
+                    // circuit's own polynomial, which is that page's.
+                    let last_pages = pages
+                        .iter()
+                        .find(|placement| placement.masks_last(j))
+                        .map(|placement| source.rx(Rx(pageable(placement.circuit).0)))
+                        .into_iter()
+                        .flatten();
                     processor.mask_claim(
                         id,
                         extension
                             .final_mask(j as usize)
                             .iter()
-                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k)))),
+                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k))))
+                            .chain(last_pages),
                     )?;
                 }
             }
+            // The final mask of the steps' last stage, over the steps: a
+            // paged step is under its pages' mask instead.
             PointsFinalStaged => {
                 let num_steps = super::NumSteps::<P>::len();
-                let final_rxs = (0..num_steps)
-                    .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step as u32))));
+                let final_rxs = (0..num_steps as u32)
+                    .filter(|&step| paged(EndoscalingStep(step)).is_none())
+                    .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step))));
                 processor.mask_claim(id, final_rxs)?;
             }
             ChallengeFinalStaged => {

@@ -219,7 +219,7 @@ impl NativeRx {
         out
     }
 
-    const fn from_internal(v: crate::internal::native::RxIndex) -> Self {
+    pub(crate) const fn from_internal(v: crate::internal::native::RxIndex) -> Self {
         use crate::internal::native::RxIndex as I;
         match v {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
@@ -960,7 +960,7 @@ impl NestedRx {
         out
     }
 
-    const fn from_internal(v: crate::internal::nested::RxIndex) -> Self {
+    pub(crate) const fn from_internal(v: crate::internal::nested::RxIndex) -> Self {
         use crate::internal::nested::RxIndex as I;
         match v {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),

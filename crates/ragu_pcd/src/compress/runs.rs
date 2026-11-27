@@ -8,8 +8,9 @@
 //! the proof's decompression at the aggregator rank. Every compressed proof
 //! commits its runs there, whether or not an aggregator decompresses it, so
 //! that the aggregator's circuits can hold each absorbed point to its
-//! stage; the Standard tables carry those generators past their end
-//! (`pasta::STAGE_REACH`). The run list, each run's shape and the order of
+//! stage. The wallet rank is the aggregator's, so the Standard tables hold
+//! those generators; a table that stops short of them takes the baked
+//! stage reach's (`pasta::STAGE_REACH`). The run list, each run's shape and the order of
 //! the stages are so part of the Standard profile's wire format: a change
 //! to any of them, or to the aggregator rank, changes every wallet's
 //! compressed proof, which the fuse fixtures pin.
@@ -225,9 +226,9 @@ pub(crate) fn run_degrees<P: Profile, K: Rank, R: Rank>() -> Vec<Vec<usize>> {
 ///
 /// # Errors
 ///
-/// Fails if `params` reaches no generator at a run's position: the
-/// Standard tables stop short of the aggregator rank's, and
-/// [`IpaCycle::nested_generator`] supplies the baked reach past them.
+/// Fails if `params` reaches no generator at a run's position. The baked
+/// tables hold every run's, and [`IpaCycle::nested_generator`] supplies
+/// the baked stage reach for a table that stops short of them.
 pub(crate) fn run_bases<C: IpaCycle + ProfiledCycle, K: Rank>(
     params: &C::Params,
 ) -> Result<Vec<Vec<C::NestedCurve>>> {

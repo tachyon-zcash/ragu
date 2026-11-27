@@ -5,7 +5,8 @@
 //! table artifact contains the vector generators in order, followed by the
 //! blinding generator and the IPA's generator, stored in Udon's Montgomery
 //! representation; the stage artifact contains the nested curve's vector
-//! generators the compression's run stages reach past the Standard table.
+//! generators the compression's run stages reach, for a table shorter
+//! than the Standard one, which holds them itself.
 
 use std::{fs, io::Result, path::Path};
 
@@ -17,19 +18,19 @@ const DOMAIN_PREFIX: &str = "Ragu-Parameters";
 // Copies of `pasta::DEFAULT_EP_K` and `pasta::DEFAULT_EQ_K`, which the build
 // script cannot import. Bento checks the artifact lengths against the
 // consumer's array types, so a mismatch is rejected at compile time.
-const DEFAULT_EP_K: usize = 13;
-const DEFAULT_EQ_K: usize = 13;
-// Copies of the optional Aggregator table capacities, the aggregator rank's,
-// checked by Bento too.
+const DEFAULT_EP_K: usize = 14;
+const DEFAULT_EQ_K: usize = 14;
+// Copies of the optional Aggregator table capacities, one rank past the
+// aggregator rank, checked by Bento too.
 const AGGREGATOR_EP_K: usize = 15;
 const AGGREGATOR_EQ_K: usize = 15;
-// Copies of `pasta::STAGE_REACH` and of the aggregator rank's $n$, $2^{13}$:
+// Copies of `pasta::STAGE_REACH` and of the aggregator rank's $n$, $2^{12}$:
 // a stage trace at that rank lands the even wire of gate $g$ at degree
 // $2n - 1 - g$ and the odd at $4n - 1 - g$, and the stage artifact holds the
 // nested generators of the first `STAGE_REACH` gates after the SYSTEM gate,
 // each range ascending.
 const STAGE_REACH: usize = 256;
-const STAGE_N: usize = 1 << (15 - 2);
+const STAGE_N: usize = 1 << (14 - 2);
 
 /// A checked affine point from the hash of `message`.
 fn point_of<C: PastaCurve>(hash: &impl Fn(&[u8]) -> [u8; 32], message: &[u8]) -> AffinePoint<C> {

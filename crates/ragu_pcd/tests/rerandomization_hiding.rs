@@ -610,7 +610,7 @@ fn the_second_pass_randomizers_reach_every_quotient() {
         // and one per group that holds a claim.
         assert_eq!(
             reaches.iter().map(|r| r.coefficients).collect::<Vec<_>>(),
-            [95 + 14, 82 + 11]
+            [59 + 9, 42 + 6]
         );
         for reach in reaches {
             assert_eq!(reach.rank, reach.coefficients);
@@ -619,8 +619,12 @@ fn the_second_pass_randomizers_reach_every_quotient() {
             // fixed at the tested non-node challenges, the fold identity
             // also ties the first child's target
             // to the quotients. The first claim adds one local direction,
-            // not two independent target directions.
-            assert_eq!(reach.accumulator, reach.coefficients + 1);
+            // not two independent target directions. At the wallet rank
+            // some groups before the randomizer's last one hold no claim,
+            // and those add one more local direction between them, as
+            // `revdot::accumulator_rows` finds on any grid with such a
+            // group.
+            assert_eq!(reach.accumulator, reach.coefficients + 2);
         }
     });
 }
@@ -663,11 +667,13 @@ impl Chosen {
 fn assert_reached(reaches: Vec<observed::Reach>) {
     assert_eq!(
         reaches.iter().map(|r| r.coefficients).collect::<Vec<_>>(),
-        [95 + 14, 82 + 11]
+        [59 + 9, 42 + 6]
     );
     for reach in reaches {
         assert_eq!(reach.rank, reach.coefficients);
-        assert_eq!(reach.accumulator, reach.coefficients + 1);
+        // The groups that hold no claim add a direction; see
+        // `the_second_pass_randomizers_reach_every_quotient`.
+        assert_eq!(reach.accumulator, reach.coefficients + 2);
     }
 }
 

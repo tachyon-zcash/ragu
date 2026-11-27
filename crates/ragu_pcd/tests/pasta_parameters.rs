@@ -1,6 +1,7 @@
 //! Pin the embedded generators independently of their derivation and storage
 //! representation by comparing their canonical coordinates with the original.
 
+use ragu_circuits::polynomials::{AggregatorRank, Rank};
 use ragu_core::{
     Cycle, FixedGenerators,
     pasta::{Pasta, PastaParams},
@@ -29,13 +30,15 @@ fn canonical_blob(params: &PastaParams, vector: usize) -> Vec<u8> {
     loaded
 }
 
-/// The complete Standard tables retain their original size and values, even
-/// when the optional Aggregator tables are also compiled into this binary.
+/// The Standard tables hold the wallet rank's $2^{14}$ generators, pinned
+/// in full, and their first $2^{13}$, the original tables, retain their
+/// original values, even when the optional Aggregator tables are also
+/// compiled into this binary.
 #[test]
 fn baked_points_match_original_parameters() {
     let params = ragu_pcd::pasta::baked();
-    assert_eq!(Pasta::nested_generators(params).g().len(), 1 << 13);
-    assert_eq!(Pasta::host_generators(params).g().len(), 1 << 13);
+    assert_eq!(Pasta::nested_generators(params).g().len(), 1 << 14);
+    assert_eq!(Pasta::host_generators(params).g().len(), 1 << 14);
     let loaded = canonical_blob(params, 1 << 13);
     assert_eq!(loaded.len(), 16_386 * 64);
 
@@ -45,6 +48,15 @@ fn baked_points_match_original_parameters() {
     assert_eq!(
         digest.to_hex().as_str(),
         "f5b1146e2b607c83dcfd8630d117af24c8ea12593395a764100d81efca818ef2"
+    );
+
+    // The full tables, pinned when the wallet rank became 14.
+    let loaded = canonical_blob(params, 1 << 14);
+    assert_eq!(loaded.len(), 32_770 * 64);
+    let digest = blake2b_simd::Params::new().hash_length(32).hash(&loaded);
+    assert_eq!(
+        digest.to_hex().as_str(),
+        "fd59c12496d26b073f7fa397b8ea25832e430bac8d8c3b8c52d867220e44d0ec"
     );
 }
 
@@ -72,13 +84,13 @@ fn aggregator_points_are_pinned_in_full() {
 #[test]
 fn aggregator_parameters_preserve_standard_tables() {
     let standard = ragu_pcd::pasta::baked();
-    let before = canonical_blob(standard, 1 << 13);
+    let before = canonical_blob(standard, 1 << 14);
     let aggregator = ragu_pcd::pasta::baked_aggregator();
-    assert_eq!(before, canonical_blob(aggregator, 1 << 13));
+    assert_eq!(before, canonical_blob(aggregator, 1 << 14));
     assert!(core::ptr::eq(standard, ragu_pcd::pasta::baked()));
     assert!(!core::ptr::eq(standard, aggregator));
-    assert_eq!(Pasta::nested_generators(standard).g().len(), 1 << 13);
-    assert_eq!(Pasta::host_generators(standard).g().len(), 1 << 13);
+    assert_eq!(Pasta::nested_generators(standard).g().len(), 1 << 14);
+    assert_eq!(Pasta::host_generators(standard).g().len(), 1 << 14);
 }
 
 /// The IPA's generators are hash-to-curve outputs on the message `2`, after
@@ -105,39 +117,39 @@ fn baked_ipa_generators_are_pinned() {
     );
 }
 
-/// The stage reach baked into the Standard parameters: the nested
-/// generators of the first `STAGE_REACH` gates of a stage trace at the
-/// aggregator rank, which the compression's runs land on past the Standard
-/// table, pinned in full and, under the Aggregator tables, the same points
-/// as the table's at those indices.
+/// The stage reach of the Standard parameters: the nested generators of
+/// the first `STAGE_REACH` gates of a stage trace at the aggregator rank,
+/// which the compression's runs land on. That rank is the wallet's, so
+/// they are generators of the Standard table: pinned in full and, under
+/// the Aggregator tables, the same points as the table's at those indices.
 #[test]
 fn stage_reach_is_pinned() {
     use ragu_pcd::pasta::STAGE_REACH;
 
     let params = ragu_pcd::pasta::baked();
-    let n = 1usize << 13;
+    let standard = Pasta::nested_generators(params).g();
+    // The gates of a trace at the aggregator rank, as the baked reach
+    // takes them.
+    let n = <AggregatorRank as Rank>::n();
     let indices: Vec<usize> = (2 * n - 1 - STAGE_REACH..2 * n - 1)
         .chain(4 * n - 1 - STAGE_REACH..4 * n - 1)
         .collect();
     let mut loaded = Vec::new();
     for &index in &indices {
         let point = Pasta::nested_generator(params, index).expect("within the stage reach");
+        assert_eq!(point, standard[index]);
         let (x, y) = point.coordinates().expect("nonidentity generator");
         loaded.extend_from_slice(x.to_bytes().as_ref());
         loaded.extend_from_slice(y.to_bytes().as_ref());
     }
     assert_eq!(loaded.len(), 2 * STAGE_REACH * 64);
-    assert_eq!(Pasta::nested_generator(params, 2 * n - 1), None);
-    assert_eq!(Pasta::nested_generator(params, 4 * n - 1), None);
-    assert_eq!(
-        Pasta::nested_generator(params, 2 * n - 2 - STAGE_REACH),
-        None
-    );
+    // Past the Standard table the parameters reach no generator.
+    assert_eq!(Pasta::nested_generator(params, standard.len()), None);
 
     let digest = blake2b_simd::Params::new().hash_length(32).hash(&loaded);
     assert_eq!(
         digest.to_hex().as_str(),
-        "8dfdb0d3662c659dac55b3cc6cc9e24fc5b6f64a65df83ac663bed7a0b40105c"
+        "242dd7cbd45a8b28e3b210f366acba3a6ae3545f4cc9f0d9b3d8d6c512f3dbef"
     );
 
     #[cfg(feature = "baked-aggregator")]

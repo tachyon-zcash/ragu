@@ -58,8 +58,8 @@
 //! regeneration that moves the Standard profile's layout is the moment to
 //! bump the schema version.
 //!
-//! Until the first release, two kinds of change regenerate the fixtures and
-//! keep the versions:
+//! Until the first release, three kinds of change regenerate the fixtures
+//! and keep the versions:
 //!
 //! - A change to the verification semantics keeps the protocol version.
 //!   Nothing is deployed, and a payload from before the change fails
@@ -69,6 +69,10 @@
 //!   schema version. The profile is unaudited, and its layout follows its
 //!   online batches. A payload from before the change fails the length
 //!   check, or verification where the length is the same.
+//! - A change to the Standard profile's layout that comes with a change of
+//!   its rank keeps the schema version. The envelope carries the rank, so
+//!   a payload from before the change fails the rank check before any of
+//!   it is decoded.
 //!
 //! # Input limits
 //!

@@ -5,7 +5,7 @@ use core::cell::Cell;
 use ragu_acceleration::AcceleratedBackend;
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::{R, Rank, sparse},
+    polynomials::{R, Rank, WalletRank, sparse},
     registry::RegistryBuilder,
 };
 use ragu_core::{
@@ -478,7 +478,7 @@ fn verify<P: Profile>(
 #[test]
 #[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<()> {
-    let source = ApplicationBuilder::<Pasta, R<13>, 2>::new()
+    let source = ApplicationBuilder::<Pasta, WalletRank, 2>::new()
         .register(UnitStep)?
         .finalize(crate::pasta::baked())?;
     let app = ApplicationBuilder::<C, Rk, 2>::new()
@@ -524,11 +524,11 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     verify(&app, &decoded, &mut rng, true)?;
     // Reuse each source tag so that the terminal check has to distinguish
     // the registry polynomials themselves.
-    let wrong_native = RegistryBuilder::<Fp, R<13>>::new()
+    let wrong_native = RegistryBuilder::<Fp, WalletRank>::new()
         .register_circuit(())?
         .with_tag(source.native_registry().tag())
         .finalize()?;
-    let wrong_nested = RegistryBuilder::<Fq, R<13>>::new()
+    let wrong_nested = RegistryBuilder::<Fq, WalletRank>::new()
         .register_circuit(())?
         .with_tag(source.nested_registry().tag())
         .finalize()?;
@@ -636,10 +636,10 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
 /// rather than the first proof failing.
 #[test]
 fn a_source_registry_whose_restrictions_vanish_is_rejected_at_setup() -> Result<()> {
-    let native = RegistryBuilder::<Fp, R<13>>::new()
+    let native = RegistryBuilder::<Fp, WalletRank>::new()
         .with_tag(Fp::ZERO)
         .finalize()?;
-    let nested = RegistryBuilder::<Fq, R<13>>::new()
+    let nested = RegistryBuilder::<Fq, WalletRank>::new()
         .with_tag(Fq::ZERO)
         .finalize()?;
     let result = ApplicationBuilder::<C, Rk, 2>::new()
@@ -861,7 +861,7 @@ fn one_sided_mesh<P>(native: bool, seed: u64) -> Result<()>
 where
     P: for<'params> Profile<Context<'params, Pasta, Rk, AcceleratedBackend> = ()>,
 {
-    let source = ApplicationBuilder::<Pasta, R<13>, 2>::new()
+    let source = ApplicationBuilder::<Pasta, WalletRank, 2>::new()
         .register(UnitStep)?
         .finalize(crate::pasta::baked())?;
     let app = ApplicationBuilder::<Profiled<Pasta, P>, Rk, 2>::new()
@@ -962,15 +962,15 @@ fn substituted_source<P>(native: bool, attempt: Substitution, seed: u64) -> Resu
 where
     P: for<'params> Profile<Context<'params, Pasta, Rk, AcceleratedBackend> = ()>,
 {
-    let wallet = ApplicationBuilder::<Pasta, R<13>, 2>::new()
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, 2>::new()
         .register(UnitStep)?
         .finalize(crate::pasta::baked())?;
     let (real_native, real_nested) = (wallet.native_registry(), wallet.nested_registry());
-    let other_native = RegistryBuilder::<Fp, R<13>>::new()
+    let other_native = RegistryBuilder::<Fp, WalletRank>::new()
         .register_circuit(())?
         .with_tag(real_native.tag())
         .finalize()?;
-    let other_nested = RegistryBuilder::<Fq, R<13>>::new()
+    let other_nested = RegistryBuilder::<Fq, WalletRank>::new()
         .register_circuit(())?
         .with_tag(real_nested.tag())
         .finalize()?;
@@ -1156,10 +1156,10 @@ fn inherited_coordinates_are_the_childs_own<P>(native: bool, seed: u64) -> Resul
 where
     P: for<'params> Profile<Context<'params, Pasta, Rk, AcceleratedBackend> = ()>,
 {
-    let empty_native = RegistryBuilder::<Fp, R<13>>::new()
+    let empty_native = RegistryBuilder::<Fp, WalletRank>::new()
         .with_tag(Fp::from(7))
         .finalize()?;
-    let empty_nested = RegistryBuilder::<Fq, R<13>>::new()
+    let empty_nested = RegistryBuilder::<Fq, WalletRank>::new()
         .with_tag(Fq::from(7))
         .finalize()?;
     let source_native = SourceRegistry::new::<_, ReferenceBackend>(&empty_native);

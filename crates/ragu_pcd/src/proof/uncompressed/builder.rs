@@ -309,6 +309,10 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
 
     // Nested endoscaling data
     nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    // What the walks' steps add when their profile pages them, kept for
+    // the fuse to go on with when it traces the other circuits.
+    native_pages: Option<crate::profile::paging::Prover<C::CircuitField, R>>,
+    nested_pages: Option<crate::profile::paging::Prover<C::ScalarField, R>>,
     nested_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_endoscalar_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
@@ -629,6 +633,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             bridge_eval_commitment: None,
             bridge_ab_rx: OnceCell::new(),
             nested_endoscaling_step_rxs: None,
+            native_pages: None,
+            nested_pages: None,
             nested_extension_circuit_rxs: None,
             nested_extension_stage_rxs: None,
             nested_endoscalar_rx: None,
@@ -1153,6 +1159,43 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Vec<sparse::Polynomial<C::ScalarField, R>>
     );
     setter!(set_nested_endoscalar_rx, nested_endoscalar_rx, sparse::Polynomial<C::ScalarField, R>);
+
+    /// Keeps the native pager a paged walk started.
+    pub(crate) fn set_native_pages(
+        &mut self,
+        pages: crate::profile::paging::Prover<C::CircuitField, R>,
+    ) {
+        self.native_pages = Some(pages);
+    }
+
+    /// The native pager a paged walk started, or a new one over `plans`.
+    pub(crate) fn take_native_pages(
+        &mut self,
+        plans: &crate::profile::paging::Plans<C::CircuitField>,
+    ) -> crate::profile::paging::Prover<C::CircuitField, R> {
+        self.native_pages
+            .take()
+            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(false, plans))
+    }
+
+    /// Keeps the nested pager a paged walk started.
+    pub(crate) fn set_nested_pages(
+        &mut self,
+        pages: crate::profile::paging::Prover<C::ScalarField, R>,
+    ) {
+        self.nested_pages = Some(pages);
+    }
+
+    /// The nested pager a paged walk started, or a new one over `plans`.
+    pub(crate) fn take_nested_pages(
+        &mut self,
+        plans: &crate::profile::paging::Plans<C::ScalarField>,
+    ) -> crate::profile::paging::Prover<C::ScalarField, R> {
+        self.nested_pages
+            .take()
+            .unwrap_or_else(|| crate::profile::paging::Prover::new::<C::Profile>(true, plans))
+    }
+
     pub(crate) fn set_nested_points_rx(&mut self, v: sparse::Polynomial<C::ScalarField, R>) {
         assert!(
             self.nested_points_rx.is_none(),

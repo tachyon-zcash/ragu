@@ -86,7 +86,7 @@ impl<P: Profile> Len for NumPoints<P> {
 /// fits a step beside the stages it reserves, which hold every point the
 /// walk consumes, at the wallet rank. A profile sets its own
 /// ([`Profile::NESTED_ENDOSCALINGS_PER_STEP`]).
-pub const ENDOSCALINGS_PER_STEP: usize = 4;
+pub const ENDOSCALINGS_PER_STEP: usize = 8;
 
 /// Length type for the endoscalings a nested step performs in profile `P`.
 pub struct Endoscalings<P: Profile>(PhantomData<P>);
@@ -741,13 +741,38 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     params: &'params C::Params,
     source_tag: Option<C::ScalarField>,
     source_domain: Option<u32>,
-) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
+) -> Result<(
+    RegistryBuilder<'params, C::ScalarField, R>,
+    crate::profile::paging::Plans<C::ScalarField>,
+)> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
 
     let extension = crate::profile::nested_extension::<C::Profile>();
     let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
     let mut extension_masks = alloc::vec::Vec::with_capacity(extension.masks());
+    // The instance circuits go through the registrar, which registers each
+    // whole or, for a profile that pages it, its last page here and its
+    // other pages and their masks in the extension's slots.
+    use crate::profile::paging;
+    let mut pages = paging::Registrar::new::<C::Profile>(true);
+    // The walk's steps are each a circuit of its own to page: they are
+    // cut together here, and found cut where they are registered.
+    pages.warm(
+        InternalCircuitIndex::all::<C::Profile>()
+            .into_iter()
+            .filter_map(|id| match id {
+                InternalCircuitIndex::EndoscalingStep(step) => {
+                    Some(MultiStage::new(self::EndoscalingStep::<
+                        C::HostCurve,
+                        R,
+                        C::Profile,
+                    >::new(step as usize)))
+                }
+                _ => None,
+            })
+            .collect(),
+    );
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
     for id in InternalCircuitIndex::all::<C::Profile>() {
@@ -756,16 +781,15 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             EndoscalingStep(step) => {
                 let step_circuit =
                     self::EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step as usize);
-                let staged = MultiStage::new(step_circuit);
-                registry.register_internal_circuit(staged)?
+                pages.circuit(registry, MultiStage::new(step_circuit))?
             }
             Collapse => {
                 let circuit = circuits::collapse::Circuit::<C::HostCurve, R, C::Profile>::new();
-                registry.register_internal_circuit(MultiStage::new(circuit))?
+                pages.circuit(registry, MultiStage::new(circuit))?
             }
             ComputeV => {
                 let circuit = circuits::compute_v::Circuit::<C::HostCurve, R, C::Profile>::new();
-                registry.register_internal_circuit(MultiStage::new(circuit))?
+                pages.circuit(registry, MultiStage::new(circuit))?
             }
             EndoscalarStage => registry.register_mask(<endoscalar::EndoscalarStage as StageExt<
                 C::ScalarField,
@@ -823,8 +847,10 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             }
             ExtensionCircuit(k) => {
                 use crate::profile::online::stages::{self as extension, Nested};
-                let slot = CircuitSlot::new(registry);
-                let (registry, registration) =
+                let (registry, registration) = if pages.is_page(k) {
+                    pages.page(registry, k)?
+                } else {
+                    let slot = CircuitSlot::new(registry);
                     if Some(k) == extension::helper::<C::Profile, Nested>() {
                         extension::register_circuit::<_, R, C::Profile, Nested>(
                             slot,
@@ -834,23 +860,28 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                     } else {
                         C::Profile::register_nested_circuit::<C::Base, R>(k as usize, slot, params)?
                     }
-                    .into_parts();
+                    .into_parts()
+                };
                 extension_circuits.push(registration);
                 registry
             }
             ExtensionMask(j) => {
                 use crate::profile::online::stages::{self as extension, Nested};
-                let slot = MaskSlot::new(registry);
-                let (registry, registration) =
-                    match extension::mask::<C::Profile, Nested>(j as usize)? {
-                        extension::Mask::Online(mask) => {
-                            mask.register::<_, R, C::Profile, Nested>(slot)?
+                let (registry, registration) = match pages.mask(registry, j as usize)? {
+                    paging::Slotted::Paged(registry, registration) => (registry, registration),
+                    paging::Slotted::Other(registry, index) => {
+                        let slot = MaskSlot::new(registry);
+                        match extension::mask::<C::Profile, Nested>(index)? {
+                            extension::Mask::Online(mask) => {
+                                mask.register::<_, R, C::Profile, Nested>(slot)?
+                            }
+                            extension::Mask::User(index) => {
+                                C::Profile::register_nested_mask::<C::Base, R>(index, slot, params)?
+                            }
                         }
-                        extension::Mask::User(index) => {
-                            C::Profile::register_nested_mask::<C::Base, R>(index, slot, params)?
-                        }
+                        .into_parts()
                     }
-                    .into_parts();
+                };
                 extension_masks.push(registration);
                 registry
             }
@@ -864,7 +895,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
         "internal circuit count mismatch"
     );
 
-    Ok(registry)
+    Ok((registry, pages.plans()))
 }
 
 #[cfg(test)]

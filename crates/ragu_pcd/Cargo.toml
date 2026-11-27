@@ -38,7 +38,7 @@ alloc = []
 asm = ["udon/aarch64-asm"]
 # Embeds the Pasta generators derived at build time; see `pasta`.
 baked = ["alloc", "dep:bento", "dep:lazy_static"]
-# Additional, separately loaded generators for Aggregator extensions above R<13>.
+# Additional, separately loaded generators for Aggregator extensions above R<14>.
 baked-aggregator = ["baked"]
 default = ["alloc", "asm"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
@@ -48,7 +48,7 @@ serde = ["dep:serde"]
 # Exposes `Application::verify_uncompressed` as a test oracle for the crate's
 # own tests, benchmarks and the fuzz harness. Production verification goes
 # through `Application::verify_compressed`.
-test-utils = []
+test-utils = ["ragu_circuits/test-utils"]
 # Exposes the hidden `fuzzing` module — proof corruption and the patcher seam
 # over the internal recursion circuits — used by the fuzz harness and the
 # crate's own tests. Not part of the stable public API. Its corruptions are
@@ -136,6 +136,13 @@ name = "nontrivial"
 [[test]]
 name = "online_fp_oracles"
 test = false # Selected by the corruption job and `just ci_corruption`.
+
+[[test]]
+name = "paging"
+
+[[test]]
+name = "paging_census"
+test = false # Selected by the paging-census workflow.
 
 [[test]]
 name = "pasta_parameters"

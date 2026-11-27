@@ -10,7 +10,7 @@ optional fourth parameter selects the backend and defaults to
 `ragu_acceleration::AcceleratedBackend`:
 
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 4>::new()
+ApplicationBuilder::<Pasta, R<14>, 4>::new()
 //                  ^^^^^  ^^^^   ^
 //                  Cycle  Rank   Header Size
 ```
@@ -54,9 +54,10 @@ The `baked()` function returns precomputed generator points for Pallas and
 Vesta, loaded from data embedded in the binary. Poseidon parameters are
 compile-time constants and do not require initialization.
 
-Standard uses the original tables of $2^{13}$ vector generators per curve.
-For the Aggregator profile, `baked-aggregator` adds separate $2^{15}$ tables through
-`ragu_pcd::pasta::baked_aggregator()`, sized for the aggregator rank.
+Standard uses tables of $2^{14}$ vector generators per curve, which reach the
+wallet rank. The Aggregator profile proves at the same rank and uses the same
+tables. `baked-aggregator` adds separate $2^{15}$ tables through
+`ragu_pcd::pasta::baked_aggregator()`, for an application at rank 15.
 The regular `baked()` tables remain the same size even when that feature is
 enabled; the larger tables are initialized only when their loader is called.
 
@@ -73,8 +74,8 @@ The **Rank** parameter controls circuit capacity - how many constraints each
 circuit can handle.
 
 ```rust
-ApplicationBuilder::<Pasta, R<13>, ...>::new()
-//                           ^^^^ rank = 2^13
+ApplicationBuilder::<Pasta, R<14>, ...>::new()
+//                           ^^^^ rank = 2^14
 ```
 
 ### Understanding Rank
@@ -86,16 +87,16 @@ constraint limits:
   [reserved](../protocol/construction/wiring.md#blind-gate)
 - **Constraints**: up to 2^N
 
-Currently `R<7>`, `R<13>`, `R<14>` and `R<15>` are implemented. Three of them
-have aliases: `TestRank`, `WalletRank` and `AggregatorRank`. See the `Rank`
-trait documentation for how to add new values.
+Currently `R<7>`, `R<13>`, `R<14>` and `R<15>` are implemented. `R<7>` has the
+alias `TestRank`, and `R<14>` the aliases `WalletRank` and `AggregatorRank`.
+See the `Rank` trait documentation for how to add new values.
 
 | Rank | Gate Limit | Constraint Limit | Use Case |
 |------|---------------------|-------------|----------|
 | `R<7>` (`TestRank`) | 31 | 128 | Unit tests |
-| `R<13>` (`WalletRank`) | 2,047 | 8,192 | Production |
-| `R<14>` | 4,095 | 16,384 | Tests of circuits that exceed `R<13>` |
-| `R<15>` (`AggregatorRank`) | 8,191 | 32,768 | The Aggregator profile |
+| `R<13>` | 2,047 | 8,192 | Tests of a rank below the wallet's |
+| `R<14>` (`WalletRank`, `AggregatorRank`) | 4,095 | 16,384 | Production, for both profiles |
+| `R<15>` | 8,191 | 32,768 | Tests of circuits that exceed `R<14>` |
 
 ### Choosing the Right Rank
 
@@ -103,14 +104,14 @@ trait documentation for how to add new values.
 - Fast proving, quick iteration
 - Suitable for small test circuits
 
-**For production**: Use `R<13>`
-- 2,047 gates, 8,192 constraints
+**For production**: Use `R<14>`
+- 4,095 gates, 16,384 constraints
 - Standard capacity for most applications
 
 ### What Happens if You Exceed Rank?
 
 ```rust
-Error: exceeded the maximum number of gates (2047)
+Error: exceeded the maximum number of gates (4095)
 ```
 
 **Solutions**:
@@ -127,7 +128,7 @@ The **HEADER_SIZE** parameter specifies how many field elements flow through
 each proof's header.
 
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 4>::new()
+ApplicationBuilder::<Pasta, R<14>, 4>::new()
 //                                  ^ header size
 ```
 
@@ -150,7 +151,7 @@ The size depends on what data you need to track:
 
 **Simple hash (1 element, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 2>::new()
+ApplicationBuilder::<Pasta, R<14>, 2>::new()
 
 struct MyHeader;
 impl Header<F> for MyHeader {
@@ -160,7 +161,7 @@ impl Header<F> for MyHeader {
 
 **Merkle root + metadata (4 elements, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 5>::new()
+ApplicationBuilder::<Pasta, R<14>, 5>::new()
 
 struct MyHeader;
 impl Header<F> for MyHeader {
@@ -175,7 +176,7 @@ impl Header<F> for MyHeader {
 
 **Complex state (8+ elements, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 9>::new()
+ApplicationBuilder::<Pasta, R<14>, 9>::new()
 
 // Multiple values, counters, flags, etc.
 ```
@@ -196,14 +197,15 @@ ApplicationBuilder::<Pasta, R<13>, 9>::new()
 **Rule of thumb**: Use the minimum size that fits your data. Don't
 over-allocate.
 
-**Upper bound**: for the Standard profile at the wallet rank `R<13>`,
-the largest header size is 194 elements. Ragu's challenge binder circuits
-load the headers of both children and the step's own beside the online
-openings and the bridge-hash point. At 194, the largest binder uses all
-2047 gates that a circuit may hold. A larger header fails `finalize` with
-`Error: exceeded the maximum number of gates (2047)`.
-Profiles with extensions can have a lower limit because their additional
-claims and commitments also consume gates. Check capacity with `finalize`
+**Upper bound**: the header size is bounded by the gates a circuit may
+hold. Ragu's challenge binder circuits load the headers of both children
+and the step's own beside the online openings and the bridge-hash point,
+and a header too large for them fails `finalize` with
+`Error: exceeded the maximum number of gates`. At `R<14>`, the wallet rank,
+the largest header size for the Standard profile is 647 elements. Profiles
+with extensions can have a lower limit because their additional claims and
+commitments also consume gates: the extended profile of the test suite
+stops at 373. The test `test_header_capacity_at_finalize` pins both bounds. Check capacity with `finalize`
 for the selected profile and registered application.
 
 ### Changing Header Size
@@ -215,7 +217,7 @@ If you need to change HEADER_SIZE:
    `NEW_SIZE - 1` elements
 3. Rebuild application:
    ```rust
-   let app = ApplicationBuilder::<Pasta, R<13>, NEW_SIZE>::new()
+   let app = ApplicationBuilder::<Pasta, R<14>, NEW_SIZE>::new()
    ```
 
 The compiler does not check a header's size against HEADER_SIZE. An encoding
@@ -234,7 +236,7 @@ use ragu_pcd::ApplicationBuilder;
 let pasta = ragu_pcd::pasta::baked();
 
 // Build application with production parameters
-let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+let app = ApplicationBuilder::<Pasta, R<14>, 4>::new()
     .register(step1)?
     .register(step2)?
     .finalize(pasta)?;
@@ -242,7 +244,7 @@ let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
 
 **Why these parameters?**
 - `Pasta`: Standard curve cycle for PCD
-- `R<13>`: 2,048 gates — enough for most steps
+- `R<14>`: 4,095 gates — enough for most steps
 - `4`: Four field elements per header, three of data and the suffix - balance
   between flexibility and performance
 
@@ -287,7 +289,7 @@ requires.
    - Minimal overhead
    - Test your logic
 
-2. **Production**: `ApplicationBuilder::<Pasta, R<13>, 4>`
+2. **Production**: `ApplicationBuilder::<Pasta, R<14>, 4>`
    - Standard capacity
    - Proven parameters
    - Well-tested
@@ -308,7 +310,7 @@ println!("Gates: {}", sim.num_gates());
 ```
 
 For `R<7>`, the gate limit is 32.
-For `R<13>`, the gate limit is 2,048.
+For `R<14>`, the gate limit is 4,095.
 If your circuit exceeds these, add a larger rank (see the `Rank` trait
 documentation).
 
@@ -335,7 +337,7 @@ entirely separate proof systems.
 
 ```rust
 // Application configured for 4 elements: 3 of data and the suffix
-ApplicationBuilder::<Pasta, R<13>, 4>::new()
+ApplicationBuilder::<Pasta, R<14>, 4>::new()
 
 // But the header writes 4!
 impl Header<F> for MyHeader {
@@ -366,7 +368,7 @@ ApplicationBuilder::<Pasta, R<7>, 4>::new()  // Only 32 gates
 
 **Error**: `GateBoundExceeded { limit: 32 }` at runtime.
 
-**Fix**: Switch to `R<13>` or add a larger rank.
+**Fix**: Switch to `R<14>` or add a larger rank.
 
 ### ✗ Missing the `baked` Feature
 
@@ -393,8 +395,8 @@ also enables `alloc`.
 | Parameter | Purpose | Typical Value | When to Change |
 |-----------|---------|---------------|----------------|
 | **Cycle** | Curve cycle | `Pasta` | Almost never |
-| **Rank** | Circuit capacity | `R<13>` | Circuit too large/small |
+| **Rank** | Circuit capacity | `R<14>` | Circuit too large/small |
 | **HEADER_SIZE** | Header elements | `4` | Data needs change |
 
-Start with `ApplicationBuilder::<Pasta, R<13>, 4>` and adjust based on your
+Start with `ApplicationBuilder::<Pasta, R<14>, 4>` and adjust based on your
 measurements!

@@ -1,0 +1,58 @@
+name: Paging header census
+
+# Each job compiles fifteen aggregator header sizes. Keeping the batches
+# separate makes the complete 1..=195 sweep fit on ordinary CI runners.
+on:
+  pull_request:
+    paths:
+      # Anything that can move a gate of a paged circuit or of a
+      # decompression chunk: the gadgets, the pager, the fuse's circuits
+      # and the decompression.
+      - 'crates/ragu_core/**'
+      - 'crates/ragu_primitives/**'
+      - 'crates/ragu_circuits/src/paging/**'
+      - 'crates/ragu_circuits/src/polynomials/mod.rs'
+      - 'crates/ragu_circuits/src/staging/**'
+      - 'crates/ragu_pcd/src/decompress/**'
+      - 'crates/ragu_pcd/src/fuse/**'
+      - 'crates/ragu_pcd/src/internal/**'
+      - 'crates/ragu_pcd/src/profile/**'
+      - 'crates/ragu_pcd/Cargo.toml'
+      - 'crates/ragu_pcd/build.rs'
+      - 'crates/ragu_pcd/tests/paging*.rs'
+      - 'crates/ragu_pcd/tests/support/paging_census.rs'
+      - '.github/workflows/paging-census.yml'
+  schedule:
+    - cron: '13 4 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: Paging census-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  census:
+    name: Header batch ${{ matrix.batch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: $/.github/actions/rust-setup
+        with:
+          cache-suffix: paging-census
+      - name: Check aggregator page layouts
+        env:
+          RAGU_PCD_PAGING_CENSUS_BATCH: ${{ matrix.batch }}
+        run: >-
+          cargo test --profile fast-test --locked -p ragu_pcd --test paging_census
+          all_aggregator_headers_fit_in_batch -- --exact

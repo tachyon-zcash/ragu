@@ -151,27 +151,30 @@ pub(crate) mod revdot {
     }
 
     impl<'dr, D: Driver<'dr>> Folded<'dr, D> {
+        /// The powers of the challenges alone, for what reads no claim's
+        /// weight: each layer's $W(r)$.
+        fn powers(dr: &mut D, weights: &Weights<Element<'dr, D>>, layout: &Layout) -> Result<Self> {
+            let groups = layout.groups();
+            Ok(Folded {
+                a: Vec::new(),
+                b: Vec::new(),
+                mu: consecutive_powers(dr, &weights.mu, GROUP)?,
+                nu: consecutive_powers(dr, &weights.nu, GROUP)?,
+                mu_prime: consecutive_powers(dr, &weights.mu_prime, groups)?,
+                nu_prime: consecutive_powers(dr, &weights.nu_prime, groups)?,
+            })
+        }
+
         /// The weights [`Weights`] defines, over the claims `layout` groups.
         fn new(dr: &mut D, weights: &Weights<Element<'dr, D>>, layout: &Layout) -> Result<Self> {
-            let groups = layout.groups();
-            let mu = consecutive_powers(dr, &weights.mu, GROUP)?;
-            let nu = consecutive_powers(dr, &weights.nu, GROUP)?;
-            let mu_prime = consecutive_powers(dr, &weights.mu_prime, groups)?;
-            let nu_prime = consecutive_powers(dr, &weights.nu_prime, groups)?;
-            let claims = (0..groups).flat_map(|g| layout.members(g));
-            let (mut a, mut b) = (Vec::new(), Vec::new());
-            for i in claims {
-                a.push(mu_prime[i / GROUP].mul(dr, &mu[i % GROUP])?);
-                b.push(nu_prime[i / GROUP].mul(dr, &nu[i % GROUP])?);
+            let mut folded = Self::powers(dr, weights, layout)?;
+            for i in (0..layout.groups()).flat_map(|g| layout.members(g)) {
+                let a = folded.mu_prime[i / GROUP].mul(dr, &folded.mu[i % GROUP])?;
+                let b = folded.nu_prime[i / GROUP].mul(dr, &folded.nu[i % GROUP])?;
+                folded.a.push(a);
+                folded.b.push(b);
             }
-            Ok(Folded {
-                a,
-                b,
-                mu,
-                nu,
-                mu_prime,
-                nu_prime,
-            })
+            Ok(folded)
         }
 
         /// Each layer's $W(r)$, formed as $r^{N - K}$ times the Horner sum of
@@ -187,9 +190,19 @@ pub(crate) mod revdot {
         ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
             let both_primes = weights.mu_prime.mul(dr, &weights.nu_prime)?;
             let both_primes = consecutive_powers(dr, &both_primes, layout.groups())?;
+            // Every group weights its pairs alike, up to its own power:
+            // a pair's product is taken once.
+            let mut pairs: Vec<Option<Element<'dr, D>>> = alloc::vec![None; GROUP * GROUP];
             let mut inner = Vec::new();
             for (g, i, j) in layout.inner() {
-                let pair = self.mu[i].mul(dr, &self.nu[j])?;
+                let pair = match &pairs[i * GROUP + j] {
+                    Some(pair) => pair.clone(),
+                    None => {
+                        let pair = self.mu[i].mul(dr, &self.nu[j])?;
+                        pairs[i * GROUP + j] = Some(pair.clone());
+                        pair
+                    }
+                };
                 inner.push(both_primes[g].mul(dr, &pair)?);
             }
             let mut outer = Vec::new();
@@ -229,7 +242,7 @@ pub(crate) mod revdot {
             txz::Evaluate::<K>::new(),
             (r_invertible.clone(), z_invertible),
         )?;
-        let folded = Folded::new(dr, &challenges.weights, &layout)?;
+        let folded = Folded::powers(dr, &challenges.weights, &layout)?;
         let (inner_at_r, outer_at_r) =
             folded.at_r::<K>(dr, &challenges.weights, &layout, r, &powers)?;
         Ok(AtR {

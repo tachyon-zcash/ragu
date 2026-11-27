@@ -112,6 +112,10 @@ mod source_mesh_tests;
 #[path = "../tests/decompression/statement.rs"]
 mod decompress_statement_tests;
 
+#[cfg(test)]
+#[path = "../tests/stage_parity.rs"]
+mod stage_parity_tests;
+
 #[cfg(all(test, feature = "unstable-fuzzing"))]
 #[path = "../tests/profile_corruption.rs"]
 mod profile_corruption_tests;

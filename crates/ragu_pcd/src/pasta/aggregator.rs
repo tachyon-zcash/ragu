@@ -1,5 +1,5 @@
-//! Additional generators reaching the aggregator rank, for its extensions and
-//! for compression.
+//! Additional generators reaching rank 15, past the aggregator rank's, which
+//! is the wallet's.
 
 use lazy_static::lazy_static;
 use udon::curve::{PallasAffine, VestaAffine};
@@ -19,15 +19,16 @@ lazy_static! {
     static ref PARAMETERS: PastaParams = PastaParams::new(generators(PALLAS), generators(VESTA));
 }
 
-/// Returns the optional larger parameters, which reach the aggregator rank.
+/// Returns the optional larger parameters, which reach rank 15.
 ///
-/// Each curve has $2^{15}$ vector generators, the aggregator rank's (see
-/// [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank)). Their
-/// $2^{13}$-point prefix, blinding generator and IPA generator are the
-/// Standard parameters' originals.
+/// Each curve has $2^{15}$ vector generators. Their $2^{14}$-point prefix,
+/// blinding generator and IPA generator are the Standard parameters'
+/// originals.
 ///
-/// An application at the aggregator rank needs them; a Standard application
-/// does not, compressing included.
+/// An application at rank 15 needs them. A Standard application does not,
+/// compressing included, and neither does one at the aggregator rank (see
+/// [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank)), which
+/// is the wallet's.
 ///
 /// Requires the `baked-aggregator` feature. Only calling this function loads
 /// these larger tables; [`super::baked()`] always loads the original tables.

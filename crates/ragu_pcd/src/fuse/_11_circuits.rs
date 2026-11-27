@@ -6,7 +6,7 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
+use ragu_circuits::{polynomials::Rank, staging::MultiStage};
 use ragu_core::{Error, Result};
 use ragu_primitives::Uendo;
 use rand::CryptoRng;
@@ -78,61 +78,58 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             coverage: Default::default(),
         };
 
-        let (hashes_1_trace, unified) = native::circuits::hashes_1::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new(
-            self.params,
-            total_circuit_counts::<C::Profile>(self.num_application_steps).1,
-        )
-        .trace(native::circuits::hashes_1::Witness {
-            unified,
-            preamble_witness,
-            outer_error_witness: native_outer_error_witness,
-        })?
-        .into_parts();
-        let hashes_1_rx = self.native_registry.assemble(
-            &hashes_1_trace,
-            native::InternalCircuitIndex::Hashes1Circuit.circuit_index::<C::Profile>(),
+        // Every circuit is traced through the pager, which traces it whole
+        // or, for a profile that pages it, once for each of its pages.
+        let mut pages = builder.take_native_pages(&self.native_plans);
+        let (hashes_1_rx, unified) = pages.prove(
+            native::circuits::hashes_1::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >::new(
+                self.params,
+                total_circuit_counts::<C::Profile>(self.num_application_steps).1,
+            ),
+            &self.native_registry,
+            || native::circuits::hashes_1::Witness {
+                unified: unified.duplicate(),
+                preamble_witness,
+                outer_error_witness: native_outer_error_witness,
+            },
             &mut *rng,
         )?;
 
-        let (hashes_2_trace, unified) = native::circuits::hashes_2::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new(self.params)
-        .trace(native::circuits::hashes_2::Witness {
-            unified,
-            outer_error_witness: native_outer_error_witness,
-        })?
-        .into_parts();
-        let hashes_2_rx = self.native_registry.assemble(
-            &hashes_2_trace,
-            native::InternalCircuitIndex::Hashes2Circuit.circuit_index::<C::Profile>(),
+        let (hashes_2_rx, unified) = pages.prove(
+            native::circuits::hashes_2::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >::new(self.params),
+            &self.native_registry,
+            || native::circuits::hashes_2::Witness {
+                unified: unified.duplicate(),
+                outer_error_witness: native_outer_error_witness,
+            },
             &mut *rng,
         )?;
 
-        let (collapse_trace, unified) = native::circuits::collapse::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new()
-        .trace(native::circuits::collapse::Witness {
-            binding: &native_points.binding,
-            preamble_witness,
-            unified,
-            outer_error_witness: native_outer_error_witness,
-            inner_error_witness: native_inner_error_witness,
-        })?
-        .into_parts();
-        let collapse_rx = self.native_registry.assemble(
-            &collapse_trace,
-            native::InternalCircuitIndex::CollapseCircuit.circuit_index::<C::Profile>(),
+        let (collapse_rx, unified) = pages.prove(
+            native::circuits::collapse::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >::new(),
+            &self.native_registry,
+            || native::circuits::collapse::Witness {
+                binding: &native_points.binding,
+                preamble_witness,
+                unified: unified.duplicate(),
+                outer_error_witness: native_outer_error_witness,
+                inner_error_witness: native_inner_error_witness,
+            },
             &mut *rng,
         )?;
 
@@ -155,20 +152,17 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             rng,
         )?;
 
-        let (compute_v_trace, unified) =
-            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
-                .trace(native::circuits::compute_v::Witness {
-                    online_fold,
-                    binding: &native_points.binding,
-                    unified,
-                    preamble_witness,
-                    query_witness,
-                    eval_witness,
-                })?
-                .into_parts();
-        let compute_v_rx = self.native_registry.assemble(
-            &compute_v_trace,
-            native::InternalCircuitIndex::ComputeVCircuit.circuit_index::<C::Profile>(),
+        let (compute_v_rx, unified) = pages.prove(
+            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(),
+            &self.native_registry,
+            || native::circuits::compute_v::Witness {
+                online_fold: online_fold.clone(),
+                binding: &native_points.binding,
+                unified: unified.duplicate(),
+                preamble_witness,
+                query_witness,
+                eval_witness,
+            },
             &mut *rng,
         )?;
 
@@ -176,26 +170,21 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let mut unified = unified;
         let mut bind_challenges_rxs = Vec::with_capacity(native::NUM_BINDERS);
         for k in 0..native::NUM_BINDERS {
-            let (trace, updated) =
-                crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
-                    circuit
-                        .trace(native::circuits::bind_challenges::Witness {
-                            unified,
-                            preamble_witness,
-                            query_witness,
-                            eval_witness,
-                        })?
-                        .into_parts()
-                });
-            unified = updated;
-            bind_challenges_rxs.push(
-                self.native_registry.assemble(
-                    &trace,
-                    native::InternalCircuitIndex::BindChallengesCircuit(k as u32)
-                        .circuit_index::<C::Profile>(),
+            let (rx, updated) = crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
+                pages.prove(
+                    circuit,
+                    &self.native_registry,
+                    || native::circuits::bind_challenges::Witness {
+                        unified: unified.duplicate(),
+                        preamble_witness,
+                        query_witness,
+                        eval_witness,
+                    },
                     &mut *rng,
-                )?,
-            );
+                )?
+            });
+            unified = updated;
+            bind_challenges_rxs.push(rx);
         }
 
         builder.set_native_hashes_1_rx(hashes_1_rx);
@@ -203,33 +192,27 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder.set_native_collapse_rx(collapse_rx);
 
         // Native circuit binding the children's nested beta commitments.
-        let (bind_beta_trace, unified) =
-            native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params)
-                .trace(native::circuits::bind_beta::Witness {
-                    unified,
-                    binding: &native_points.binding,
-                    preamble_witness,
-                })?
-                .into_parts();
-        let bind_beta_rx = self.native_registry.assemble(
-            &bind_beta_trace,
-            native::InternalCircuitIndex::BindBetaCircuit.circuit_index::<C::Profile>(),
+        let (bind_beta_rx, unified) = pages.prove(
+            native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params),
+            &self.native_registry,
+            || native::circuits::bind_beta::Witness {
+                unified: unified.duplicate(),
+                binding: &native_points.binding,
+                preamble_witness,
+            },
             &mut *rng,
         )?;
 
         // The native walk's inputs: the bits the endoscaling steps walked
         // with are pre_beta's, and the points lie on the curve.
-        let (bind_endoscalar_trace, unified) =
-            native::circuits::bind_endoscalar::Circuit::<C, R>::new()
-                .trace(native::circuits::bind_endoscalar::Witness {
-                    unified,
-                    inputs: native_points,
-                    walk: native_walk,
-                })?
-                .into_parts();
-        let bind_endoscalar_rx = self.native_registry.assemble(
-            &bind_endoscalar_trace,
-            native::InternalCircuitIndex::BindEndoscalarCircuit.circuit_index::<C::Profile>(),
+        let (bind_endoscalar_rx, unified) = pages.prove(
+            native::circuits::bind_endoscalar::Circuit::<C, R>::new(),
+            &self.native_registry,
+            || native::circuits::bind_endoscalar::Witness {
+                unified: unified.duplicate(),
+                inputs: native_points,
+                walk: native_walk,
+            },
             &mut *rng,
         )?;
 
@@ -260,7 +243,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             online.as_ref(),
             rng,
         )?;
-        let rxs = builder.native_online_mut().extension_rxs(rxs)?;
+        let mut rxs = builder.native_online_mut().extension_rxs(rxs)?;
+        pages.finish(&mut rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its native extension".into(),
@@ -340,6 +324,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             },
             rng,
         )?;
+        // As on the native side: each circuit whole, or once for each of
+        // its pages.
+        let mut pages = builder.take_nested_pages(&self.nested_plans);
         let witness = |instance| nested::circuits::common::Witness {
             instance,
             online_fold: online_fold.clone(),
@@ -357,29 +344,25 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             challenges: nested_challenges_witness,
         };
 
-        let (collapse_trace, instance) = MultiStage::new(nested::circuits::collapse::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new())
-        .trace(witness(instance))?
-        .into_parts();
-        let collapse_rx = self.nested_registry.assemble(
-            &collapse_trace,
-            nested::InternalCircuitIndex::Collapse.circuit_index::<C::Profile>(),
+        let (collapse_rx, instance) = pages.prove(
+            MultiStage::new(nested::circuits::collapse::Circuit::<
+                C::HostCurve,
+                R,
+                C::Profile,
+            >::new()),
+            &self.nested_registry,
+            || witness(instance.clone()),
             &mut *rng,
         )?;
 
-        let (compute_v_trace, instance) = MultiStage::new(nested::circuits::compute_v::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new())
-        .trace(witness(instance))?
-        .into_parts();
-        let compute_v_rx = self.nested_registry.assemble(
-            &compute_v_trace,
-            nested::InternalCircuitIndex::ComputeV.circuit_index::<C::Profile>(),
+        let (compute_v_rx, instance) = pages.prove(
+            MultiStage::new(nested::circuits::compute_v::Circuit::<
+                C::HostCurve,
+                R,
+                C::Profile,
+            >::new()),
+            &self.nested_registry,
+            || witness(instance.clone()),
             &mut *rng,
         )?;
 
@@ -401,7 +384,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             builder.native_online().commitments(),
             rng,
         )?;
-        let rxs = builder.nested_online_mut().extension_rxs(rxs)?;
+        let mut rxs = builder.nested_online_mut().extension_rxs(rxs)?;
+        pages.finish(&mut rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its nested extension".into(),

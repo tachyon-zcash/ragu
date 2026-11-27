@@ -286,6 +286,11 @@ impl<C: Affine, R: Rank, N: Len, E: Len, G> Clone for EndoscalingStep<C, R, N, E
 }
 
 impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
+    /// The step of the walk this is.
+    pub(crate) fn step(&self) -> usize {
+        self.step
+    }
+
     /// Creates a new endoscaling step.
     ///
     /// Panics if `step >= NumStepsLen::<N, E>::len()`.
@@ -366,6 +371,13 @@ where
 
         // Horner's rule: scale and add each input. With only the initial
         // point, the empty loop leaves it to be constrained to the output.
+        //
+        // TODO(#503): every scaling is the same block of gates, repeated
+        // for each input of each step, and none of it is a routine: the
+        // wiring evaluators can share none of it across the steps, or
+        // across the pages a profile cuts them into. A routine for the
+        // scaling, and for the addition after it, whose nonzero checks the
+        // bank holds for the whole loop, is what would let them.
         let acc = NonzeroBank::scope(dr, |dr, bank| {
             let mut acc = initial;
             for idx in input_range {

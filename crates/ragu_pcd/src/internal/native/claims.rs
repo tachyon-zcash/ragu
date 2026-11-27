@@ -25,7 +25,7 @@ use udon::field::Field;
 use super::{InternalCircuitIndex, NUM_BINDERS, NumSteps, RxComponent, RxIndex};
 use crate::{
     internal::revdot::{Builder, Source, sum_polynomials},
-    profile::Profile,
+    profile::{Profile, paging},
 };
 
 /// Number of circuits using unified $k(y)$ in [`build`] before
@@ -143,6 +143,108 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
     }
 }
 
+/// The polynomial of a pageable circuit's own slot.
+fn own(circuit: paging::Circuit) -> RxIndex {
+    match circuit {
+        paging::Circuit::Hashes1 => RxIndex::Hashes1,
+        paging::Circuit::Hashes2 => RxIndex::Hashes2,
+        paging::Circuit::Collapse => RxIndex::Collapse,
+        paging::Circuit::ComputeV => RxIndex::ComputeV,
+        paging::Circuit::BindChallenges(k) => RxIndex::BindChallenges(k),
+        paging::Circuit::BindBeta => RxIndex::BindBeta,
+        paging::Circuit::BindEndoscalar => RxIndex::BindEndoscalar,
+        paging::Circuit::EndoscalingStep(step) => RxIndex::EndoscalingStep(step),
+        paging::Circuit::NestedCollapse
+        | paging::Circuit::NestedComputeV
+        | paging::Circuit::NestedEndoscalingStep(_) => {
+            unreachable!("a native circuit")
+        }
+    }
+}
+
+/// The pageable circuit whose own slot polynomial `own` is.
+fn pageable(own: RxIndex) -> paging::Circuit {
+    match own {
+        RxIndex::Hashes1 => paging::Circuit::Hashes1,
+        RxIndex::Hashes2 => paging::Circuit::Hashes2,
+        RxIndex::Collapse => paging::Circuit::Collapse,
+        RxIndex::ComputeV => paging::Circuit::ComputeV,
+        RxIndex::BindChallenges(k) => paging::Circuit::BindChallenges(k),
+        RxIndex::BindEndoscalar => paging::Circuit::BindEndoscalar,
+        RxIndex::BindBeta => paging::Circuit::BindBeta,
+        RxIndex::EndoscalingStep(step) => paging::Circuit::EndoscalingStep(step),
+        _ => unreachable!("a pageable circuit's own polynomial"),
+    }
+}
+
+/// The polynomials at `indices`, for each proof.
+fn per_proof<S>(source: &S, indices: impl IntoIterator<Item = RxIndex>) -> Vec<Vec<S::Rx>>
+where
+    S: Source<RxComponent = RxComponent>,
+{
+    let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+    for index in indices {
+        for (i, rx) in source.rx(RxComponent::Rx(index)).enumerate() {
+            if per_proof.len() <= i {
+                per_proof.push(Vec::new());
+            }
+            per_proof[i].push(rx);
+        }
+    }
+    per_proof
+}
+
+/// The stages each page of a paged circuit loads, which are its circuit's,
+/// and its carry stage.
+fn page_stages<P: Profile>(placement: &paging::Placement) -> Vec<RxIndex> {
+    loaded::<P>(placement.circuit)
+        .into_iter()
+        .chain([RxIndex::ExtensionStage(placement.carry)])
+        .collect()
+}
+
+/// The fuse's stages a pageable circuit's claim loads, which each of its
+/// pages' claims loads too. [`build`] sums these for every pageable
+/// circuit, whole or its last page, so the pages and the last page read
+/// one list. A stage a circuit reserves and whose polynomial its claim
+/// leaves out is not in the list: the circuit reserves that stage's gates
+/// and names none of its wires.
+fn loaded<P: Profile>(circuit: paging::Circuit) -> Vec<RxIndex> {
+    use RxIndex::*;
+    match circuit {
+        paging::Circuit::Hashes1 => alloc::vec![Preamble, OuterError],
+        paging::Circuit::Hashes2 => alloc::vec![OuterError],
+        paging::Circuit::Collapse => {
+            let bound = crate::profile::native_extension::<P>().binding.is_some()
+                || !P::NESTED_ONLINE.is_empty();
+            bound
+                .then_some(PointsBinding)
+                .into_iter()
+                .chain([Preamble, InnerError, OuterError])
+                .collect()
+        }
+        paging::Circuit::ComputeV => (!P::NESTED_ONLINE.is_empty())
+            .then_some(PointsBinding)
+            .into_iter()
+            .chain([Preamble, Query, Eval])
+            .collect(),
+        // A binder reserves the points-binding stage without loading it.
+        paging::Circuit::BindChallenges(_) => alloc::vec![Preamble, Query, Eval],
+        paging::Circuit::BindBeta => alloc::vec![PointsBinding, Preamble],
+        paging::Circuit::BindEndoscalar | paging::Circuit::EndoscalingStep(_) => {
+            POINTS_INPUT_STAGES
+                .into_iter()
+                .chain([PointsWalk])
+                .collect()
+        }
+        paging::Circuit::NestedCollapse
+        | paging::Circuit::NestedComputeV
+        | paging::Circuit::NestedEndoscalingStep(_) => {
+            unreachable!("a native circuit")
+        }
+    }
+}
+
 /// Build claims in unified interleaved order from a source.
 ///
 /// The ordering is: for each claim type, add claims for all proofs before
@@ -172,46 +274,44 @@ where
         processor.circuit_claim(app_id, rxs.into_iter());
     }
 
+    // A circuit its profile pages is its last page, which loads the
+    // circuit's carry stage as every page of it does: one more polynomial
+    // in its claim, for each proof.
+    let pages = paging::placements::<P>(false);
+    let placed =
+        |circuit: paging::Circuit| pages.iter().find(|placement| placement.circuit == circuit);
+    // What a pageable circuit's claim sums beside its own polynomial: its
+    // stages whole, or its last page's and its carry stage.
+    let last = |own: RxIndex| -> Vec<RxIndex> {
+        let circuit = pageable(own);
+        match placed(circuit) {
+            Some(placement) => page_stages::<P>(placement),
+            None => loaded::<P>(circuit),
+        }
+    };
+
     // Internal circuits and stages in canonical order.
     for id in InternalCircuitIndex::all::<P>() {
         use InternalCircuitIndex::*;
         match id {
             // hashes_1: Hashes1 + Preamble + OuterError
             Hashes1Circuit => {
-                for ((h1, pre), en) in source
-                    .rx(Rx(Hashes1))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(OuterError)))
-                {
-                    processor.internal_circuit_claim(id, [h1, pre, en].into_iter());
+                for rxs in per_proof(source, [Hashes1].into_iter().chain(last(Hashes1))) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
             // hashes_2: Hashes2 + OuterError
             Hashes2Circuit => {
-                for (h2, en) in source.rx(Rx(Hashes2)).zip(source.rx(Rx(OuterError))) {
-                    processor.internal_circuit_claim(id, [h2, en].into_iter());
+                for rxs in per_proof(source, [Hashes2].into_iter().chain(last(Hashes2))) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
             // collapse: Collapse + Preamble + InnerError + OuterError,
             // and PointsBinding when extension targets use child stage points.
             CollapseCircuit => {
-                let bound = crate::profile::native_extension::<P>().binding.is_some()
-                    || !P::NESTED_ONLINE.is_empty();
-                for ((((pc, pb), pre), em), en) in source
-                    .rx(Rx(Collapse))
-                    .zip(source.rx(Rx(PointsBinding)))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(InnerError)))
-                    .zip(source.rx(Rx(OuterError)))
-                {
-                    let mut rxs = Vec::with_capacity(5);
-                    rxs.push(pc);
-                    if bound {
-                        rxs.push(pb);
-                    }
-                    rxs.extend([pre, em, en]);
+                for rxs in per_proof(source, [Collapse].into_iter().chain(last(Collapse))) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -219,62 +319,31 @@ where
             // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
             // when it exports the nested online input-stage commitment.
             ComputeVCircuit => {
-                for ((((cv, pb), pre), q), e) in source
-                    .rx(Rx(ComputeV))
-                    .zip(source.rx(Rx(PointsBinding)))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(Query)))
-                    .zip(source.rx(Rx(Eval)))
-                {
-                    let mut rxs = alloc::vec![cv];
-                    if !P::NESTED_ONLINE.is_empty() {
-                        rxs.push(pb);
-                    }
-                    rxs.extend([pre, q, e]);
+                for rxs in per_proof(source, [ComputeV].into_iter().chain(last(ComputeV))) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
             // bind_challenges: BindChallenges(k) + Preamble + Query + Eval
             BindChallengesCircuit(k) => {
-                for (((bc, pre), q), e) in source
-                    .rx(Rx(BindChallenges(k)))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(Query)))
-                    .zip(source.rx(Rx(Eval)))
-                {
-                    processor.internal_circuit_claim(id, [bc, pre, q, e].into_iter());
+                let stages = last(BindChallenges(k));
+                for rxs in per_proof(source, [BindChallenges(k)].into_iter().chain(stages)) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
             // bind_beta: BindBeta + PointsBinding + Preamble
             BindBetaCircuit => {
-                for ((bb, pb), pre) in source
-                    .rx(Rx(BindBeta))
-                    .zip(source.rx(Rx(PointsBinding)))
-                    .zip(source.rx(Rx(Preamble)))
-                {
-                    processor.internal_circuit_claim(id, [bb, pb, pre].into_iter());
+                for rxs in per_proof(source, [BindBeta].into_iter().chain(last(BindBeta))) {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
             // bind_endoscalar: BindEndoscalar + every points input stage +
             // PointsWalk
             BindEndoscalarCircuit => {
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in [BindEndoscalar]
-                    .into_iter()
-                    .chain(POINTS_INPUT_STAGES)
-                    .chain([PointsWalk])
-                {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
-                }
-                for rxs in per_proof {
+                let stages = last(BindEndoscalar);
+                for rxs in per_proof(source, [BindEndoscalar].into_iter().chain(stages)) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -282,20 +351,9 @@ where
             // endoscaling step k: its rx + every points input stage +
             // PointsWalk (k(y) = 1)
             EndoscalingStep(step) => {
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in [RxIndex::EndoscalingStep(step)]
-                    .into_iter()
-                    .chain(POINTS_INPUT_STAGES)
-                    .chain([PointsWalk])
-                {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
-                }
-                for rxs in per_proof {
+                let stages = last(RxIndex::EndoscalingStep(step));
+                let loaded = [RxIndex::EndoscalingStep(step)].into_iter().chain(stages);
+                for rxs in per_proof(source, loaded) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -305,20 +363,21 @@ where
             // (see `ky_values`).
             ExtensionCircuit(k) => {
                 let extension = crate::profile::native_extension::<P>();
-                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
-                for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
-                    extension.circuits[k as usize]
+                // A page also loads its circuit's stages, beside its carry
+                // stage, which is the extension stage it is declared to
+                // load.
+                let loaded = match pages
+                    .iter()
+                    .find_map(|placement| placement.page(k).map(|_| page_stages::<P>(placement)))
+                {
+                    Some(stages) => stages,
+                    None => extension.circuits[k as usize]
                         .iter()
-                        .map(|&stage| RxIndex::ExtensionStage(stage)),
-                ) {
-                    for (i, rx) in source.rx(Rx(index)).enumerate() {
-                        if per_proof.len() <= i {
-                            per_proof.push(Vec::new());
-                        }
-                        per_proof[i].push(rx);
-                    }
-                }
-                for rxs in per_proof {
+                        .map(|&stage| RxIndex::ExtensionStage(stage))
+                        .collect(),
+                };
+                let loaded = [RxIndex::ExtensionCircuit(k)].into_iter().chain(loaded);
+                for rxs in per_proof(source, loaded) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
@@ -330,12 +389,21 @@ where
                 if (j as usize) < extension.stages {
                     processor.mask_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
+                    // The mask of a circuit's last page covers the
+                    // circuit's own polynomial, which is that page's.
+                    let last_pages = pages
+                        .iter()
+                        .find(|placement| placement.masks_last(j))
+                        .map(|placement| source.rx(Rx(own(placement.circuit))))
+                        .into_iter()
+                        .flatten();
                     processor.mask_claim(
                         id,
                         extension
                             .final_mask(j as usize)
                             .iter()
-                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k)))),
+                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k))))
+                            .chain(last_pages),
                     )?;
                 }
             }
@@ -409,11 +477,15 @@ where
                     ),
                 )?;
             }
+            // A paged step is under its pages' mask instead.
             PointsWalkFinalStaged => {
                 processor.mask_claim(
                     id,
                     source.rx(Rx(BindEndoscalar)).chain(
                         (0..NumSteps::<P>::len() as u32)
+                            .filter(|&step| {
+                                placed(paging::Circuit::EndoscalingStep(step)).is_none()
+                            })
                             .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
                     ),
                 )?;

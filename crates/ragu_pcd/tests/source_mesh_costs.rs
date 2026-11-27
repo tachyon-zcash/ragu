@@ -263,7 +263,6 @@ fn source_oracle_cost_census() -> Result<()> {
         Proof::<C, R<14>>::encoded_len() - Proof::<C, R<13>>::encoded_len(),
         polynomials * (R::<14>::num_coeffs() - R::<13>::num_coeffs()) * 32,
     );
-    census::<Standard, R<13>>("main-standard")?;
-    census::<Standard, R<14>>("main-matched")?;
+    census::<Standard, R<14>>("main-standard")?;
     census::<SourceCapacity, R<14>>("v6-source-capacity")
 }

@@ -64,8 +64,8 @@ use crate::{
     header::{NUM_INTERNAL_SUFFIXES, Suffix},
     ipa::IpaCycle,
     profile::{
-        AGGREGATOR_NAME, Binding, BuiltIn, CircuitSlot, Extension, ExtensionRxs, MaskSlot, Profile,
-        ProfiledCycle, Registered, Standard,
+        AGGREGATOR_NAME, Binding, BuiltIn, CircuitSlot, Extension, ExtensionRxs, MaskSlot,
+        PageCount, PageCounts, Profile, ProfiledCycle, Registered, Standard,
         online::{Layout, SourceRegistry, circuit::Witness, mesh::Mesh, stages as online_stages},
     },
 };
@@ -75,14 +75,15 @@ use crate::{
 /// [`Pasta`](ragu_core::pasta::Pasta) at the wallet rank with `HEADER_SIZE`-element headers.
 ///
 /// The circuits are the decompression module's chunk circuits, laid out as
-/// its extension, which an aggregator proves at [`AggregatorRank`]: each
-/// polynomial a profile adds is one more commitment the fuse's hashing
-/// circuits absorb, one more evaluation its compute-v circuit takes, two
-/// more claims its collapse circuits fold and a longer walk whose every
-/// step loads the longer points stage, and at the wallet rank two
-/// polynomials per side already push a nested endoscaling step past the
-/// budget. At four times the budget the fuse carries the extension, and
-/// the hooks refuse any other rank.
+/// its extension, which an aggregator proves at [`AggregatorRank`], the
+/// wallet's: each polynomial a profile adds is one more commitment the
+/// fuse's hashing circuits absorb, one more evaluation its compute-v
+/// circuit takes, two more claims its collapse circuits fold and a longer
+/// walk whose every step loads the longer points stage, and at that rank
+/// two polynomials per side already push a nested endoscaling step past
+/// the budget. The profile therefore cuts the fuse's circuits into pages
+/// ([`PAGE_COUNTS`](Profile::PAGE_COUNTS)). Each page loads the stages its
+/// unpaged circuit loads, and the hooks refuse any other rank.
 ///
 /// Applications can choose a header size from 1 through 195 field
 /// elements. Decompression uses the same width on both sides, so
@@ -166,18 +167,19 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// A header size outside 1 through 195 panics. This fails at compile
     /// time when evaluating the profile's associated constants.
     pub const fn native_circuits(header_size: usize) -> Counts {
-        // The rank-15 schedule packs the same 27 work circuits and one
-        // digits circuit across this range. Only the number of transcript
-        // circuits changes. Registration checks these counts against the
-        // actual schedule for the chosen width.
-        let transcript = match header_size {
-            1..=57 => 4,
-            58..=153 => 5,
-            154..=195 => 6,
-            _ => panic!("the aggregator header size must be between 1 and 195"),
-        };
+        // At the wallet rank the schedule packs 52 work circuits, 53 from
+        // 42 header elements on, and one digits circuit across this range.
+        // The transcript circuits grow by one with every thirty-two
+        // elements the transcript absorbs. Registration checks these
+        // counts against the actual schedule for the chosen width.
+        assert!(
+            1 <= header_size && header_size <= 195,
+            "the aggregator header size must be between 1 and 195"
+        );
+        let transcript = 9 + (header_size - 1).div_ceil(32);
+        let work = if header_size < 42 { 52 } else { 53 };
         Counts {
-            circuits: 27 + transcript + 1,
+            circuits: work + transcript + 1,
             transcript,
             digits: 1,
         }
@@ -187,16 +189,44 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// header size: none run transcript chunks, and the digits chunks come
     /// last.
     pub const NESTED_CIRCUITS: Counts = Counts {
-        circuits: 19,
+        circuits: 34,
         transcript: 0,
-        digits: 1,
+        digits: 2,
     };
 
-    /// The endoscalings a step of either walk performs: what fits a step at
-    /// the aggregator rank beside the stages it reserves, which cuts the
-    /// walks and with them the proof's polynomials by more than the ratio
-    /// to the wallet rank's four, since the sides size each other.
-    pub const ENDOSCALINGS_PER_STEP: usize = 17;
+    /// The endoscalings a step of either walk performs, in the pages the
+    /// profile cuts a step into: they fill the pages between the stages
+    /// each page loads and the step's carry stage.
+    pub const ENDOSCALINGS_PER_STEP: usize = 60;
+
+    /// The pages of a native step, each loading all of its stages.
+    const NATIVE_STEP_PAGES: usize = 8;
+
+    /// The pages of a nested step, each loading all of its stages.
+    const NESTED_STEP_PAGES: usize = 8;
+
+    /// The chunk circuit counts of the schedules that verify a wallet's
+    /// compressed proof over `Base` in chunk circuits at rank `R`, the
+    /// native side's then the nested side's: what
+    /// [`native_circuits`](Self::native_circuits) and
+    /// [`NESTED_CIRCUITS`](Self::NESTED_CIRCUITS) pin for the aggregator
+    /// rank.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a schedule cannot be built or its circuits are not in
+    /// transcript, work, digits order.
+    #[cfg(feature = "test-utils")]
+    pub fn scheduled<Base, R>() -> Result<(Counts, Counts)>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+    {
+        Ok((
+            counts::<Base, Native, WalletRank, R, HEADER_SIZE>()?,
+            counts::<Base, Nested, WalletRank, R, HEADER_SIZE>()?,
+        ))
+    }
 
     /// Checks that the hooks register at the aggregator rank for the
     /// profile's header size. The hooks are generic over the rank and the
@@ -248,6 +278,30 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
 
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
+
+    // With the extension's polynomials the larger fuse circuits do not fit
+    // a polynomial of the aggregator rank whole. Every page loads every
+    // stage of its circuit, so each page's stage claim matches the unpaged
+    // circuit's. The page counts and the carry stages' sizes are fixed
+    // across header sizes, and a circuit that does not cut with them at its
+    // size is refused where it is registered. Each carry stage holds more
+    // than the census finds its circuit to carry, 14 to 41 values at header
+    // sizes 4 and 195.
+    const PAGE_COUNTS: PageCounts = {
+        PageCounts {
+            hashes_1: PageCount::WHOLE,
+            hashes_2: PageCount::WHOLE,
+            collapse: PageCount::WHOLE,
+            compute_v: PageCount::new(3).carrying(64),
+            bind_challenges: PageCount::new(2).carrying(48),
+            bind_beta: PageCount::WHOLE,
+            bind_endoscalar: PageCount::new(2).carrying(48),
+            endoscaling_step: PageCount::new(Self::NATIVE_STEP_PAGES).carrying(32),
+            nested_collapse: PageCount::new(5).carrying(48),
+            nested_compute_v: PageCount::new(4).carrying(48),
+            nested_endoscaling_step: PageCount::new(Self::NESTED_STEP_PAGES).carrying(32),
+        }
+    };
 
     type Context<'params, Base, R, B>
         = Decompression<'params, Base, R, HEADER_SIZE, B>
@@ -885,9 +939,13 @@ where
     K: Rank,
     R: Rank,
 {
-    if counts::<C, S, K, R, HEADER_SIZE>()? != pinned {
+    let scheduled = counts::<C, S, K, R, HEADER_SIZE>()?;
+    if scheduled != pinned {
         return Err(Error::Initialization(
-            "the schedule's circuits are not the declared ones".into(),
+            alloc::format!(
+                "the schedule's circuits, {scheduled:?}, are not the declared ones, {pinned:?}"
+            )
+            .into(),
         ));
     }
     super::program::schedule::<C, S, K, R, HEADER_SIZE>()

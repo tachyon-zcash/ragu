@@ -375,8 +375,8 @@ Three workflows in `.github/workflows/`:
 
 Most of this harness was written against `Fp` and `TestRank`, for a good
 reason: that is the cheap pair. `TestRank` is `R<7>` — `n = 32` gates, 128
-coefficients — where `WalletRank` is `R<13>`, `n = 2048` and 8192
-coefficients, sixty-four times the vector length. Running every input at
+coefficients — where `WalletRank` is `R<14>`, `n = 4096` and 16384
+coefficients, 128 times the vector length. Running every input at
 wallet rank would cost most of the executions per second, and execution
 count is what finds bugs.
 

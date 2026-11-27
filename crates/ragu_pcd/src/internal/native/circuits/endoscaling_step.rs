@@ -75,6 +75,11 @@ impl<C: ProfiledCycle, R: Rank> Circuit<C, R> {
             _marker: PhantomData,
         })
     }
+
+    /// The step of the walk this is.
+    pub(crate) fn step(&self) -> usize {
+        self.step
+    }
 }
 
 /// Witness for one step: every points stage.

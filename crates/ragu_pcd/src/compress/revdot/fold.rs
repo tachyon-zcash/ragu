@@ -168,6 +168,12 @@ impl Layout {
     pub(crate) fn outer(&self) -> impl Iterator<Item = (usize, usize)> {
         off_diagonal(self.groups())
     }
+
+    /// Whether each layer's error terms fit the `capacity` coefficients of
+    /// one polynomial.
+    pub(crate) fn fits(&self, capacity: usize) -> bool {
+        self.inner().count() <= capacity && self.outer().count() <= capacity
+    }
 }
 
 /// The pairs $(i, j)$ with $i \ne j$ below `n`, row by row.

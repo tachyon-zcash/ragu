@@ -1,7 +1,7 @@
 # Decompression
 
-Decompression takes a [compressed rank-13 wallet proof](compression.md) and
-produces a rank-15 aggregator [Fuse proof](../iop.md) with the same output
+Decompression takes a [compressed rank-14 wallet proof](compression.md) and
+produces a rank-14 aggregator [Fuse proof](../iop.md) with the same output
 header and online commitments. The result can be used as a child in another
 aggregator Fuse.
 
