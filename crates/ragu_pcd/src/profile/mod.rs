@@ -323,8 +323,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// over the nested batch takes a step per so many points, so more per
     /// step is fewer steps and fewer polynomials, and the other side's walk
     /// shortens with them. The standard profile's is the wallet rank's.
-    /// Both endoscaling counts must be nonzero and their product must exceed
-    /// four, so the mutually dependent walk sizes can converge.
+    /// Both endoscaling counts must be nonzero, and their product must
+    /// exceed four times the polynomials a native step takes times those a
+    /// nested step takes (one each, and one more for each page and for the
+    /// carry stage of a paged step), so the mutually dependent walk sizes
+    /// can converge. [`check`](Self::check) refuses a profile that does not
+    /// meet this. A product only just past that bound converges slowly:
+    /// the shape's solver gives up after 256 passes and panics
+    /// ([`Shape::solve`]).
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = native::ENDOSCALINGS_PER_STEP;
     /// The endoscalings a nested endoscaling step performs, likewise.
     const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
@@ -1845,7 +1851,7 @@ impl Shape {
     /// # Panics
     ///
     /// Panics if an endoscaling count is zero or the walk sizes do not
-    /// converge within 64 iterations.
+    /// converge within 256 iterations.
     pub const fn solve(
         native_extension: usize,
         nested_extension: usize,

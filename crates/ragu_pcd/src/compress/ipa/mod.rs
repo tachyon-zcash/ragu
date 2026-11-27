@@ -88,8 +88,9 @@ pub trait IpaCycle: Cycle {
     /// where their table reaches, and past it one of the generators baked
     /// for the runs of the compression's transcript, which it commits at
     /// the degrees their stages take in a proof's decompression at the
-    /// aggregator rank, past the Standard tables (see
-    /// [`CycleTranscript`]); `None` past both.
+    /// aggregator rank (see [`CycleTranscript`]); `None` past both. The
+    /// baked tables reach every run, so the second case is for a table
+    /// shorter than theirs.
     fn nested_generator(params: &Self::Params, index: usize) -> Option<Self::NestedCurve>;
 }
 

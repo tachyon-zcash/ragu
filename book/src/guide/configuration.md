@@ -201,11 +201,11 @@ over-allocate.
 hold. Ragu's challenge binder circuits load the headers of both children
 and the step's own beside the online openings and the bridge-hash point,
 and a header too large for them fails `finalize` with
-`Error: exceeded the maximum number of gates`. At `R<13>`, the wallet rank
-when this was measured, the largest header size for the Standard profile
-was 194 elements. The bound at `R<14>` is larger and has not been measured.
-Profiles with extensions can have a lower limit because their additional
-claims and commitments also consume gates. Check capacity with `finalize`
+`Error: exceeded the maximum number of gates`. At `R<14>`, the wallet rank,
+the largest header size for the Standard profile is 647 elements. Profiles
+with extensions can have a lower limit because their additional claims and
+commitments also consume gates: the extended profile of the test suite
+stops at 373. The test `test_header_capacity_at_finalize` pins both bounds. Check capacity with `finalize`
 for the selected profile and registered application.
 
 ### Changing Header Size

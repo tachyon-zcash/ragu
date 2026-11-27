@@ -346,7 +346,10 @@ mod tests {
     // each step folding its own application claim, each step's randomizers
     // (see `fuse::randomizer`) in its fold and its batch, and the wallet
     // rank's walks of eight endoscalings a step. A change to either moves
-    // the layout or the verifier semantics and needs a new schema or
+    // the layout or the verifier semantics. Nothing serialized is published
+    // yet, so until a first release such a change re-pins this shape under
+    // the same schema: older bytes then fail to decode on their length or
+    // rank, not on their version. After a release it needs a new schema or
     // protocol version, not a silent re-pin.
     #[test]
     fn schema_v4_pins_protocol_and_shape() {

@@ -113,8 +113,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// commits to polynomials with fewer point additions, which makes every
     /// proof faster. The proofs themselves are unchanged. The tables are
     /// prepared once and held for the application's life: on each curve, 16
-    /// points of 96 bytes for every coefficient of the rank, about 12.6 MB at
-    /// 8192 coefficients. An application that proves repeatedly recovers the
+    /// points of 96 bytes for every coefficient of the rank, about 25.2 MB at
+    /// the 16384 coefficients of the wallet rank. An application that proves repeatedly recovers the
     /// preparation within a few proofs; one that proves once, or only
     /// verifies, should leave them out. Other backends ignore the request.
     pub fn with_commitment_tables(mut self) -> Self {

@@ -1,6 +1,7 @@
 //! Pin the embedded generators independently of their derivation and storage
 //! representation by comparing their canonical coordinates with the original.
 
+use ragu_circuits::polynomials::{AggregatorRank, Rank};
 use ragu_core::{
     Cycle, FixedGenerators,
     pasta::{Pasta, PastaParams},
@@ -127,7 +128,9 @@ fn stage_reach_is_pinned() {
 
     let params = ragu_pcd::pasta::baked();
     let standard = Pasta::nested_generators(params).g();
-    let n = 1usize << 11;
+    // The gates of a trace at the aggregator rank, as the baked reach
+    // takes them.
+    let n = <AggregatorRank as Rank>::n();
     let indices: Vec<usize> = (2 * n - 1 - STAGE_REACH..2 * n - 1)
         .chain(4 * n - 1 - STAGE_REACH..4 * n - 1)
         .collect();
@@ -146,7 +149,7 @@ fn stage_reach_is_pinned() {
     let digest = blake2b_simd::Params::new().hash_length(32).hash(&loaded);
     assert_eq!(
         digest.to_hex().as_str(),
-        "f21f02718c8b69f60395cf228b316fa16e53eb805ebfa168208c08013e106dc3"
+        "242dd7cbd45a8b28e3b210f366acba3a6ae3545f4cc9f0d9b3d8d6c512f3dbef"
     );
 
     #[cfg(feature = "baked-aggregator")]

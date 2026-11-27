@@ -189,7 +189,7 @@ where
             || C::nested_generators(wallet.params).g().len() < reach
         {
             return Err(Error::Initialization(
-                "the wallet application's tables stop short of the aggregator rank, whose stage generators the decompression's chunk circuits use: finalize it over the aggregator's parameters, such as `baked_aggregator()`"
+                "the wallet application's tables stop short of the aggregator rank, whose stage generators the decompression's chunk circuits use: finalize it over parameters that reach that rank, as `baked()` does"
                     .into(),
             ));
         }

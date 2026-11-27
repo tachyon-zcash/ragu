@@ -5,7 +5,8 @@
 //! table artifact contains the vector generators in order, followed by the
 //! blinding generator and the IPA's generator, stored in Udon's Montgomery
 //! representation; the stage artifact contains the nested curve's vector
-//! generators the compression's run stages reach past the Standard table.
+//! generators the compression's run stages reach, for a table shorter
+//! than the Standard one, which holds them itself.
 
 use std::{fs, io::Result, path::Path};
 
@@ -19,8 +20,8 @@ const DOMAIN_PREFIX: &str = "Ragu-Parameters";
 // consumer's array types, so a mismatch is rejected at compile time.
 const DEFAULT_EP_K: usize = 14;
 const DEFAULT_EQ_K: usize = 14;
-// Copies of the optional Aggregator table capacities, the aggregator rank's,
-// checked by Bento too.
+// Copies of the optional Aggregator table capacities, one rank past the
+// aggregator rank, checked by Bento too.
 const AGGREGATOR_EP_K: usize = 15;
 const AGGREGATOR_EQ_K: usize = 15;
 // Copies of `pasta::STAGE_REACH` and of the aggregator rank's $n$, $2^{12}$:

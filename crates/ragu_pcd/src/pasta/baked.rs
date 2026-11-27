@@ -102,6 +102,10 @@ impl IpaCycle for Pasta {
         if let Some(generator) = Pasta::nested_generators(params).g().get(index) {
             return Some(*generator);
         }
+        // Both baked tables hold the stage reach's generators, so this is
+        // reached only for a table a caller built shorter than theirs. The
+        // copy stays for that case: a run's commitment must not depend on
+        // how long a table its prover loaded.
         stage_generator(index).map(|point| *AffineAdapter::from_ref(&point))
     }
 }
