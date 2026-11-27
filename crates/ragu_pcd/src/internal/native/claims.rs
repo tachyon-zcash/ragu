@@ -196,11 +196,11 @@ where
 
 /// The stages each page of a paged circuit loads, which are its circuit's,
 /// and its carry stage.
-fn page_stages<P: Profile>(slot: &paging::Slot) -> Vec<RxIndex> {
-    loaded::<P>(slot.circuit)
+fn page_stages<P: Profile>(placement: &paging::Placement) -> Vec<RxIndex> {
+    loaded::<P>(placement.circuit)
         .into_iter()
         .flatten()
-        .chain([RxIndex::ExtensionStage(slot.carry)])
+        .chain([RxIndex::ExtensionStage(placement.carry)])
         .collect()
 }
 
@@ -283,14 +283,15 @@ where
     // A circuit its profile pages is its last page, which loads the
     // circuit's carry stage as every page of it does: one more polynomial
     // in its claim, for each proof.
-    let pages = paging::slots::<P>(false);
-    let slot = |circuit: paging::Circuit| pages.iter().find(|slot| slot.circuit == circuit);
+    let pages = paging::placements::<P>(false);
+    let placed =
+        |circuit: paging::Circuit| pages.iter().find(|placement| placement.circuit == circuit);
     // What a pageable circuit's claim sums beside its own polynomial: its
     // stages whole, or its last page's and its carry stage.
     let last = |own: RxIndex| -> Vec<RxIndex> {
         let circuit = pageable(own);
-        match slot(circuit) {
-            Some(slot) => page_stages::<P>(slot),
+        match placed(circuit) {
+            Some(placement) => page_stages::<P>(placement),
             None => loaded::<P>(circuit).into_iter().flatten().collect(),
         }
     };
@@ -373,7 +374,7 @@ where
                 // load.
                 let loaded = match pages
                     .iter()
-                    .find_map(|slot| slot.page(k).map(|_| page_stages::<P>(slot)))
+                    .find_map(|placement| placement.page(k).map(|_| page_stages::<P>(placement)))
                 {
                     Some(stages) => stages,
                     None => extension.circuits[k as usize]
@@ -398,8 +399,8 @@ where
                     // circuit's own polynomial, which is that page's.
                     let last_pages = pages
                         .iter()
-                        .find(|slot| slot.masks_last(j))
-                        .map(|slot| source.rx(Rx(own(slot.circuit))))
+                        .find(|placement| placement.masks_last(j))
+                        .map(|placement| source.rx(Rx(own(placement.circuit))))
                         .into_iter()
                         .flatten();
                     processor.mask_claim(
@@ -488,7 +489,9 @@ where
                     id,
                     source.rx(Rx(BindEndoscalar)).chain(
                         (0..NumSteps::<P>::len() as u32)
-                            .filter(|&step| slot(paging::Circuit::EndoscalingStep(step)).is_none())
+                            .filter(|&step| {
+                                placed(paging::Circuit::EndoscalingStep(step)).is_none()
+                            })
                             .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
                     ),
                 )?;

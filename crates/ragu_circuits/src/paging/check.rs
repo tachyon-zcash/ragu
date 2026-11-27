@@ -10,7 +10,7 @@ use core::ops::Range;
 use ragu_core::{Error, Result};
 use udon::field::Field;
 
-use super::{Carry, Pageable, Paged, Plan, Stages, record::Recording, refuse};
+use super::{Carry, Pageable, Pages, Plan, Stages, record::Recording, refuse};
 use crate::{polynomials::Rank, staging::Stage};
 
 /// A wire of the unpaged circuit, or one of the independent carry values
@@ -276,7 +276,7 @@ fn page_symbol<F: Field>(
 
 /// Checks the complete emitted relations, treating carry slots as
 /// independent wires until their defining equations have been found.
-pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Paged<F, R, S>) -> Result<()> {
+pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>) -> Result<()> {
     let plan = &*paged.plan;
     // Every wire a page names in a stage is read where the plan lays the
     // stage, which is where the stage's polynomial holds it only if the

@@ -223,7 +223,7 @@ type ByCircuit<Rx> = Vec<(paging::Circuit, Vec<Vec<Rx>>)>;
 /// Files `stages`, a claim of `circuit`'s whose own polynomial is `own`.
 fn file<Rx: Copy + PartialEq + core::fmt::Debug>(
     by_circuit: &mut ByCircuit<Rx>,
-    slots: &[paging::Slot],
+    placements: &[paging::Placement],
     (circuit, own): (paging::Circuit, Rx),
     mut stages: Vec<Rx>,
     carry: impl Fn(u32) -> Rx,
@@ -234,10 +234,13 @@ fn file<Rx: Copy + PartialEq + core::fmt::Debug>(
         "{circuit:?}: its own polynomial"
     );
     stages.remove(0);
-    if let Some(slot) = slots.iter().find(|slot| slot.circuit == circuit) {
+    if let Some(placement) = placements
+        .iter()
+        .find(|placement| placement.circuit == circuit)
+    {
         assert_eq!(
             stages.pop(),
-            Some(carry(slot.carry)),
+            Some(carry(placement.carry)),
             "{circuit:?}: its carry stage, last"
         );
     }
@@ -249,19 +252,19 @@ fn file<Rx: Copy + PartialEq + core::fmt::Debug>(
 
 /// Checks that each paged circuit has a claim for each of its pages, and
 /// any other one claim.
-fn check_counts<Rx>(by_circuit: &ByCircuit<Rx>, slots: &[paging::Slot]) {
-    for slot in slots {
+fn check_counts<Rx>(by_circuit: &ByCircuit<Rx>, placements: &[paging::Placement]) {
+    for placement in placements {
         assert!(
-            by_circuit.iter().any(|(of, _)| *of == slot.circuit),
+            by_circuit.iter().any(|(of, _)| *of == placement.circuit),
             "{:?} is paged and has no claim",
-            slot.circuit
+            placement.circuit
         );
     }
     for (circuit, claims) in by_circuit {
-        let pages = slots
+        let pages = placements
             .iter()
-            .find(|slot| slot.circuit == *circuit)
-            .map_or(1, |slot| slot.last() + 1);
+            .find(|placement| placement.circuit == *circuit)
+            .map_or(1, |placement| placement.last() + 1);
         assert_eq!(claims.len(), pages, "{circuit:?}: a claim for each page");
     }
 }
@@ -272,7 +275,7 @@ fn native_claims<P: Profile>() -> ByCircuit<native::RxIndex> {
     use paging::Circuit;
 
     let recorded = native_recorded::<P>();
-    let slots = paging::slots::<P>(false);
+    let placements = paging::placements::<P>(false);
     let mut by_circuit = Vec::new();
     for (id, stages) in recorded.circuits() {
         let filed = match id {
@@ -286,15 +289,24 @@ fn native_claims<P: Profile>() -> ByCircuit<native::RxIndex> {
             Id::EndoscalingStep(step) => {
                 (Circuit::EndoscalingStep(step), Rx::EndoscalingStep(step))
             }
-            Id::ExtensionCircuit(k) => match slots.iter().find(|slot| slot.page(k).is_some()) {
-                Some(slot) => (slot.circuit, Rx::ExtensionCircuit(k)),
+            Id::ExtensionCircuit(k) => match placements
+                .iter()
+                .find(|placement| placement.page(k).is_some())
+            {
+                Some(placement) => (placement.circuit, Rx::ExtensionCircuit(k)),
                 None => continue,
             },
             _ => continue,
         };
-        file(&mut by_circuit, &slots, filed, stages, Rx::ExtensionStage);
+        file(
+            &mut by_circuit,
+            &placements,
+            filed,
+            stages,
+            Rx::ExtensionStage,
+        );
     }
-    check_counts(&by_circuit, &slots);
+    check_counts(&by_circuit, &placements);
     by_circuit
 }
 
@@ -304,7 +316,7 @@ fn nested_claims<P: Profile>() -> ByCircuit<nested::RxIndex> {
     use paging::Circuit;
 
     let recorded = nested_recorded::<P>();
-    let slots = paging::slots::<P>(true);
+    let placements = paging::placements::<P>(true);
     let mut by_circuit = Vec::new();
     for (id, stages) in recorded.circuits() {
         let filed = match id {
@@ -314,15 +326,24 @@ fn nested_claims<P: Profile>() -> ByCircuit<nested::RxIndex> {
                 Circuit::NestedEndoscalingStep(step),
                 Rx::EndoscalingStep(step),
             ),
-            Id::ExtensionCircuit(k) => match slots.iter().find(|slot| slot.page(k).is_some()) {
-                Some(slot) => (slot.circuit, Rx::ExtensionCircuit(k)),
+            Id::ExtensionCircuit(k) => match placements
+                .iter()
+                .find(|placement| placement.page(k).is_some())
+            {
+                Some(placement) => (placement.circuit, Rx::ExtensionCircuit(k)),
                 None => continue,
             },
             _ => continue,
         };
-        file(&mut by_circuit, &slots, filed, stages, Rx::ExtensionStage);
+        file(
+            &mut by_circuit,
+            &placements,
+            filed,
+            stages,
+            Rx::ExtensionStage,
+        );
     }
-    check_counts(&by_circuit, &slots);
+    check_counts(&by_circuit, &placements);
     by_circuit
 }
 
@@ -384,7 +405,7 @@ fn check_parity<P: Profile>() {
     let native = native_claims::<P>();
     let nested = nested_claims::<P>();
     assert!(
-        !paging::slots::<P>(false).is_empty() && !paging::slots::<P>(true).is_empty(),
+        !paging::placements::<P>(false).is_empty() && !paging::placements::<P>(true).is_empty(),
         "the aggregator pages on both sides"
     );
     for (circuit, claims) in native {
@@ -650,34 +671,34 @@ fn claims_sum_the_stages_their_circuits_reserve() {
     check_reservations::<Profiled<Pasta, Aggregator<4>>, 4>(params);
 }
 
-/// Checks that each page of each of `slots` has its own polynomial `own`
+/// Checks that each page of each of `placements` has its own polynomial `own`
 /// under exactly one claim of its circuit's pages' mask and under no other
 /// circuit's, and that each carry stage's polynomial is under its stage's
 /// mask claim alone.
 fn check_masks<Id: Copy + PartialEq + core::fmt::Debug, Rx: Copy + PartialEq + core::fmt::Debug>(
     side: &str,
     recorded: &Recorded<Id, Rx>,
-    slots: &[paging::Slot],
+    placements: &[paging::Placement],
     (mask, carry): (impl Fn(u32) -> Id, impl Fn(u32) -> Rx),
-    own: impl Fn(&paging::Slot, usize) -> Rx,
+    own: impl Fn(&paging::Placement, usize) -> Rx,
 ) {
-    assert!(!slots.is_empty(), "the {side} side pages a circuit");
-    let under = |slot: &paging::Slot, polynomial: Rx| {
+    assert!(!placements.is_empty(), "the {side} side pages a circuit");
+    let under = |placement: &paging::Placement, polynomial: Rx| {
         recorded
             .masks()
-            .filter(|(id, rxs)| *id == mask(slot.mask) && rxs.contains(&polynomial))
+            .filter(|(id, rxs)| *id == mask(placement.mask) && rxs.contains(&polynomial))
             .count()
     };
-    for slot in slots {
-        let which = slot.circuit;
-        for page in 0..=slot.last() {
-            let polynomial = own(slot, page);
+    for placement in placements {
+        let which = placement.circuit;
+        for page in 0..=placement.last() {
+            let polynomial = own(placement, page);
             assert_eq!(
-                under(slot, polynomial),
+                under(placement, polynomial),
                 1,
                 "{side} {which:?}: page {page}'s polynomial {polynomial:?} under its pages' mask"
             );
-            for other in slots.iter().filter(|other| other.circuit != which) {
+            for other in placements.iter().filter(|other| other.circuit != which) {
                 assert_eq!(
                     under(other, polynomial),
                     0,
@@ -686,14 +707,14 @@ fn check_masks<Id: Copy + PartialEq + core::fmt::Debug, Rx: Copy + PartialEq + c
                 );
             }
         }
-        let stage = carry(slot.carry);
+        let stage = carry(placement.carry);
         let holding: Vec<(Id, &[Rx])> = recorded
             .masks()
             .filter(|(_, rxs)| rxs.contains(&stage))
             .collect();
         assert_eq!(
             holding,
-            [(mask(slot.carry), &[stage][..])],
+            [(mask(placement.carry), &[stage][..])],
             "{side} {which:?}: its carry stage is under its stage's mask alone"
         );
     }
@@ -705,32 +726,32 @@ fn check_masks<Id: Copy + PartialEq + core::fmt::Debug, Rx: Copy + PartialEq + c
 #[test]
 fn every_page_is_under_the_mask_over_its_own_gates() {
     fn check<P: Profile>() {
-        let slots = paging::slots::<P>(false);
+        let placements = paging::placements::<P>(false);
         check_masks(
             "native",
             &native_recorded::<P>(),
-            &slots,
+            &placements,
             (
                 native::InternalCircuitIndex::ExtensionMask,
                 native::RxIndex::ExtensionStage,
             ),
-            |slot, page| match page < slot.last() {
-                true => native::RxIndex::ExtensionCircuit(slot.circuits.start + page as u32),
-                false => native_own(slot.circuit),
+            |placement, page| match page < placement.last() {
+                true => native::RxIndex::ExtensionCircuit(placement.circuits.start + page as u32),
+                false => native_own(placement.circuit),
             },
         );
-        let slots = paging::slots::<P>(true);
+        let placements = paging::placements::<P>(true);
         check_masks(
             "nested",
             &nested_recorded::<P>(),
-            &slots,
+            &placements,
             (
                 nested::InternalCircuitIndex::ExtensionMask,
                 nested::RxIndex::ExtensionStage,
             ),
-            |slot, page| match page < slot.last() {
-                true => nested::RxIndex::ExtensionCircuit(slot.circuits.start + page as u32),
-                false => nested_own(slot.circuit),
+            |placement, page| match page < placement.last() {
+                true => nested::RxIndex::ExtensionCircuit(placement.circuits.start + page as u32),
+                false => nested_own(placement.circuit),
             },
         );
     }
@@ -882,7 +903,7 @@ fn every_circuit_claim_is_held_to_its_target() {
         use native::InternalCircuitIndex as Native;
         use nested::InternalCircuitIndex as Nested;
 
-        let native_slots = paging::slots::<P>(false);
+        let native_placements = paging::placements::<P>(false);
         let targets: Vec<Target> = native::claims::ky_prefix::<P, _>(&Targets).collect();
         check_aligned("native", &native_recorded::<P>(), &targets, |id| match id {
             Native::Hashes1Circuit => Some(Target::UnifiedBridge),
@@ -891,22 +912,22 @@ fn every_circuit_claim_is_held_to_its_target() {
             Native::BindChallengesCircuit(_) | Native::BindBetaCircuit => Some(Target::Unified),
             Native::BindEndoscalarCircuit => Some(Target::BindEndoscalar),
             Native::EndoscalingStep(_) => Some(Target::One),
-            Native::ExtensionCircuit(k) => native_slots
+            Native::ExtensionCircuit(k) => native_placements
                 .iter()
-                .any(|slot| slot.page(k).is_some())
+                .any(|placement| placement.page(k).is_some())
                 .then_some(Target::One),
             _ => None,
         });
 
-        let nested_slots = paging::slots::<P>(true);
+        let nested_placements = paging::placements::<P>(true);
         let targets: Vec<Target> = nested::claims::ky_prefix::<P, _>(&Targets).collect();
         check_aligned("nested", &nested_recorded::<P>(), &targets, |id| match id {
             Nested::EndoscalingStep(_) => Some(Target::One),
             Nested::Collapse => Some(Target::Unified),
             Nested::ComputeV => Some(Target::ComputeV),
-            Nested::ExtensionCircuit(k) => nested_slots
+            Nested::ExtensionCircuit(k) => nested_placements
                 .iter()
-                .any(|slot| slot.page(k).is_some())
+                .any(|placement| placement.page(k).is_some())
                 .then_some(Target::One),
             _ => None,
         });

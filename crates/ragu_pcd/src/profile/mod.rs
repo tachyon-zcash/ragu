@@ -92,36 +92,37 @@ use crate::{
     ipa::IpaCycle,
 };
 
-/// How a profile cuts one of the fuse's internal circuits into pages, each
-/// loading every stage the circuit reserves. Experimental.
+/// What a profile pins for one of the fuse's internal circuits, as an
+/// unpaged circuit: the pages it is cut into and the values its carry
+/// stage holds. Experimental.
 ///
-/// A cut is a number of pages and the values the circuit's carry stage
-/// holds. Each page loads every stage the circuit reserves, then the carry
-/// stage, through which the pages pass values to one another. Both numbers
-/// size the proof and its polynomials, and the circuits a profile pages
-/// work on every polynomial of a proof, the pages' among them, so a profile
-/// states them and no circuit is cut otherwise: a circuit that takes more
-/// pages, or carries more values, is refused where it is registered. What
-/// a circuit takes is found by a census pass, which cuts it: the `paging`
-/// census, with the crate's `test-utils` feature.
+/// Each page loads every stage the circuit reserves, then the carry stage,
+/// through which the pages pass values to one another. Both numbers size
+/// the proof and its polynomials, and the circuits a profile pages work on
+/// every polynomial of a proof, the pages' among them, so a profile states
+/// them and no circuit is cut otherwise: a circuit that takes more pages,
+/// or carries more values, is refused where it is registered. Where the
+/// cuts fall is not pinned: the pager chooses that. What a circuit takes is
+/// found by a census pass, which cuts it: the `paging` census, with the
+/// crate's `test-utils` feature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Cut {
+pub struct PageCount {
     pages: usize,
     /// The values the carry stage holds.
     carry: usize,
 }
 
-impl Cut {
+impl PageCount {
     /// The circuit whole.
-    pub const WHOLE: Self = Cut::pages(1);
+    pub const WHOLE: Self = PageCount::new(1);
 
     /// `pages` pages, over a carry stage that holds nothing yet
     /// ([`carrying`](Self::carrying)).
-    pub const fn pages(pages: usize) -> Self {
-        Cut { pages, carry: 0 }
+    pub const fn new(pages: usize) -> Self {
+        PageCount { pages, carry: 0 }
     }
 
-    /// The same cut, over a carry stage of `values` values.
+    /// The same pages, over a carry stage of `values` values.
     pub const fn carrying(mut self, values: usize) -> Self {
         self.carry = values;
         self
@@ -138,55 +139,55 @@ impl Cut {
     }
 }
 
-/// The pages a profile cuts each of the fuse's internal circuits into.
-/// Experimental.
+/// The [`PageCount`] a profile pins for each of the fuse's internal
+/// circuits. Experimental.
 ///
 /// A circuit with more than one page is cut into that many circuits, which
-/// pass values to one another through a carry stage of the size its cut
+/// pass values to one another through a carry stage of the size its count
 /// states (see [`ragu_circuits::paging`]). Every page loads every stage its
 /// circuit reserves. The profile says how many pages; the pager chooses
 /// where the cuts fall: where the fewest values pass from page to page,
 /// among the places that leave every page room past the stages. The pages
 /// before the last are registered as circuits of the profile's extension
 /// and the carry stage as one of its stages, after what the profile
-/// declares; the last page takes the circuit's own slot. The cuts are
+/// declares; the last page takes the circuit's own slot. The counts are
 /// declared because they size the proof; the registration fails if the
 /// pages do not have the room.
 ///
-/// A walk's steps are all cut alike.
+/// A walk's steps all have one count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Pages {
+pub struct PageCounts {
     /// The native `hashes_1` circuit's.
-    pub hashes_1: Cut,
+    pub hashes_1: PageCount,
     /// The native `hashes_2` circuit's.
-    pub hashes_2: Cut,
+    pub hashes_2: PageCount,
     /// The native `collapse` circuit's.
-    pub collapse: Cut,
+    pub collapse: PageCount,
     /// The native `compute_v` circuit's.
-    pub compute_v: Cut,
+    pub compute_v: PageCount,
     /// Each native `bind_challenges` circuit's.
-    pub bind_challenges: Cut,
+    pub bind_challenges: PageCount,
     /// The native `bind_beta` circuit's.
-    pub bind_beta: Cut,
+    pub bind_beta: PageCount,
     /// The native `bind_endoscalar` circuit's.
-    pub bind_endoscalar: Cut,
+    pub bind_endoscalar: PageCount,
     /// The nested `collapse` circuit's.
-    pub nested_collapse: Cut,
+    pub nested_collapse: PageCount,
     /// The nested `compute_v` circuit's.
-    pub nested_compute_v: Cut,
+    pub nested_compute_v: PageCount,
     /// Each step's of the native walk.
-    pub endoscaling_step: Cut,
+    pub endoscaling_step: PageCount,
     /// Each step's of the nested walk.
-    pub nested_endoscaling_step: Cut,
+    pub nested_endoscaling_step: PageCount,
 }
 
-impl Pages {
+impl PageCounts {
     /// Every circuit whole.
-    pub const WHOLE: Self = Pages::uniform(Cut::WHOLE);
+    pub const WHOLE: Self = PageCounts::uniform(PageCount::WHOLE);
 
     /// Every circuit cut as `cut` says, with the walks' steps whole.
-    pub const fn uniform(cut: Cut) -> Self {
-        Pages {
+    pub const fn uniform(cut: PageCount) -> Self {
+        PageCounts {
             hashes_1: cut,
             hashes_2: cut,
             collapse: cut,
@@ -196,8 +197,8 @@ impl Pages {
             bind_endoscalar: cut,
             nested_collapse: cut,
             nested_compute_v: cut,
-            endoscaling_step: Cut::WHOLE,
-            nested_endoscaling_step: Cut::WHOLE,
+            endoscaling_step: PageCount::WHOLE,
+            nested_endoscaling_step: PageCount::WHOLE,
         }
     }
 }
@@ -315,10 +316,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
 
     /// The pages the profile cuts each of the fuse's internal circuits
-    /// into (see [`Pages`]). Experimental; the default leaves every circuit
-    /// whole. A profile that cuts any also takes the pager's hooks
+    /// into (see [`PageCounts`]). Experimental; the default leaves every
+    /// circuit whole. A profile that cuts any also takes the pager's hooks
     /// ([`paged_internal_circuits!`](crate::paged_internal_circuits)).
-    const PAGES: Pages = Pages::WHOLE;
+    const PAGE_COUNTS: PageCounts = PageCounts::WHOLE;
 
     /// Registers one of the fuse's internal circuits. The default registers
     /// it whole, and so compiles nothing of the pager into a profile that
@@ -874,8 +875,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         // Each of a step's polynomials contributes two points to the other
         // side's walk: the step's own, and those paging adds to it. A full
         // pass must shrink that contribution for a fixed point to exist.
-        let step_rxs = (1 + paging::added(Self::PAGES.endoscaling_step))
-            * (1 + paging::added(Self::PAGES.nested_endoscaling_step));
+        let step_rxs = (1 + paging::added(Self::PAGE_COUNTS.endoscaling_step))
+            * (1 + paging::added(Self::PAGE_COUNTS.nested_endoscaling_step));
         if Self::NATIVE_ENDOSCALINGS_PER_STEP.saturating_mul(Self::NESTED_ENDOSCALINGS_PER_STEP)
             <= 4 * step_rxs
         {
@@ -992,7 +993,7 @@ impl BuiltIn {
 #[derive(Debug)]
 pub(crate) struct Extended {
     extension: Extension,
-    pub(crate) slots: Vec<paging::Slot>,
+    pub(crate) placements: Vec<paging::Placement>,
 }
 
 impl core::ops::Deref for Extended {
@@ -1026,8 +1027,11 @@ pub(crate) fn extended<P: Profile>(nested: bool) -> Arc<Extended> {
         } else {
             online::stages::layout::<P, online::stages::Native>()
         };
-        let slots = paging::extend::<P>(&mut extension, nested);
-        Arc::new(Extended { extension, slots })
+        let placements = paging::extend::<P>(&mut extension, nested);
+        Arc::new(Extended {
+            extension,
+            placements,
+        })
     };
     #[cfg(feature = "std")]
     {
@@ -1852,23 +1856,23 @@ impl Shape {
                 } else {
                     online::stages::RXS
                 }
-                + paging::rxs(&P::PAGES, false),
+                + paging::rxs(&P::PAGE_COUNTS, false),
             P::NESTED_EXTENSION
                 + if P::NESTED_ONLINE.is_empty() {
                     0
                 } else {
                     online::stages::RXS
                 }
-                + paging::rxs(&P::PAGES, true),
+                + paging::rxs(&P::PAGE_COUNTS, true),
             P::NESTED_ONLINE.polynomials.len(),
             P::NATIVE_ONLINE.polynomials.len(),
             (
                 P::NATIVE_ENDOSCALINGS_PER_STEP,
-                1 + paging::added(P::PAGES.endoscaling_step),
+                1 + paging::added(P::PAGE_COUNTS.endoscaling_step),
             ),
             (
                 P::NESTED_ENDOSCALINGS_PER_STEP,
-                1 + paging::added(P::PAGES.nested_endoscaling_step),
+                1 + paging::added(P::PAGE_COUNTS.nested_endoscaling_step),
             ),
         );
         shape.source_polynomials =

@@ -1717,12 +1717,12 @@ fn report_fuse_gates(
 fn test_aggregator_fuse_fits_the_budget() {
     use ragu_circuits::polynomials::AggregatorRank;
 
-    use crate::profile::{Aggregator, Cut, Pages, Profile, Profiled};
+    use crate::profile::{Aggregator, PageCount, PageCounts, Profile, Profiled};
 
     /// The circuits of `gates` that `pages` leaves whole, by their indices'
     /// names: the native side's, or the nested side's.
     fn whole(
-        pages: &Pages,
+        pages: &PageCounts,
         nested: bool,
         gates: alloc::vec::Vec<(alloc::string::String, usize)>,
     ) -> alloc::vec::Vec<(alloc::string::String, usize)> {
@@ -1744,7 +1744,7 @@ fn test_aggregator_fuse_fits_the_budget() {
                     }
                     (false, _) => pages.endoscaling_step,
                 };
-                cut == Cut::WHOLE
+                cut == PageCount::WHOLE
             })
             .collect()
     }
@@ -1753,7 +1753,7 @@ fn test_aggregator_fuse_fits_the_budget() {
     let mut over = alloc::vec::Vec::new();
     {
         type C = Profiled<Pasta, Aggregator<4>>;
-        let pages = <Aggregator<4> as Profile>::PAGES;
+        let pages = <Aggregator<4> as Profile>::PAGE_COUNTS;
         let (native, nested) = fuse_gates!(C, AggregatorRank, 4, Aggregator<4>);
         let (native, nested) = (whole(&pages, false, native), whole(&pages, true, nested));
         assert!(!native.is_empty(), "the profile keeps some circuit whole");
@@ -1762,7 +1762,7 @@ fn test_aggregator_fuse_fits_the_budget() {
     }
     {
         type C = Profiled<Pasta, Aggregator<AGGREGATOR_HEADER_SIZE>>;
-        let pages = <Aggregator<AGGREGATOR_HEADER_SIZE> as Profile>::PAGES;
+        let pages = <Aggregator<AGGREGATOR_HEADER_SIZE> as Profile>::PAGE_COUNTS;
         let (native, nested) = fuse_gates!(
             C,
             AggregatorRank,

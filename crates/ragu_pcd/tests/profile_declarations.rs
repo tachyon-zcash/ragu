@@ -693,7 +693,7 @@ fn aggregator_declares_the_decompression() {
 
     let shape = Shape::of::<Aggregator<4>>();
     let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
-    let pages = Aggregator::<4>::PAGES;
+    let pages = Aggregator::<4>::PAGE_COUNTS;
     let nested_stages = aggregator::nested_stages(num_runs::<WalletRank>());
     assert_eq!(nested_stages, 28, "a stage per run, then four");
     // Each field's online batch: its three stages and its helper among
@@ -703,7 +703,7 @@ fn aggregator_declares_the_decompression() {
     let batch = online::stages::RXS;
     // A paged circuit adds a polynomial for each page before its last and
     // for each carry stage, and a paged step takes that many more.
-    let expected = |native_circuits: usize, pages: crate::profile::Pages| {
+    let expected = |native_circuits: usize, pages: crate::profile::PageCounts| {
         let mut shape = Shape::solve_with_online(
             native_circuits + 2 + 6 + batch + paging::rxs(&pages, false),
             34 + 1 + nested_stages + batch + paging::rxs(&pages, true),
@@ -718,7 +718,7 @@ fn aggregator_declares_the_decompression() {
     assert_eq!(shape, expected(63, pages));
     assert_eq!(
         Shape::of::<Aggregator<195>>(),
-        expected(70, Aggregator::<195>::PAGES)
+        expected(70, Aggregator::<195>::PAGE_COUNTS)
     );
     assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
     std::println!(

@@ -47,7 +47,7 @@ use ragu_core::{
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
-use super::{Circuit, Slot, slots};
+use super::{Circuit, Placement, placements};
 use crate::{
     Application, ApplicationBuilder, Proof, SelectableBackend,
     fuzzing::corrupt::{NativeRx, NestedRx, RxComponent as NativeComponent},
@@ -57,7 +57,8 @@ use crate::{
     },
     ipa::IpaCycle,
     profile::{
-        Aggregator, Cut, Pages, Profile, Profiled, ProfiledCycle, Standard, testing::UnitStep,
+        Aggregator, PageCount, PageCounts, Profile, Profiled, ProfiledCycle, Standard,
+        testing::UnitStep,
     },
 };
 
@@ -75,10 +76,10 @@ impl Profile for AllPaged {
     const NAME: &'static str = "all-paged";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
-    const PAGES: Pages = Pages {
-        endoscaling_step: Cut::pages(3).carrying(64),
-        nested_endoscaling_step: Cut::pages(3).carrying(64),
-        ..Pages::uniform(Cut::pages(2).carrying(64))
+    const PAGE_COUNTS: PageCounts = PageCounts {
+        endoscaling_step: PageCount::new(3).carrying(64),
+        nested_endoscaling_step: PageCount::new(3).carrying(64),
+        ..PageCounts::uniform(PageCount::new(2).carrying(64))
     };
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 12;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = 12;
@@ -380,14 +381,14 @@ fn nested_values(
         .collect())
 }
 
-/// The polynomial of page `page` of `slot`'s circuit: an extension
+/// The polynomial of page `page` of `placement`'s circuit: an extension
 /// circuit's, or the circuit's own for its last page.
-fn native_page(slot: &Slot, page: usize) -> native::RxComponent {
+fn native_page(placement: &Placement, page: usize) -> native::RxComponent {
     use native::RxIndex::*;
-    native::RxComponent::Rx(if page < slot.last() {
-        ExtensionCircuit(slot.circuits.start + page as u32)
+    native::RxComponent::Rx(if page < placement.last() {
+        ExtensionCircuit(placement.circuits.start + page as u32)
     } else {
-        match slot.circuit {
+        match placement.circuit {
             Circuit::Hashes1 => Hashes1,
             Circuit::Hashes2 => Hashes2,
             Circuit::Collapse => Collapse,
@@ -401,13 +402,13 @@ fn native_page(slot: &Slot, page: usize) -> native::RxComponent {
     })
 }
 
-/// The circuit whose claim page `page` of `slot`'s circuit has.
-fn native_circuit(slot: &Slot, page: usize) -> native::InternalCircuitIndex {
+/// The circuit whose claim page `page` of `placement`'s circuit has.
+fn native_circuit(placement: &Placement, page: usize) -> native::InternalCircuitIndex {
     use native::InternalCircuitIndex::*;
-    if page < slot.last() {
-        return ExtensionCircuit(slot.circuits.start + page as u32);
+    if page < placement.last() {
+        return ExtensionCircuit(placement.circuits.start + page as u32);
     }
-    match slot.circuit {
+    match placement.circuit {
         Circuit::Hashes1 => Hashes1Circuit,
         Circuit::Hashes2 => Hashes2Circuit,
         Circuit::Collapse => CollapseCircuit,
@@ -421,12 +422,12 @@ fn native_circuit(slot: &Slot, page: usize) -> native::InternalCircuitIndex {
 }
 
 /// The nested counterpart of [`native_page`].
-fn nested_page(slot: &Slot, page: usize) -> nested::RxComponent {
+fn nested_page(placement: &Placement, page: usize) -> nested::RxComponent {
     use nested::RxIndex::*;
-    nested::RxComponent::Rx(if page < slot.last() {
-        ExtensionCircuit(slot.circuits.start + page as u32)
+    nested::RxComponent::Rx(if page < placement.last() {
+        ExtensionCircuit(placement.circuits.start + page as u32)
     } else {
-        match slot.circuit {
+        match placement.circuit {
             Circuit::NestedCollapse => Collapse,
             Circuit::NestedComputeV => ComputeV,
             Circuit::NestedEndoscalingStep(step) => EndoscalingStep(step),
@@ -436,12 +437,12 @@ fn nested_page(slot: &Slot, page: usize) -> nested::RxComponent {
 }
 
 /// The nested counterpart of [`native_circuit`].
-fn nested_circuit(slot: &Slot, page: usize) -> nested::InternalCircuitIndex {
+fn nested_circuit(placement: &Placement, page: usize) -> nested::InternalCircuitIndex {
     use nested::InternalCircuitIndex::*;
-    if page < slot.last() {
-        return ExtensionCircuit(slot.circuits.start + page as u32);
+    if page < placement.last() {
+        return ExtensionCircuit(placement.circuits.start + page as u32);
     }
-    match slot.circuit {
+    match placement.circuit {
         Circuit::NestedCollapse => Collapse,
         Circuit::NestedComputeV => ComputeV,
         Circuit::NestedEndoscalingStep(step) => EndoscalingStep(step),
@@ -454,16 +455,16 @@ struct Side<'a, Id, Rx> {
     name: &'a str,
     /// The side's paged circuits, and the layout and stages each was
     /// registered with.
-    slots: &'a [Slot],
+    placements: &'a [Placement],
     plans: &'a [(Layout, Stages)],
     /// The side's claims in order, each with the polynomials it sums.
     claims: &'a [(Claim<Id>, Vec<Rx>)],
     /// The circuit whose claim a page has.
-    circuit: fn(&Slot, usize) -> Id,
+    circuit: fn(&Placement, usize) -> Id,
     /// An extension mask.
     mask: fn(u32) -> Id,
     /// A page's polynomial.
-    page: fn(&Slot, usize) -> Rx,
+    page: fn(&Placement, usize) -> Rx,
     /// An extension stage's polynomial.
     stage: fn(u32) -> Rx,
     /// Whether every circuit claim is a page's. Production profiles may
@@ -530,7 +531,7 @@ where
             .unwrap_or_else(|| panic!("the {name} claims have no {label:?}"))
     };
     assert_eq!(
-        side.slots.len(),
+        side.placements.len(),
         side.plans.len(),
         "a plan for each paged circuit"
     );
@@ -538,20 +539,20 @@ where
     let mut wrong: Vec<String> = Vec::new();
     let (mut pages, mut carries, mut stages) = (0, 0, 0);
     let mut seen = vec![false; side.claims.len()];
-    for (slot, (layout, loads)) in side.slots.iter().zip(side.plans) {
+    for (placement, (layout, loads)) in side.placements.iter().zip(side.plans) {
         // A walk's steps are cut alike: the first stands for them where a
         // value is planted. What every step's claims sum is looked at.
         let planted = !matches!(
-            slot.circuit,
+            placement.circuit,
             Circuit::EndoscalingStep(step) | Circuit::NestedEndoscalingStep(step)
                 if step > 0 && Some(step) != side.later_step
         );
-        let which = slot.circuit;
+        let which = placement.circuit;
 
-        for page in (0..=slot.last()).filter(|_| planted) {
-            let own = claim(Claim::Mask((side.mask)(slot.mask)));
+        for page in (0..=placement.last()).filter(|_| planted) {
+            let own = claim(Claim::Mask((side.mask)(placement.mask)));
             let window = layout.window();
-            let polynomial = (side.page)(slot, page);
+            let polynomial = (side.page)(placement, page);
 
             // On the carry stage's gates.
             if !layout.carry.is_empty() {
@@ -585,7 +586,7 @@ where
         }
 
         // The circuit's carry stage.
-        let (stage, gates) = (slot.carry, &layout.carry);
+        let (stage, gates) = (placement.carry, &layout.carry);
         if planted && !gates.is_empty() {
             let own = claim(Claim::Mask((side.mask)(stage)));
             let polynomial = (side.stage)(stage);
@@ -604,8 +605,8 @@ where
                 "{name} {which:?}: the carry stage's mask refuses a value on its own gate {}",
                 gates.start
             );
-            let named = (0..=slot.last())
-                .filter(|&page| slot_moved[claim(Claim::Circuit((side.circuit)(slot, page)))])
+            let named = (0..=placement.last())
+                .filter(|&page| slot_moved[claim(Claim::Circuit((side.circuit)(placement, page)))])
                 .count();
             assert!(
                 named >= 2,
@@ -617,11 +618,12 @@ where
 
         // What each page's claim sums: its own polynomial and the carry
         // stage's, once each, and those of stages.
-        let sums = |page: usize| &side.claims[claim(Claim::Circuit((side.circuit)(slot, page)))].1;
-        for page in 0..=slot.last() {
-            seen[claim(Claim::Circuit((side.circuit)(slot, page)))] = true;
-            let own = (side.page)(slot, page);
-            let carried = (side.stage)(slot.carry);
+        let sums =
+            |page: usize| &side.claims[claim(Claim::Circuit((side.circuit)(placement, page)))].1;
+        for page in 0..=placement.last() {
+            seen[claim(Claim::Circuit((side.circuit)(placement, page)))] = true;
+            let own = (side.page)(placement, page);
+            let carried = (side.stage)(placement.carry);
             for rx in [&own, &carried] {
                 let times = sums(page).iter().filter(|other| *other == rx).count();
                 if times != 1 {
@@ -662,7 +664,7 @@ where
                     continue;
                 };
                 // Every page loads the stage, so every page's claim sums it.
-                for other in 0..=slot.last() {
+                for other in 0..=placement.last() {
                     if !sums(other).contains(&rx) {
                         wrong.push(format!(
                             "{which:?}: page {other} loads stage {stage}, and its claim does not \
@@ -728,7 +730,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
             Fp::random(|bytes| rng.fill_bytes(bytes)),
             Fp::random(|bytes| rng.fill_bytes(bytes)),
         );
-        let slots = slots::<AllPaged>(false);
+        let placements = placements::<AllPaged>(false);
         let mut labels: Labels<native::InternalCircuitIndex, native::RxComponent> =
             Labels(Vec::new());
         native::claims::build::<AllPaged, _, _>(&NativeNames, &mut labels)?;
@@ -737,7 +739,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
         holds(
             &Side {
                 name: "native",
-                slots: &slots,
+                placements: &placements,
                 plans: &plans(&app.native_plans.0),
                 claims: &labels.0,
                 circuit: native_circuit,
@@ -767,7 +769,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
             Fq::random(|bytes| rng.fill_bytes(bytes)),
             Fq::random(|bytes| rng.fill_bytes(bytes)),
         );
-        let slots = slots::<AllPaged>(true);
+        let placements = placements::<AllPaged>(true);
         let mut labels: Labels<nested::InternalCircuitIndex, nested::RxComponent> =
             Labels(Vec::new());
         nested::claims::build::<AllPaged, _, _>(&NestedNames, &mut labels)?;
@@ -776,7 +778,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
         holds(
             &Side {
                 name: "nested",
-                slots: &slots,
+                placements: &placements,
                 plans: &plans(&app.nested_plans.0),
                 claims: &labels.0,
                 circuit: nested_circuit,
@@ -832,10 +834,10 @@ fn aggregator_claims_bind_pages_and_carries<const H: usize>() -> Result<()> {
             Fp::random(|bytes| rng.fill_bytes(bytes)),
             Fp::random(|bytes| rng.fill_bytes(bytes)),
         );
-        let slots = slots::<P<H>>(false);
-        let later_step = slots
+        let placements = placements::<P<H>>(false);
+        let later_step = placements
             .iter()
-            .filter_map(|slot| match slot.circuit {
+            .filter_map(|placement| match placement.circuit {
                 Circuit::EndoscalingStep(step) => Some(step),
                 _ => None,
             })
@@ -859,7 +861,7 @@ fn aggregator_claims_bind_pages_and_carries<const H: usize>() -> Result<()> {
         holds(
             &Side {
                 name: "aggregator native",
-                slots: &slots,
+                placements: &placements,
                 plans: &plans(&native_plans.0),
                 claims: &labels.0,
                 circuit: native_circuit,
@@ -890,10 +892,10 @@ fn aggregator_claims_bind_pages_and_carries<const H: usize>() -> Result<()> {
             Fq::random(|bytes| rng.fill_bytes(bytes)),
             Fq::random(|bytes| rng.fill_bytes(bytes)),
         );
-        let slots = slots::<P<H>>(true);
-        let later_step = slots
+        let placements = placements::<P<H>>(true);
+        let later_step = placements
             .iter()
-            .filter_map(|slot| match slot.circuit {
+            .filter_map(|placement| match placement.circuit {
                 Circuit::NestedEndoscalingStep(step) => Some(step),
                 _ => None,
             })
@@ -917,7 +919,7 @@ fn aggregator_claims_bind_pages_and_carries<const H: usize>() -> Result<()> {
         holds(
             &Side {
                 name: "aggregator nested",
-                slots: &slots,
+                placements: &placements,
                 plans: &plans(&nested_plans.0),
                 claims: &labels.0,
                 circuit: nested_circuit,
@@ -975,7 +977,7 @@ fn a_registered_page_is_held_to_one() -> Result<()> {
                 HEADER_SIZE,
                 native::RevdotParameters<AllPaged>,
             >::new(params),
-            Cut::pages(2),
+            PageCount::new(2),
         )?;
     paged.check()?;
     let mut rng = StdRng::seed_from_u64(0x5ff1);

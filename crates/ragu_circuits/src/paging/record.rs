@@ -2,7 +2,7 @@
 //! emits, the gates it allocates, the linear combinations it makes and the
 //! constraints it enforces, each over the gates' wires.
 //!
-//! [`Paged::check`](super::Paged::check) rests on this module: it compares
+//! [`Pages::check`](super::Pages::check) rests on this module: it compares
 //! the recording of a circuit with the recordings of its pages, so a
 //! constraint this driver did not keep is one the check does not hold the
 //! pages to, and it holds the pages to the routines this driver noted

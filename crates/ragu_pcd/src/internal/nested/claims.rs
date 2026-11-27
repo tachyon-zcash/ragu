@@ -103,12 +103,12 @@ fn pageable(circuit: paging::Circuit) -> (RxIndex, Vec<Option<RxIndex>>) {
 
 /// The stages each page of a paged circuit loads, which are its circuit's,
 /// and its carry stage.
-fn page_stages(slot: &paging::Slot) -> Vec<RxIndex> {
-    pageable(slot.circuit)
+fn page_stages(placement: &paging::Placement) -> Vec<RxIndex> {
+    pageable(placement.circuit)
         .1
         .into_iter()
         .flatten()
-        .chain([RxIndex::ExtensionStage(slot.carry)])
+        .chain([RxIndex::ExtensionStage(placement.carry)])
         .collect()
 }
 
@@ -155,7 +155,7 @@ where
 
     // A circuit its profile pages is its last page, which loads the
     // circuit's stages and its carry stage, as every page of it does.
-    let pages = paging::slots::<P>(true);
+    let pages = paging::placements::<P>(true);
     let paged = |circuit: InternalCircuitIndex| {
         let which = match circuit {
             InternalCircuitIndex::Collapse => paging::Circuit::NestedCollapse,
@@ -165,7 +165,7 @@ where
             }
             _ => return None,
         };
-        pages.iter().find(|slot| slot.circuit == which)
+        pages.iter().find(|placement| placement.circuit == which)
     };
 
     for id in InternalCircuitIndex::all::<P>() {
@@ -173,8 +173,8 @@ where
         match id {
             // A paged step is its last page.
             EndoscalingStep(step) if paged(id).is_some() => {
-                let slot = paged(id).expect("a paged step");
-                let loaded = once(RxIndex::EndoscalingStep(step)).chain(page_stages(slot));
+                let placement = paged(id).expect("a paged step");
+                let loaded = once(RxIndex::EndoscalingStep(step)).chain(page_stages(placement));
                 for rxs in per_proof(source, loaded) {
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
@@ -196,7 +196,7 @@ where
                     .position(|&circuit| circuit == id)
                     .expect("an instance circuit")];
                 let stages = match paged(id) {
-                    Some(slot) => page_stages(slot),
+                    Some(placement) => page_stages(placement),
                     None => RxIndex::STAGES.to_vec(),
                 };
                 for rxs in per_proof(source, once(own).chain(stages)) {
@@ -212,7 +212,7 @@ where
                 // load.
                 let loaded = match pages
                     .iter()
-                    .find_map(|slot| slot.page(k).map(|_| page_stages(slot)))
+                    .find_map(|placement| placement.page(k).map(|_| page_stages(placement)))
                 {
                     Some(stages) => stages,
                     None => extension.circuits[k as usize]
@@ -235,8 +235,8 @@ where
                     // circuit's own polynomial, which is that page's.
                     let last_pages = pages
                         .iter()
-                        .find(|slot| slot.masks_last(j))
-                        .map(|slot| source.rx(Rx(pageable(slot.circuit).0)))
+                        .find(|placement| placement.masks_last(j))
+                        .map(|placement| source.rx(Rx(pageable(placement.circuit).0)))
                         .into_iter()
                         .flatten();
                     processor.mask_claim(

@@ -282,8 +282,8 @@ fn the_fuse_fits_at_the_aggregator_rank() {
         standard.native_rx
             + P::NATIVE_EXTENSION
             + crate::profile::online::stages::RXS
-            + rxs(&P::PAGES, false)
-            + shape.native_steps * (1 + added(P::PAGES.endoscaling_step))
+            + rxs(&P::PAGE_COUNTS, false)
+            + shape.native_steps * (1 + added(P::PAGE_COUNTS.endoscaling_step))
             - standard.native_steps
     );
     // The walks fold more points at fewer steps per the profile's

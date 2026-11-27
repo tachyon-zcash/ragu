@@ -1,4 +1,4 @@
-//! Experimental: the glue between a profile's [`Pages`] and the fuse.
+//! Experimental: the glue between a profile's [`PageCounts`] and the fuse.
 //!
 //! A profile that pages an internal circuit gets, after everything its
 //! extension declares and the online batch adds: an extension circuit for
@@ -20,7 +20,7 @@
 //! - proving ([`Prover`]): a trace per page, and the carry stage's values
 //!   off them.
 //!
-//! A [`Cut`] says how many pages an unpaged circuit is cut into, each
+//! A [`PageCount`] says how many pages an unpaged circuit is cut into, each
 //! loading every stage the circuit reserves, and how many values its carry
 //! stage holds. Both are the profile's to state: each page is a polynomial
 //! of the proof, which the circuits being paged fold and open with the
@@ -34,10 +34,11 @@
 //! Where the cuts fall is not stated. Registration-time paging places
 //! them: the pager runs where a circuit is registered ([`Registrar`]),
 //! each time a registry is built, and the pages it gives are checked
-//! against the unpaged circuit before any of them is registered. The search has nothing random in it and gives the
-//! same cuts on any number of threads, so the cuts are a function of the
-//! circuit, of its [`Cut`], of the rank and of the pager's code. They are
-//! searched for rather than pinned for three reasons:
+//! against the unpaged circuit before any of them is registered. The
+//! search has nothing random in it and gives the same cuts on any number
+//! of threads, so the cuts are a function of the circuit, of its
+//! [`PageCount`], of the rank and of the pager's code. They are searched
+//! for rather than pinned for three reasons:
 //!
 //! - a paged circuit changes with the application's header size, so a
 //!   pinned cut would be a table with an entry for each size, not a
@@ -65,7 +66,7 @@ use core::ops::Range;
 
 use ragu_circuits::{
     Blind, CircuitExt, MaskObject,
-    paging::{Pageable, Paged, Planned},
+    paging::{Pageable, Pages, Planned},
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryBuilder},
     staging::MultiStage,
@@ -75,7 +76,9 @@ use ragu_primitives::vec::Len;
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::{Cut, Extension, ExtensionRxs, Pages, Profile, Registration, Suffixed, online};
+use super::{
+    Extension, ExtensionRxs, PageCount, PageCounts, Profile, Registration, Suffixed, online,
+};
 use crate::internal::{native, nested};
 
 /// What the hooks' signatures name, for
@@ -96,8 +99,8 @@ pub mod deps {
 /// The pager's versions of a profile's
 /// [`register_internal`](crate::profile::Profile::register_internal) and
 /// [`prove_internal`](crate::profile::Profile::prove_internal), for the
-/// `impl` of a profile whose [`PAGES`](crate::profile::Profile::PAGES) cuts
-/// a circuit.
+/// `impl` of a profile whose
+/// [`PAGE_COUNTS`](crate::profile::Profile::PAGE_COUNTS) cuts a circuit.
 #[macro_export]
 macro_rules! paged_internal_circuits {
     () => {
@@ -144,9 +147,9 @@ macro_rules! paged_internal_circuits {
 }
 
 /// The values the carry stage of each of the fuse's internal circuits
-/// holds under profile `P`: what the circuit's [`Cut`] states. Each is the
-/// [`Pageable::Carry`] of its circuit, which sizes the carry stage every
-/// page of the circuit loads.
+/// holds under profile `P`: what the circuit's [`PageCount`] states. Each
+/// is the [`Pageable::Carry`] of its circuit, which sizes the carry stage
+/// every page of the circuit loads.
 pub mod carry {
     use core::marker::PhantomData;
 
@@ -161,7 +164,7 @@ pub mod carry {
 
             impl<P: Profile> Len for $name<P> {
                 fn len() -> usize {
-                    P::PAGES.$field.carry()
+                    P::PAGE_COUNTS.$field.carry()
                 }
             }
         )+};
@@ -299,8 +302,8 @@ pub enum Circuit {
 impl Circuit {
     /// One side's circuits that profile `P` pages, each with its cut, in
     /// the order of their slots: the walk's steps after the others.
-    fn paged<P: Profile>(nested: bool) -> Vec<(Self, Cut)> {
-        let pages = &P::PAGES;
+    fn paged<P: Profile>(nested: bool) -> Vec<(Self, PageCount)> {
+        let pages = &P::PAGE_COUNTS;
         let (circuits, step, steps): (Vec<Self>, fn(u32) -> Self, _) = if nested {
             (
                 vec![Self::NestedCollapse, Self::NestedComputeV],
@@ -318,7 +321,7 @@ impl Circuit {
                 native::NumSteps::<P>::len(),
             )
         };
-        let steps = if step(0).cut(pages).num_pages() > 1 {
+        let steps = if step(0).count(pages).num_pages() > 1 {
             steps
         } else {
             0
@@ -326,13 +329,13 @@ impl Circuit {
         circuits
             .into_iter()
             .chain((0..steps as u32).map(step))
-            .map(|circuit| (circuit, circuit.cut(pages)))
-            .filter(|&(_, cut)| cut.num_pages() > 1)
+            .map(|circuit| (circuit, circuit.count(pages)))
+            .filter(|&(_, count)| count.num_pages() > 1)
             .collect()
     }
 
     /// How `pages` cuts the circuit.
-    const fn cut(self, pages: &Pages) -> Cut {
+    const fn count(self, pages: &PageCounts) -> PageCount {
         match self {
             Self::Hashes1 => pages.hashes_1,
             Self::Hashes2 => pages.hashes_2,
@@ -351,9 +354,9 @@ impl Circuit {
 
 /// The polynomials paging adds for a circuit cut by `cut`: one for each
 /// page before the last, and the carry stage's.
-pub(crate) const fn added(cut: Cut) -> usize {
-    if cut.num_pages() > 1 {
-        cut.num_pages()
+pub(crate) const fn added(count: PageCount) -> usize {
+    if count.num_pages() > 1 {
+        count.num_pages()
     } else {
         0
     }
@@ -363,7 +366,7 @@ pub(crate) const fn added(cut: Cut) -> usize {
 /// aside: for each paged circuit, one for each page before the last and
 /// the carry stage's. A paged step adds [`added`] to each of the walk's
 /// steps, which the profile's [`Shape`](super::Shape) counts with them.
-pub(crate) const fn rxs(pages: &Pages, nested: bool) -> usize {
+pub(crate) const fn rxs(pages: &PageCounts, nested: bool) -> usize {
     if nested {
         added(pages.nested_collapse) + added(pages.nested_compute_v)
     } else {
@@ -379,11 +382,11 @@ pub(crate) const fn rxs(pages: &Pages, nested: bool) -> usize {
 
 /// Where a paged circuit's entries sit in its side's extension.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Slot {
+pub(crate) struct Placement {
     /// The circuit.
     pub circuit: Circuit,
-    /// How its profile cuts it.
-    pub cut: Cut,
+    /// What its profile pins for it.
+    pub count: PageCount,
     /// The extension circuits that are its pages before the last, in
     /// order.
     pub circuits: Range<u32>,
@@ -394,10 +397,10 @@ pub(crate) struct Slot {
     pub mask: u32,
 }
 
-impl Slot {
+impl Placement {
     /// The last page.
     pub(crate) fn last(&self) -> usize {
-        self.cut.num_pages() - 1
+        self.count.num_pages() - 1
     }
 
     /// The page extension circuit `circuit` is, if one of this circuit's.
@@ -426,52 +429,54 @@ fn base<P: Profile>(nested: bool) -> Extension {
 /// Where each paged circuit's entries sit over `base`: the pages after its
 /// circuits, the carry stages after its stages, and the pages' mask after
 /// its final masks, each in the circuits' order.
-fn slots_over<P: Profile>(base: &Extension, nested: bool) -> Vec<Slot> {
+fn placements_over<P: Profile>(base: &Extension, nested: bool) -> Vec<Placement> {
     let paged = Circuit::paged::<P>(nested);
     let mut circuit = base.circuits.len() as u32;
     let mut carry = base.stages as u32;
     let mut mask = (base.stages + paged.len() + base.final_masks.len()) as u32;
     paged
         .iter()
-        .map(|&(which, cut)| {
-            let circuits = circuit..circuit + cut.num_pages() as u32 - 1;
+        .map(|&(which, count)| {
+            let circuits = circuit..circuit + count.num_pages() as u32 - 1;
             circuit = circuits.end;
-            let slot = Slot {
+            let placement = Placement {
                 circuit: which,
-                cut,
+                count,
                 circuits,
                 carry,
                 mask,
             };
             carry += 1;
             mask += 1;
-            slot
+            placement
         })
         .collect()
 }
 
 /// Where each of one side's paged circuits' entries sit, in the circuits'
 /// order; nothing for a profile that pages none.
-pub(crate) fn slots<P: Profile>(nested: bool) -> Vec<Slot> {
-    super::extended::<P>(nested).slots.clone()
+pub(crate) fn placements<P: Profile>(nested: bool) -> Vec<Placement> {
+    super::extended::<P>(nested).placements.clone()
 }
 
 /// Appends paging's entries to one side's extension. A circuit's pages'
 /// mask is declared as a final mask over the extension circuits that are
 /// its pages before the last; the last page's polynomial is the circuit's
 /// own, which the claims add to the mask's.
-pub(crate) fn extend<P: Profile>(extension: &mut Extension, nested: bool) -> Vec<Slot> {
-    let slots = slots_over::<P>(extension, nested);
-    for slot in &slots {
+pub(crate) fn extend<P: Profile>(extension: &mut Extension, nested: bool) -> Vec<Placement> {
+    let placements = placements_over::<P>(extension, nested);
+    for placement in &placements {
         extension
             .circuits
-            .extend((0..slot.last()).map(|_| vec![slot.carry]));
+            .extend((0..placement.last()).map(|_| vec![placement.carry]));
         extension.stages += 1;
     }
-    for slot in &slots {
-        extension.final_masks.push(slot.circuits.clone().collect());
+    for placement in &placements {
+        extension
+            .final_masks
+            .push(placement.circuits.clone().collect());
     }
-    slots
+    placements
 }
 
 fn refuse<T>(circuit: impl core::fmt::Debug, what: String) -> Result<T> {
@@ -485,21 +490,21 @@ fn refuse<T>(circuit: impl core::fmt::Debug, what: String) -> Result<T> {
 fn split<F: Field, R: Rank, S: Pageable<F, R>>(
     which: Circuit,
     circuit: MultiStage<F, R, S>,
-    cut: Cut,
-) -> Result<Paged<F, R, S>> {
-    split_within(which, circuit, cut, R::blind_gate())
+    count: PageCount,
+) -> Result<Pages<F, R, S>> {
+    split_within(which, circuit, count, R::blind_gate())
 }
 
-/// Cuts `circuit` into the pages `cut` declares, in polynomials of `limit`
-/// gates. The carry stage's size is the circuit's own ([`Pageable`]),
-/// which is its cut's in its profile.
+/// Cuts `circuit` into the pages `count` declares, in polynomials of
+/// `limit` gates. The carry stage's size is the circuit's own
+/// ([`Pageable`]), which is its count's in its profile.
 fn split_within<F: Field, R: Rank, S: Pageable<F, R>>(
     which: impl core::fmt::Debug + Copy,
     circuit: impl Into<alloc::sync::Arc<MultiStage<F, R, S>>>,
-    cut: Cut,
+    count: PageCount,
     limit: usize,
-) -> Result<Paged<F, R, S>> {
-    match Paged::cut(circuit, cut.num_pages(), limit) {
+) -> Result<Pages<F, R, S>> {
+    match Pages::cut(circuit, count.num_pages(), limit) {
         Err(Error::GateBoundExceeded { limit }) => refuse(
             which,
             format!(
@@ -542,7 +547,7 @@ pub(crate) enum Slotted<'params, F: Field, R: Rank> {
 /// its other pages and its masks are kept until the registry reaches the
 /// extension slots they take, which come after every circuit.
 pub struct Registrar<'params, F: Field, R: Rank> {
-    slots: Vec<Slot>,
+    placements: Vec<Placement>,
     /// The stages and final masks of the extension before paging's entries.
     base: (usize, usize),
     pending: Vec<Option<Pending<'params, F, R>>>,
@@ -567,11 +572,11 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
     /// A registrar for one side of profile `P`.
     pub(crate) fn new<P: Profile>(nested: bool) -> Self {
         let base = base::<P>(nested);
-        let slots = slots_over::<P>(&base, nested);
+        let placements = placements_over::<P>(&base, nested);
         Registrar {
-            pending: slots.iter().map(|_| None).collect(),
-            plans: Plans(slots.iter().map(|_| None).collect()),
-            slots,
+            pending: placements.iter().map(|_| None).collect(),
+            plans: Plans(placements.iter().map(|_| None).collect()),
+            placements,
             base: (base.stages, base.final_masks.len()),
         }
     }
@@ -597,20 +602,22 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         if !cfg!(feature = "std") {
             return;
         }
-        let cuts: Vec<_> = circuits
+        let counts: Vec<_> = circuits
             .into_iter()
             .filter_map(|(which, circuit)| {
-                let cut = self.slots[self.position(which)?].cut;
-                Some((which, circuit, cut))
+                let count = self.placements[self.position(which)?].count;
+                Some((which, circuit, count))
             })
             .collect();
-        cuts.into_par_iter().for_each(|(which, circuit, cut)| {
-            let _ = split(which, circuit, cut);
+        counts.into_par_iter().for_each(|(which, circuit, count)| {
+            let _ = split(which, circuit, count);
         });
     }
 
     fn position(&self, which: Circuit) -> Option<usize> {
-        self.slots.iter().position(|slot| slot.circuit == which)
+        self.placements
+            .iter()
+            .position(|placement| placement.circuit == which)
     }
 
     /// Registers internal circuit `which`: whole, or its last page.
@@ -632,8 +639,8 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         let Some(position) = self.position(which) else {
             return registry.register_internal_circuit(circuit);
         };
-        let slot = &self.slots[position];
-        let paged = split(which, circuit, slot.cut)?;
+        let placement = &self.placements[position];
+        let paged = split(which, circuit, placement.count)?;
         // The pages are held to the circuit they were cut from before any
         // is registered, so nothing that chose the cuts is trusted: not
         // the pager, and not a cut this process kept from before.
@@ -641,7 +648,7 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         self.plans.0[position] = Some(paged.plan());
         let layout = paged.layout();
         let mask = Some((paged.page_mask()?, layout.carry.end));
-        let pages = (0..slot.last())
+        let pages = (0..placement.last())
             .map(|page| {
                 let page = paged.page(page);
                 let register: Register<'params, F, R> =
@@ -656,11 +663,13 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
 
     /// Whether extension circuit `circuit` is a page.
     pub(crate) fn is_page(&self, circuit: u32) -> bool {
-        self.slots.iter().any(|slot| slot.page(circuit).is_some())
+        self.placements
+            .iter()
+            .any(|placement| placement.page(circuit).is_some())
     }
 
     fn pending(&mut self, position: usize) -> Result<&mut Pending<'params, F, R>> {
-        let which = self.slots[position].circuit;
+        let which = self.placements[position].circuit;
         match self.pending[position].as_mut() {
             Some(pending) => Ok(pending),
             None => refuse(
@@ -679,15 +688,15 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         circuit: u32,
     ) -> Result<(RegistryBuilder<'params, F, R>, Registration)> {
         let (position, page) = self
-            .slots
+            .placements
             .iter()
             .enumerate()
-            .find_map(|(position, slot)| Some((position, slot.page(circuit)?)))
+            .find_map(|(position, placement)| Some((position, placement.page(circuit)?)))
             .expect("a page");
-        let slot = self.slots[position].clone();
+        let placement = self.placements[position].clone();
         let pending = self.pending(position)?;
         let Some(register) = pending.pages[page].take() else {
-            return refuse(slot.circuit, "registers a page twice".into());
+            return refuse(placement.circuit, "registers a page twice".into());
         };
         let carry = pending.carry.1.clone();
         Ok((register(registry)?, Registration::Staged(vec![carry])))
@@ -708,17 +717,17 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         index: usize,
     ) -> Result<Slotted<'params, F, R>> {
         let (stages, final_masks) = self.base;
-        let paged = self.slots.len();
+        let paged = self.placements.len();
         if index < stages {
             return Ok(Slotted::Other(registry, index));
         }
         if index < stages + paged {
             let position = self
-                .slots
+                .placements
                 .iter()
-                .position(|slot| slot.carry as usize == index)
+                .position(|placement| placement.carry as usize == index)
                 .expect("the carry stage of one of the paged circuits");
-            let which = self.slots[position].circuit;
+            let which = self.placements[position].circuit;
             let (mask, carry) = &mut self.pending(position)?.carry;
             let Some(mask) = mask.take() else {
                 return refuse(which, "registers its carry stage's mask twice".into());
@@ -734,15 +743,15 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         }
 
         let found = self
-            .slots
+            .placements
             .iter()
-            .position(|slot| slot.mask as usize == index);
+            .position(|placement| placement.mask as usize == index);
         let Some(position) = found else {
             return Err(Error::Initialization(
                 format!("the extension has no mask {index}").into(),
             ));
         };
-        let which = self.slots[position].circuit;
+        let which = self.placements[position].circuit;
         let Some((mask, from)) = self.pending(position)?.mask.take() else {
             return refuse(which, "registers a mask twice".into());
         };
@@ -756,7 +765,7 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
 /// Traces one side's internal circuits, whole or in pages, and keeps the
 /// polynomials the pages add to the extension.
 pub struct Prover<F: Field, R: Rank> {
-    slots: Vec<Slot>,
+    placements: Vec<Placement>,
     /// The pages the circuits were cut into where they were registered.
     plans: Plans<F>,
     /// The pages' polynomials before each circuit's last, by paged circuit.
@@ -769,12 +778,12 @@ impl<F: Field, R: Rank> Prover<F, R> {
     /// A prover for one side of profile `P`, which pages the circuits as
     /// `plans` holds them.
     pub(crate) fn new<P: Profile>(nested: bool, plans: &Plans<F>) -> Self {
-        let slots = slots::<P>(nested);
+        let placements = placements::<P>(nested);
         Prover {
-            pages: slots.iter().map(|_| None).collect(),
-            carries: slots.iter().map(|_| None).collect(),
+            pages: placements.iter().map(|_| None).collect(),
+            carries: placements.iter().map(|_| None).collect(),
             plans: plans.clone(),
-            slots,
+            placements,
         }
     }
 
@@ -801,22 +810,26 @@ impl<F: Field, R: Rank> Prover<F, R> {
         S: Pageable<F, R>,
         RNG: CryptoRng,
     {
-        let Some(position) = self.slots.iter().position(|slot| slot.circuit == which) else {
+        let Some(position) = self
+            .placements
+            .iter()
+            .position(|placement| placement.circuit == which)
+        else {
             let (trace, aux) = circuit.trace(witness())?.into_parts();
             return Ok((registry.assemble(&trace, own, &mut *rng)?, aux));
         };
-        let slot = &self.slots[position];
+        let placement = &self.placements[position];
         let paged = match self.plans.0.get(position) {
-            Some(Some(planned)) => Paged::planned(circuit, planned),
-            _ => split(which, circuit, slot.cut)?,
+            Some(Some(planned)) => Pages::planned(circuit, planned),
+            _ => split(which, circuit, placement.count)?,
         };
 
         // One walk of the circuit gives every page before the last the
         // values of its gates, and the carry stage its values; the last
         // page walks it once more, for the public output.
         let captured = paged.capture(witness())?;
-        let mut pages = Vec::with_capacity(slot.circuits.len());
-        for (page, circuit) in slot.circuits.clone().enumerate() {
+        let mut pages = Vec::with_capacity(placement.circuits.len());
+        for (page, circuit) in placement.circuits.clone().enumerate() {
             let trace = paged.page(page).trace(&captured.pages[page])?.into_output();
             pages.push(registry.assemble(&trace, extension(circuit), &mut *rng)?);
         }
@@ -835,9 +848,10 @@ impl<F: Field, R: Rank> Prover<F, R> {
     ///
     /// Fails if a paged circuit was not proven.
     pub(crate) fn finish(self, rxs: &mut ExtensionRxs<F, R>) -> Result<()> {
-        for ((slot, pages), carry) in self.slots.iter().zip(self.pages).zip(self.carries) {
+        for ((placement, pages), carry) in self.placements.iter().zip(self.pages).zip(self.carries)
+        {
             let (Some(pages), Some(carry)) = (pages, carry) else {
-                return refuse(slot.circuit, "was not proven".into());
+                return refuse(placement.circuit, "was not proven".into());
             };
             rxs.circuits.extend(pages);
             rxs.stages.push(carry);
@@ -846,8 +860,8 @@ impl<F: Field, R: Rank> Prover<F, R> {
     }
 }
 
-/// How one of the fuse's internal circuits sizes up, and how its profile
-/// cuts it.
+/// How one of the fuse's internal circuits sizes up, and what its profile
+/// pins for it.
 #[cfg(feature = "test-utils")]
 #[derive(Clone, Debug)]
 pub struct Sizing {
@@ -861,8 +875,8 @@ pub struct Sizing {
     pub stages: Vec<Range<usize>>,
     /// The gates of its own, past its stages.
     pub own: usize,
-    /// How it is cut.
-    pub cut: Cut,
+    /// What its profile pins for it.
+    pub count: PageCount,
     /// The layout of its pages and how it spreads over them, checked
     /// against the circuit: the error if it does not cut or the pages'
     /// constraints are not its own.
@@ -874,7 +888,7 @@ pub struct Sizing {
         String,
     >,
     /// A digest of its pages as a registry holds them
-    /// ([`Paged::digest`]), where it cuts: what tells one cut of the
+    /// ([`Pages::digest`]), where it cuts: what tells one cut of the
     /// circuit from another.
     pub digest: Option<[u8; 32]>,
     /// For a circuit that does not cut: how it would spread over the same
@@ -883,7 +897,7 @@ pub struct Sizing {
     pub unbounded: Option<ragu_circuits::paging::PagingReport>,
     /// Where the census was asked for them, the fewest pages the circuit
     /// cuts in; nothing if it does not cut in [`RAISES`] more than its
-    /// cut's. They are the fewest for the profile as it is: a profile that
+    /// count's. They are the fewest for the profile as it is: a profile that
     /// takes them has fewer polynomials, which its circuits then cut with
     /// too, and may then cut in fewer still.
     pub fewest: Option<usize>,
@@ -900,12 +914,18 @@ pub const RAISES: usize = 16;
 fn fewest<F: Field, R: Rank, S: Pageable<F, R>>(
     name: &'static str,
     circuit: &alloc::sync::Arc<MultiStage<F, R, S>>,
-    cut: Cut,
+    count: PageCount,
 ) -> Option<usize> {
     let cuts = |pages: usize| {
-        split_within(name, circuit.clone(), Cut::pages(pages), R::blind_gate()).is_ok()
+        split_within(
+            name,
+            circuit.clone(),
+            PageCount::new(pages),
+            R::blind_gate(),
+        )
+        .is_ok()
     };
-    let mut pages = cut.num_pages();
+    let mut pages = count.num_pages();
     let mut raises = 0;
     while !cuts(pages) {
         if raises == RAISES {
@@ -928,29 +948,29 @@ pub const SLACK: usize = 600;
 #[cfg(feature = "test-utils")]
 fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
     name: &'static str,
-    cut: Cut,
-    (cuts, solve): (&[(&'static str, Cut)], bool),
+    count: PageCount,
+    (counts, solve): (&[(&'static str, PageCount)], bool),
     circuit: MultiStage<F, R, S>,
 ) -> Result<Sizing> {
     let circuit = alloc::sync::Arc::new(circuit);
-    let cut = cuts
+    let count = counts
         .iter()
         .find(|(of, _)| *of == name)
-        .map_or(cut, |&(_, cut)| cut);
+        .map_or(count, |&(_, count)| count);
     let (gates, constraints) = ragu_circuits::paging::size(&*circuit)?;
     let stages = ragu_circuits::paging::Stages::of::<F, R, S>();
     let mut digest = None;
-    let pages = split_within(name, circuit.clone(), cut, R::blind_gate())
+    let pages = split_within(name, circuit.clone(), count, R::blind_gate())
         .and_then(|paged| {
             paged.check()?;
             digest = Some(paged.digest()?);
             Ok((paged.layout().clone(), paged.report().clone()))
         })
         .map_err(|error| format!("{error:?}"));
-    let fewest = solve.then(|| fewest(name, &circuit, cut)).flatten();
+    let fewest = solve.then(|| fewest(name, &circuit, count)).flatten();
     let unbounded = match pages {
         Ok(_) => None,
-        Err(_) => split_within(name, circuit, cut, R::blind_gate() + SLACK)
+        Err(_) => split_within(name, circuit, count, R::blind_gate() + SLACK)
             .ok()
             .map(|paged| paged.report().clone()),
     };
@@ -960,7 +980,7 @@ fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
         constraints,
         own: gates.saturating_sub(stages.own_start()),
         stages: stages.spans,
-        cut,
+        count,
         pages,
         digest,
         unbounded,
@@ -981,13 +1001,13 @@ fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
 pub fn native_census<C: super::ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
     params: &C::Params,
     num_application_steps: usize,
-    cuts: &[(&'static str, Cut)],
+    counts: &[(&'static str, PageCount)],
     fewest: bool,
 ) -> Result<Vec<Sizing>> {
-    let cuts = (cuts, fewest);
+    let counts = (counts, fewest);
     use native::circuits;
 
-    let pages = C::Profile::PAGES;
+    let pages = C::Profile::PAGE_COUNTS;
 
     type Revdot<C> = native::RevdotParameters<<C as super::ProfiledCycle>::Profile>;
     let log2_circuits = native::total_circuit_counts::<C::Profile>(num_application_steps).1;
@@ -995,25 +1015,25 @@ pub fn native_census<C: super::ProfiledCycle, R: Rank, const HEADER_SIZE: usize>
         sized(
             "native.hashes_1",
             pages.hashes_1,
-            cuts,
+            counts,
             circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, Revdot<C>>::new(params, log2_circuits),
         )?,
         sized(
             "native.hashes_2",
             pages.hashes_2,
-            cuts,
+            counts,
             circuits::hashes_2::Circuit::<C, R, HEADER_SIZE, Revdot<C>>::new(params),
         )?,
         sized(
             "native.collapse",
             pages.collapse,
-            cuts,
+            counts,
             circuits::collapse::Circuit::<C, R, HEADER_SIZE, Revdot<C>>::new(),
         )?,
         sized(
             "native.compute_v",
             pages.compute_v,
-            cuts,
+            counts,
             circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(),
         )?,
     ];
@@ -1031,25 +1051,25 @@ pub fn native_census<C: super::ProfiledCycle, R: Rank, const HEADER_SIZE: usize>
             R,
             HEADER_SIZE,
             params,
-            |circuit| sized(name, pages.bind_challenges, cuts, circuit)?
+            |circuit| sized(name, pages.bind_challenges, counts, circuit)?
         ));
     }
     census.push(sized(
         "native.bind_beta",
         pages.bind_beta,
-        cuts,
+        counts,
         circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(params),
     )?);
     census.push(sized(
         "native.bind_endoscalar",
         pages.bind_endoscalar,
-        cuts,
+        counts,
         circuits::bind_endoscalar::Circuit::<C, R>::new(),
     )?);
     census.push(sized(
         "native.endoscaling_step",
         pages.endoscaling_step,
-        cuts,
+        counts,
         circuits::endoscaling_step::Circuit::<C, R>::new(0),
     )?);
     Ok(census)
@@ -1063,18 +1083,18 @@ pub fn native_census<C: super::ProfiledCycle, R: Rank, const HEADER_SIZE: usize>
 /// Propagates any error from walking a circuit.
 #[cfg(feature = "test-utils")]
 pub fn nested_census<C: super::ProfiledCycle, R: Rank>(
-    cuts: &[(&'static str, Cut)],
+    counts: &[(&'static str, PageCount)],
     fewest: bool,
 ) -> Result<Vec<Sizing>> {
-    let cuts = (cuts, fewest);
+    let counts = (counts, fewest);
     use crate::internal::nested;
 
-    let pages = C::Profile::PAGES;
+    let pages = C::Profile::PAGE_COUNTS;
     Ok(vec![
         sized(
             "nested.collapse",
             pages.nested_collapse,
-            cuts,
+            counts,
             MultiStage::new(nested::circuits::collapse::Circuit::<
                 C::HostCurve,
                 R,
@@ -1084,7 +1104,7 @@ pub fn nested_census<C: super::ProfiledCycle, R: Rank>(
         sized(
             "nested.compute_v",
             pages.nested_compute_v,
-            cuts,
+            counts,
             MultiStage::new(nested::circuits::compute_v::Circuit::<
                 C::HostCurve,
                 R,
@@ -1094,7 +1114,7 @@ pub fn nested_census<C: super::ProfiledCycle, R: Rank>(
         sized(
             "nested.endoscaling_step",
             pages.nested_endoscaling_step,
-            cuts,
+            counts,
             MultiStage::new(nested::EndoscalingStep::<C::HostCurve, R, C::Profile>::new(
                 0,
             )),
@@ -1112,12 +1132,12 @@ pub fn nested_census<C: super::ProfiledCycle, R: Rank>(
 /// [`Sizing::pages`] so the caller can report all failed steps together.
 #[cfg(feature = "test-utils")]
 pub fn native_walk_census<C: super::ProfiledCycle, R: Rank>() -> Result<Vec<Sizing>> {
-    let cut = C::Profile::PAGES.endoscaling_step;
+    let count = C::Profile::PAGE_COUNTS.endoscaling_step;
     (0..native::NumSteps::<C::Profile>::len())
         .map(|step| {
             sized(
                 "native.endoscaling_step",
-                cut,
+                count,
                 (&[], false),
                 native::circuits::endoscaling_step::Circuit::<C, R>::new(step),
             )
@@ -1132,12 +1152,12 @@ pub fn native_walk_census<C: super::ProfiledCycle, R: Rank>() -> Result<Vec<Sizi
 /// As in [`native_walk_census`].
 #[cfg(feature = "test-utils")]
 pub fn nested_walk_census<C: super::ProfiledCycle, R: Rank>() -> Result<Vec<Sizing>> {
-    let cut = C::Profile::PAGES.nested_endoscaling_step;
+    let count = C::Profile::PAGE_COUNTS.nested_endoscaling_step;
     (0..nested::NumSteps::<C::Profile>::len())
         .map(|step| {
             sized(
                 "nested.endoscaling_step",
-                cut,
+                count,
                 (&[], false),
                 MultiStage::new(nested::EndoscalingStep::<C::HostCurve, R, C::Profile>::new(
                     step,

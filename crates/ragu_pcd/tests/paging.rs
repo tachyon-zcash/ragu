@@ -12,7 +12,9 @@ use ragu_core::{
 use ragu_pcd::{
     ApplicationBuilder, SelectableBackend,
     ipa::IpaCycle,
-    profile::{Aggregator, Cut, Pages, Profile, Profiled, ProfiledCycle, Shape, Standard},
+    profile::{
+        Aggregator, PageCount, PageCounts, Profile, Profiled, ProfiledCycle, Shape, Standard,
+    },
 };
 use ragu_testing::pcd::nontrivial::{Hash2, Merge2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
@@ -28,17 +30,17 @@ impl Profile for PagedEverything {
     const NAME: &'static str = "paged-everything";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
-    const PAGES: Pages = Pages {
-        hashes_1: Cut::pages(2).carrying(64),
-        hashes_2: Cut::pages(2).carrying(64),
-        collapse: Cut::pages(3).carrying(64),
-        compute_v: Cut::pages(5).carrying(64),
-        bind_challenges: Cut::pages(2).carrying(64),
-        bind_beta: Cut::pages(2).carrying(64),
-        bind_endoscalar: Cut::pages(2).carrying(64),
-        nested_collapse: Cut::pages(3).carrying(64),
-        nested_compute_v: Cut::pages(5).carrying(64),
-        ..Pages::WHOLE
+    const PAGE_COUNTS: PageCounts = PageCounts {
+        hashes_1: PageCount::new(2).carrying(64),
+        hashes_2: PageCount::new(2).carrying(64),
+        collapse: PageCount::new(3).carrying(64),
+        compute_v: PageCount::new(5).carrying(64),
+        bind_challenges: PageCount::new(2).carrying(64),
+        bind_beta: PageCount::new(2).carrying(64),
+        bind_endoscalar: PageCount::new(2).carrying(64),
+        nested_collapse: PageCount::new(3).carrying(64),
+        nested_compute_v: PageCount::new(5).carrying(64),
+        ..PageCounts::WHOLE
     };
     // The pages add polynomials, whose commitments the walks' stages hold:
     // a step does less so that it still fits beside them.
@@ -91,7 +93,7 @@ fn paging_adds_a_polynomial_for_each_page() {
 
 #[test]
 fn standard_profile_keeps_every_internal_circuit_whole() {
-    assert_eq!(Standard::PAGES, Pages::WHOLE);
+    assert_eq!(Standard::PAGE_COUNTS, PageCounts::WHOLE);
 }
 
 #[test]
@@ -118,7 +120,7 @@ macro_rules! census {
             shape.native_steps,
             shape.nested_steps,
         );
-        let cuts: &[(&'static str, Cut)] = $cuts;
+        let cuts: &[(&'static str, PageCount)] = $cuts;
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, $rank, $header>(pasta, 3, cuts, false)?;
         census.extend(nested_census::<C, $rank>(cuts, false)?);
@@ -276,7 +278,7 @@ macro_rules! fewest {
                 );
                 (
                     sizing.name,
-                    sizing.cut.num_pages(),
+                    sizing.count.num_pages(),
                     sizing.fewest.unwrap_or_else(|| {
                         panic!(
                             "{} has no solver result at header size {}",
@@ -349,7 +351,7 @@ macro_rules! cuts {
         census.extend(nested_census::<C, AggregatorRank>(&[], false)?);
         let cuts: Vec<(&'static str, String)> = census
             .into_iter()
-            .filter(|sizing| sizing.cut.num_pages() > 1)
+            .filter(|sizing| sizing.count.num_pages() > 1)
             .map(|sizing| {
                 let digest = sizing
                     .digest
@@ -472,7 +474,7 @@ fn walk_cuts_digest(census: Vec<ragu_pcd::profile::paging::Sizing>) -> String {
         .to_state();
     state.update(&(census.len() as u64).to_le_bytes());
     for (step, sizing) in census.into_iter().enumerate() {
-        assert!(sizing.cut.num_pages() > 1, "step {step} is not paged");
+        assert!(sizing.count.num_pages() > 1, "step {step} is not paged");
         let digest = sizing.digest.unwrap_or_else(|| {
             panic!(
                 "{} step {step} does not cut and check: {:?}",

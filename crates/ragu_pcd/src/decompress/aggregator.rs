@@ -64,8 +64,8 @@ use crate::{
     header::{NUM_INTERNAL_SUFFIXES, Suffix},
     ipa::IpaCycle,
     profile::{
-        AGGREGATOR_NAME, Binding, BuiltIn, CircuitSlot, Cut, Extension, ExtensionRxs, MaskSlot,
-        Pages, Profile, ProfiledCycle, Registered, Standard,
+        AGGREGATOR_NAME, Binding, BuiltIn, CircuitSlot, Extension, ExtensionRxs, MaskSlot,
+        PageCount, PageCounts, Profile, ProfiledCycle, Registered, Standard,
         online::{Layout, SourceRegistry, circuit::Witness, mesh::Mesh, stages as online_stages},
     },
 };
@@ -82,8 +82,8 @@ use crate::{
 /// walk whose every step loads the longer points stage, and at that rank
 /// two polynomials per side already push a nested endoscaling step past
 /// the budget. The profile therefore cuts the fuse's circuits into pages
-/// ([`PAGES`](Profile::PAGES)). Each page loads the stages its unpaged
-/// circuit loads, and the hooks refuse any other rank.
+/// ([`PAGE_COUNTS`](Profile::PAGE_COUNTS)). Each page loads the stages its
+/// unpaged circuit loads, and the hooks refuse any other rank.
 ///
 /// Applications can choose a header size from 1 through 195 field
 /// elements. Decompression uses the same width on both sides, so
@@ -286,19 +286,19 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // size is refused where it is registered. Each carry stage holds more
     // than the census finds its circuit to carry, 14 to 41 values at header
     // sizes 4 and 195.
-    const PAGES: Pages = {
-        Pages {
-            hashes_1: Cut::WHOLE,
-            hashes_2: Cut::WHOLE,
-            collapse: Cut::WHOLE,
-            compute_v: Cut::pages(3).carrying(64),
-            bind_challenges: Cut::pages(2).carrying(48),
-            bind_beta: Cut::WHOLE,
-            bind_endoscalar: Cut::pages(2).carrying(48),
-            endoscaling_step: Cut::pages(Self::NATIVE_STEP_PAGES).carrying(32),
-            nested_collapse: Cut::pages(5).carrying(48),
-            nested_compute_v: Cut::pages(4).carrying(48),
-            nested_endoscaling_step: Cut::pages(Self::NESTED_STEP_PAGES).carrying(32),
+    const PAGE_COUNTS: PageCounts = {
+        PageCounts {
+            hashes_1: PageCount::WHOLE,
+            hashes_2: PageCount::WHOLE,
+            collapse: PageCount::WHOLE,
+            compute_v: PageCount::new(3).carrying(64),
+            bind_challenges: PageCount::new(2).carrying(48),
+            bind_beta: PageCount::WHOLE,
+            bind_endoscalar: PageCount::new(2).carrying(48),
+            endoscaling_step: PageCount::new(Self::NATIVE_STEP_PAGES).carrying(32),
+            nested_collapse: PageCount::new(5).carrying(48),
+            nested_compute_v: PageCount::new(4).carrying(48),
+            nested_endoscaling_step: PageCount::new(Self::NESTED_STEP_PAGES).carrying(32),
         }
     };
 

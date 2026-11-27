@@ -19,7 +19,7 @@ use ragu_core::{
 use udon::field::Field;
 
 use super::{
-    Captured, Carry, DERIVED, Layout, ONE, Pageable, Paged, PagingReport, Plan, Planned, Program,
+    Captured, Carry, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned, Program,
     Stages, diverged,
 };
 use crate::{
@@ -244,7 +244,7 @@ impl<F: Field> Planned<F> {
     }
 }
 
-impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
+impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     /// The pages the circuit was cut into, apart from it.
     pub fn plan(&self) -> Planned<F> {
         Planned {
@@ -261,7 +261,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
     /// pages that are not the registered circuit's, as any other change
     /// to a registered circuit does.
     pub fn planned(circuit: impl Into<Arc<MultiStage<F, R, S>>>, planned: &Planned<F>) -> Self {
-        Paged {
+        Pages {
             circuit: circuit.into(),
             plan: planned.plan.clone(),
             report: planned.report.clone(),
@@ -347,12 +347,12 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
     /// # Panics
     ///
     /// Panics if `index` is the last page or past it.
-    pub fn page(&self, index: usize) -> MultiStage<F, R, Page<F, R, S>> {
+    pub fn page(&self, index: usize) -> MultiStage<F, R, PagedCircuit<F, R, S>> {
         assert!(
             index + 1 < self.plan.pages(),
             "the last page is `last`'s, with the public output"
         );
-        MultiStage::new(Page {
+        MultiStage::new(PagedCircuit {
             plan: self.plan.clone(),
             index,
             _marker: PhantomData,
@@ -360,8 +360,8 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
     }
 
     /// The last page, which carries the circuit's public output.
-    pub fn last(&self) -> MultiStage<F, R, LastPage<F, R, S>> {
-        MultiStage::new(LastPage {
+    pub fn last(&self) -> MultiStage<F, R, LastPagedCircuit<F, R, S>> {
+        MultiStage::new(LastPagedCircuit {
             circuit: self.circuit.clone(),
             plan: self.plan.clone(),
         })
@@ -435,18 +435,18 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
     }
 }
 
-/// A page of a [`Paged`] circuit other than the last: a multi-stage circuit
+/// A paged circuit other than the last of its [`Pages`]: a multi-stage circuit
 /// over the circuit's stages and its carry stage, with no public output,
 /// which allocates and enforces what the plan compiled for it. Its witness
 /// is the values of the gates it holds, in the order of its polynomial
-/// ([`Paged::capture`]).
-pub struct Page<F: Field, R, S> {
+/// ([`Pages::capture`]).
+pub struct PagedCircuit<F: Field, R, S> {
     plan: Arc<Plan<F>>,
     index: usize,
     _marker: PhantomData<fn() -> (R, S)>,
 }
 
-impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for Page<F, R, S> {
+impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for PagedCircuit<F, R, S> {
     type Last = Carry<F, R, S>;
     type Instance<'source> = ();
     type Witness<'source> = &'source [[F; 4]];
@@ -479,15 +479,15 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for Page<F, R
     }
 }
 
-/// The last page of a [`Paged`] circuit, with the circuit's public output:
+/// The last paged circuit of its [`Pages`], with the circuit's public output:
 /// a multi-stage circuit over the circuit's stages and its carry stage, as
 /// the other pages are.
-pub struct LastPage<F: Field, R: Rank, S: MultiStageCircuit<F, R>> {
+pub struct LastPagedCircuit<F: Field, R: Rank, S: MultiStageCircuit<F, R>> {
     circuit: Arc<MultiStage<F, R, S>>,
     plan: Arc<Plan<F>>,
 }
 
-impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for LastPage<F, R, S> {
+impl<F: Field, R: Rank, S: Pageable<F, R>> MultiStageCircuit<F, R> for LastPagedCircuit<F, R, S> {
     type Last = Carry<F, R, S>;
     type Instance<'source> = S::Instance<'source>;
     type Witness<'source> = S::Witness<'source>;

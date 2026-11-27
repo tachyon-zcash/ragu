@@ -405,7 +405,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut step_rxs = Vec::with_capacity(num_steps);
         let (registry, points) = (&self.nested_registry, &witness);
         // A paged step is traced once for each of its pages.
-        if C::Profile::PAGES.nested_endoscaling_step.num_pages() > 1 {
+        if C::Profile::PAGE_COUNTS.nested_endoscaling_step.num_pages() > 1 {
             let mut pages = builder.take_nested_pages(&self.nested_plans);
             for step in 0..num_steps {
                 let (step_rx, _) = C::Profile::prove_internal(
@@ -502,7 +502,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut step_rxs = Vec::with_capacity(num_steps);
         let (registry, walk_ref) = (&self.native_registry, &walk);
         // As for the nested steps.
-        if C::Profile::PAGES.endoscaling_step.num_pages() > 1 {
+        if C::Profile::PAGE_COUNTS.endoscaling_step.num_pages() > 1 {
             let mut pages = builder.take_native_pages(&self.native_plans);
             for step in 0..num_steps {
                 let (step_rx, _) = C::Profile::prove_internal(

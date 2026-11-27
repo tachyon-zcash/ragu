@@ -3,7 +3,7 @@
 //! what each page replays.
 //!
 //! Nothing here is trusted. What this module produces is a [`Plan`], and
-//! [`Paged::check`] holds the pages a plan gives to the unpaged circuit
+//! [`Pages::check`] holds the pages a plan gives to the unpaged circuit
 //! they were cut from, whatever chose them: a profile's registrar runs it
 //! before it registers a page.
 
@@ -22,7 +22,7 @@ use udon::field::Field;
 #[cfg(feature = "std")]
 use super::Planned;
 use super::{
-    DERIVED, Layout, Link, PageReport, Pageable, Paged, PagingReport, Plan, Program, Stages,
+    DERIVED, Layout, Link, PageReport, Pageable, Pages, PagingReport, Plan, Program, Stages,
     record::{DERIVED_LIMIT, Recording},
     refuse,
 };
@@ -918,7 +918,7 @@ fn arrange<F: Field>(
     Ok((plan, report))
 }
 
-impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
+impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     /// Cuts `circuit` into `pages` pages, in polynomials of `limit` gates:
     /// each page holds what it has room for past the circuit's stages and
     /// its carry stage, and the cuts are placed where the pages then carry
@@ -993,7 +993,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
         }
         let (mut plan, report) = least.expect("an order")?;
         plan.compile(&recording);
-        let paged = Paged {
+        let paged = Pages {
             circuit,
             plan: Arc::new(plan),
             report,
