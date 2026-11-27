@@ -141,6 +141,10 @@ test = false # Selected by the corruption job and `just ci_corruption`.
 name = "paging"
 
 [[test]]
+name = "paging_census"
+test = false # Selected by the paging-census workflow.
+
+[[test]]
 name = "pasta_parameters"
 
 [[test]]
