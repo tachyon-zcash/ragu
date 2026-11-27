@@ -76,9 +76,9 @@ impl Profile for AllPaged {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const PAGES: Pages = Pages {
-        endoscaling_step: Cut::pages(3),
-        nested_endoscaling_step: Cut::pages(3),
-        ..Pages::uniform(2)
+        endoscaling_step: Cut::pages(3).carrying(64),
+        nested_endoscaling_step: Cut::pages(3).carrying(64),
+        ..Pages::uniform(Cut::pages(2).carrying(64))
     };
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 12;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = 12;

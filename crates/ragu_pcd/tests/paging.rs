@@ -29,15 +29,15 @@ impl Profile for PagedEverything {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const PAGES: Pages = Pages {
-        hashes_1: Cut::pages(2),
-        hashes_2: Cut::pages(2),
-        collapse: Cut::pages(3),
-        compute_v: Cut::pages(5),
-        bind_challenges: Cut::pages(2),
-        bind_beta: Cut::pages(2),
-        bind_endoscalar: Cut::pages(2),
-        nested_collapse: Cut::pages(3),
-        nested_compute_v: Cut::pages(5),
+        hashes_1: Cut::pages(2).carrying(64),
+        hashes_2: Cut::pages(2).carrying(64),
+        collapse: Cut::pages(3).carrying(64),
+        compute_v: Cut::pages(5).carrying(64),
+        bind_challenges: Cut::pages(2).carrying(64),
+        bind_beta: Cut::pages(2).carrying(64),
+        bind_endoscalar: Cut::pages(2).carrying(64),
+        nested_collapse: Cut::pages(3).carrying(64),
+        nested_compute_v: Cut::pages(5).carrying(64),
         ..Pages::WHOLE
     };
     // The pages add polynomials, whose commitments the walks' stages hold:
@@ -380,46 +380,46 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         4,
         &[
-            ("native.compute_v", "9626a04eba40dc15"),
-            ("native.bind_challenges_0", "877eb54c81141b60"),
-            ("native.bind_challenges_1", "d8aa9ea4eb527b34"),
-            ("native.bind_challenges_2", "bd223988f3dbd888"),
-            ("native.bind_challenges_3", "52c876d9009ccae4"),
-            ("native.bind_endoscalar", "bb7c1aaeee0895c4"),
-            ("native.endoscaling_step", "50e47f43a0dddead"),
-            ("nested.collapse", "19b4320b292910bc"),
-            ("nested.compute_v", "2783ad6ff88005e5"),
-            ("nested.endoscaling_step", "7a6ebe17acf6e454"),
+            ("native.compute_v", "a612f8899c11be63"),
+            ("native.bind_challenges_0", "d408e435433338b9"),
+            ("native.bind_challenges_1", "eba2db5872d00ed4"),
+            ("native.bind_challenges_2", "6d9a50ff44e6e074"),
+            ("native.bind_challenges_3", "8cbc39a99ff86b7a"),
+            ("native.bind_endoscalar", "ee3db3190ed8794c"),
+            ("native.endoscaling_step", "908a658ee5ac1356"),
+            ("nested.collapse", "5cbc2d30bc8ae5d4"),
+            ("nested.compute_v", "425e6b36ecff9a97"),
+            ("nested.endoscaling_step", "44df3e6a6581e85e"),
         ],
     ),
     (
         9,
         &[
-            ("native.compute_v", "978ac2abd1a30c20"),
-            ("native.bind_challenges_0", "a1185d0ba523efec"),
-            ("native.bind_challenges_1", "3181a1d9ac83da07"),
-            ("native.bind_challenges_2", "a6c3b690ca34af0a"),
-            ("native.bind_challenges_3", "091141dc9833e46b"),
-            ("native.bind_endoscalar", "bb7c1aaeee0895c4"),
-            ("native.endoscaling_step", "50e47f43a0dddead"),
-            ("nested.collapse", "19b4320b292910bc"),
-            ("nested.compute_v", "2783ad6ff88005e5"),
-            ("nested.endoscaling_step", "7a6ebe17acf6e454"),
+            ("native.compute_v", "334ee03d85a04622"),
+            ("native.bind_challenges_0", "02e41b461b5d4e59"),
+            ("native.bind_challenges_1", "998707b10ff0e1a0"),
+            ("native.bind_challenges_2", "2094fb384ae8b9a9"),
+            ("native.bind_challenges_3", "2fd3e3a9d275ca05"),
+            ("native.bind_endoscalar", "ee3db3190ed8794c"),
+            ("native.endoscaling_step", "908a658ee5ac1356"),
+            ("nested.collapse", "5cbc2d30bc8ae5d4"),
+            ("nested.compute_v", "425e6b36ecff9a97"),
+            ("nested.endoscaling_step", "44df3e6a6581e85e"),
         ],
     ),
     (
         195,
         &[
-            ("native.compute_v", "568597be69b7a505"),
-            ("native.bind_challenges_0", "15ff056e1762c7fe"),
-            ("native.bind_challenges_1", "2cb8f49cfb5a080d"),
-            ("native.bind_challenges_2", "dfdcfffadf9c3120"),
-            ("native.bind_challenges_3", "fa87d36b772fbe1c"),
-            ("native.bind_endoscalar", "bb7c1aaeee0895c4"),
-            ("native.endoscaling_step", "50e47f43a0dddead"),
-            ("nested.collapse", "3685fbd5c2797682"),
-            ("nested.compute_v", "f9ceb090e8134a17"),
-            ("nested.endoscaling_step", "a972eeb134dffbba"),
+            ("native.compute_v", "2c0eecb0109c3e43"),
+            ("native.bind_challenges_0", "48388cb1efcb4fa4"),
+            ("native.bind_challenges_1", "312b29c392b3879d"),
+            ("native.bind_challenges_2", "f53be0ff9aeb493d"),
+            ("native.bind_challenges_3", "defe58ee5c565fc3"),
+            ("native.bind_endoscalar", "ee3db3190ed8794c"),
+            ("native.endoscaling_step", "908a658ee5ac1356"),
+            ("nested.collapse", "e19de96ec76af7c2"),
+            ("nested.compute_v", "b0334937402d26b1"),
+            ("nested.endoscaling_step", "837e82006b6bed15"),
         ],
     ),
 ];
@@ -499,26 +499,22 @@ fn walk_cuts<const H: usize>() -> Result<(usize, String, String)> {
 }
 
 const WALK_CUTS: [(usize, &str, &str); 2] = [
-    (4, "76649aa184d5d4d0", "f732dd452a11b3de"),
-    (195, "76649aa184d5d4d0", "e0944313cef039c5"),
+    (4, "071da5850c01c7cb", "e6d1cfe4d4aa7fcd"),
+    (195, "071da5850c01c7cb", "1b136e1450ef8631"),
 ];
 
 #[test]
 fn every_aggregator_walk_step_cut_is_pinned() -> Result<()> {
     let found = [walk_cuts::<4>()?, walk_cuts::<195>()?];
-    for ((header, native, nested), (expected_header, expected_native, expected_nested)) in
-        found.iter().zip(WALK_CUTS)
-    {
-        assert_eq!(*header, expected_header);
-        assert_eq!(
-            native, expected_native,
-            "native walk at header size {header}"
-        );
-        assert_eq!(
-            nested, expected_nested,
-            "nested walk at header size {header}"
-        );
-    }
+    let found: Vec<(usize, &str, &str)> = found
+        .iter()
+        .map(|(header, native, nested)| (*header, native.as_str(), nested.as_str()))
+        .collect();
+    assert_eq!(
+        found, WALK_CUTS,
+        "the cuts of the aggregator's walk steps changed: if the change is intended, pin what \
+         was found"
+    );
     Ok(())
 }
 

@@ -22,20 +22,16 @@ use udon::field::Field;
 #[cfg(feature = "std")]
 use super::Planned;
 use super::{
-    DERIVED, Layout, Link, PageReport, Paged, PagingReport, Plan, Program, Stages,
+    DERIVED, Layout, Link, PageReport, Pageable, Paged, PagingReport, Plan, Program, Stages,
     record::{DERIVED_LIMIT, Recording},
     refuse,
 };
-use crate::Circuit;
+use crate::{Circuit, polynomials::Rank, staging::MultiStage};
 
 /// The places among a circuit's gates at which a cut is looked for, at
 /// most: the circuit's gates are shared into as many stretches, and a cut
 /// may fall at one gate of each.
 pub(super) const GRID: usize = 1024;
-
-/// The rounds a cut's carry stage is sized halfway to what it turned out
-/// to hold before it only grows.
-const SETTLING: usize = 24;
 
 /// What the cuts of a circuit are weighed by, for one order of its gates:
 /// the same whatever the carry stage's size, so it is counted once and the
@@ -127,67 +123,19 @@ impl Costs {
 }
 
 impl Layout {
-    /// The layout that shares `own` gates of a circuit's own among the
-    /// pages of `stages` in proportion to the room each has before a carry
-    /// stage of `carry_gates` gates that ends at gate `limit`.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the pages do not have the room.
-    pub fn fill(stages: &Stages, own: usize, limit: usize, carry_gates: usize) -> Result<Self> {
-        let short = || Error::GateBoundExceeded { limit };
-        let carry = limit.checked_sub(carry_gates).ok_or_else(short)?..limit;
-        let room = carry
-            .start
-            .checked_sub(stages.own_start())
-            .ok_or_else(short)?;
-        let rooms = vec![room; stages.num_pages()];
-        let (mut left, mut total) = (own, rooms.iter().sum::<usize>());
-        if left > total {
-            return Err(short());
-        }
-        // Each page in turn takes its share of what is left, so the shares
-        // sum to `own` and none is more than its page's room.
-        let mut starts = Vec::with_capacity(rooms.len());
-        let mut next = stages.own_start();
-        for room in rooms {
-            starts.push(next);
-            let share = if total == 0 {
-                0
-            } else {
-                (left * room).div_ceil(total).min(room)
-            };
-            total -= room;
-            left -= share;
-            next += share;
-        }
-        Ok(Layout {
-            own_start: stages.own_start(),
-            starts,
-            carry,
-        })
-    }
-
-    /// The layout that cuts `recording` into the pages of `stages`, before
-    /// a carry stage of `carry_gates` gates that ends at gate `limit`, so
-    /// that the pages carry little: a page ends where few of the wires
-    /// before are named after. The cuts are looked for at
-    /// [`GRID`] places at most, none of which splits a routine the
-    /// circuit calls, and what a cut carries is counted with repeats, so
-    /// the layout is a good one rather than the best.
-    fn fit(
-        costs: &Costs,
-        num_gates: usize,
-        stages: &Stages,
-        limit: usize,
-        carry_gates: usize,
-    ) -> Result<Self> {
+    /// The layout that cuts `recording` into the pages of `stages`, in
+    /// polynomials of `limit` gates, so that the pages carry little: a
+    /// page ends where few of the wires before are named after. The cuts
+    /// are looked for at [`GRID`] places at most, none of which splits a
+    /// routine the circuit calls, and what a cut carries is counted with
+    /// repeats, so the layout is a good one rather than the best.
+    fn fit(costs: &Costs, num_gates: usize, stages: &Stages, limit: usize) -> Result<Self> {
         let short = || Error::GateBoundExceeded { limit };
         let pages = stages.num_pages();
         let own_start = stages.own_start();
         let own = num_gates.saturating_sub(own_start);
-        let carry = limit.checked_sub(carry_gates).ok_or_else(short)?..limit;
-        let room = carry.start.checked_sub(own_start).ok_or_else(short)?;
+        let carry = stages.carry_gates();
+        let room = limit.checked_sub(carry.end).ok_or_else(short)?;
 
         // The places a page may end at, as gates of the circuit's own
         // before them.
@@ -238,8 +186,9 @@ impl Layout {
         }
         Ok(Layout {
             own_start,
-            starts,
             carry,
+            limit,
+            starts,
         })
     }
 }
@@ -303,21 +252,11 @@ impl<F: Field> Plan<F> {
         };
 
         let mut programs: Vec<Program<F>> = (0..pages)
-            .map(|page| {
-                let own = own_start..own_start + self.held[page].len();
-                let carry = &self.layout.carry;
-                let end = if carry.is_empty() {
-                    own.end
-                } else {
-                    own.end.max(carry.end)
-                };
-                Program {
-                    gates: end - 1,
-                    own,
-                    sums: Vec::new(),
-                    constraints: Vec::new(),
-                    outputs: Vec::new(),
-                }
+            .map(|page| Program {
+                own: self.held[page].len(),
+                sums: Vec::new(),
+                constraints: Vec::new(),
+                outputs: Vec::new(),
             })
             .collect();
         // For a page and the wires asked of it, those of its own gates
@@ -464,6 +403,7 @@ impl<F: Field> Recording<F> {
         };
         word(limit);
         word(stages.pages);
+        word(stages.carry);
         word(stages.spans.len());
         for span in &stages.spans {
             word(span.start);
@@ -862,9 +802,9 @@ fn arrange<F: Field>(
         let gates = end - layout.starts[page];
         if gates > layout.room() {
             return refuse(format!(
-                "page {page} holds {gates} gates of the circuit's own, which the stages, up to \
-                 gate {}, and the carry stage, from gate {}, leave no room for",
-                layout.own_start, layout.carry.start,
+                "page {page} holds {gates} gates of the circuit's own, which the stages and \
+                 the carry stage, up to gate {}, leave no room for before gate {}",
+                layout.carry.end, layout.limit,
             ));
         }
     }
@@ -878,7 +818,7 @@ fn arrange<F: Field>(
             .place(gate)
             .and_then(|place| layout.page_of(place))
             .expect("a gate of the circuit's own has a place");
-        places.push((page as u32, (layout.own_start + held[page].len()) as u32));
+        places.push((page as u32, (layout.carry.end + held[page].len()) as u32));
         held[page].push(gate as u32);
     }
 
@@ -967,65 +907,38 @@ fn arrange<F: Field>(
     Ok((plan, report))
 }
 
-impl<F: Field, C: Circuit<F>> Paged<F, C> {
-    fn cut_as(
-        circuit: impl Into<Arc<C>>,
-        stages: &Stages,
-        (plan, report): (Plan<F>, PagingReport),
-    ) -> Self {
-        Paged {
-            circuit: circuit.into(),
-            plan: Arc::new(plan),
-            report,
-            stages: stages.clone(),
-        }
-    }
-
-    /// Cuts `circuit`, over `stages`, into the pages of `layout`.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the circuit cannot be walked, if the layout does not hold
-    /// it, or if it carries more values between pages than the layout's
-    /// carry stage holds.
-    pub fn new(circuit: C, stages: &Stages, layout: Layout) -> Result<Self> {
-        let recording = Recording::of(&circuit)?;
-        let placement = Placement::of(&recording, stages.own_start(), Feeders::Deepest);
-        let mut planned = arrange(&recording, &placement, stages, layout)?;
-        planned.0.fits()?;
-        planned.0.compile(&recording);
-        Ok(Self::cut_as(circuit, stages, planned))
-    }
-
-    /// Cuts `circuit` into the pages `stages` counts, in polynomials of
-    /// `limit` gates: each page holds what it has room for
-    /// before a carry stage that ends at gate `limit` and is as large as
-    /// the pages need, and the cuts are placed where the pages then carry
+impl<F: Field, R: Rank, S: Pageable<F, R>> Paged<F, R, S> {
+    /// Cuts `circuit` into `pages` pages, in polynomials of `limit` gates:
+    /// each page holds what it has room for past the circuit's stages and
+    /// its carry stage, and the cuts are placed where the pages then carry
     /// little.
     ///
     /// # Errors
     ///
     /// Fails if the circuit cannot be walked, if its stages do not follow
-    /// one another, or if the pages do not have the room.
-    pub fn cut(circuit: impl Into<Arc<C>>, stages: &Stages, limit: usize) -> Result<Self> {
-        let circuit: Arc<C> = circuit.into();
+    /// one another, if the pages do not have the room, or if they carry
+    /// more values than the carry stage holds.
+    pub fn cut(
+        circuit: impl Into<Arc<MultiStage<F, R, S>>>,
+        pages: usize,
+        limit: usize,
+    ) -> Result<Self> {
+        let circuit: Arc<MultiStage<F, R, S>> = circuit.into();
+        let stages = &Stages::of::<F, R, S>().pages(pages);
         stages.check()?;
         let recording = Recording::raw_of(&*circuit)?;
-        let Some(own) = recording.num_gates.checked_sub(stages.own_start()) else {
+        if recording.num_gates < stages.own_start() {
             return refuse(format!(
                 "the circuit's {} gates do not follow its stages', which end at gate {}",
                 recording.num_gates,
                 stages.own_start()
             ));
-        };
+        }
         #[cfg(feature = "std")]
         let key = recording.digest(stages, limit);
         #[cfg(feature = "std")]
         if let Some(planned) = memo::get::<Planned<F>>(&key) {
-            // A cut kept from before is held to the stages asked for now.
-            let mut paged = Self::planned(circuit, &planned);
-            paged.stages = stages.clone();
-            return Ok(paged);
+            return Ok(Self::planned(circuit, &planned));
         }
         // A circuit cut before is not followed back to its gates' wires
         // again.
@@ -1042,42 +955,10 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         let cut = |placement: &(dyn Fn() -> Placement + Sync)| -> Result<(Plan<F>, PagingReport)> {
             let placement = &placement();
             let costs = Costs::of(&recording, placement, stages);
-            // A larger carry stage shrinks the pages, which moves the cuts
-            // and may change what they carry: grow it until it holds. It
-            // is first sized halfway to what the cuts last made it hold,
-            // since the cuts under a larger stage may carry less; past
-            // [`SETTLING`] rounds it takes all of it, and an eighth more
-            // at least.
-            let mut rounds = 0;
-            let mut carry_gates = 0;
-            loop {
-                let fit = Layout::fit(&costs, recording.num_gates, stages, limit, carry_gates);
-                let layout = match fit {
-                    Err(Error::GateBoundExceeded { .. }) if carry_gates > 0 => {
-                        return refuse(format!(
-                            "the pages carry values a carry stage of {carry_gates} gates holds, \
-                             which leaves them less room than the circuit's {own} gates take in \
-                             polynomials of {limit} gates"
-                        ));
-                    }
-                    layout => layout?,
-                };
-                let mut planned = arrange(&recording, placement, stages, layout)?;
-                let needed = planned.0.slots.len().div_ceil(2);
-                if needed <= carry_gates {
-                    // The cuts may have settled on less than the carry
-                    // stage they were looked for under: it takes what its
-                    // slots do, and the pages keep their gates.
-                    planned.0.layout.carry.start = limit - needed;
-                    return Ok(planned);
-                }
-                rounds += 1;
-                carry_gates = if rounds <= SETTLING {
-                    (needed + carry_gates).div_ceil(2) + 1
-                } else {
-                    needed.max(carry_gates + carry_gates / 8 + 1)
-                };
-            }
+            let layout = Layout::fit(&costs, recording.num_gates, stages, limit)?;
+            let planned = arrange(&recording, placement, stages, layout)?;
+            planned.0.fits()?;
+            Ok(planned)
         };
         // Each order is cut on its own, so the three are cut at once.
         let (first, (second, third)) = maybe_rayon::join(
@@ -1087,57 +968,28 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         let mut least: Option<Result<(Plan<F>, PagingReport)>> = None;
         for cut in [first, second, third] {
             least = Some(match (least, cut) {
-                (Some(Ok(least)), Ok(cut)) => {
-                    // By the gates the carry stage takes: it is the same
-                    // number of pages either way.
-                    let taken = |layout: &Layout| layout.carry.len();
-                    Ok(if taken(&cut.0.layout) < taken(&least.0.layout) {
-                        cut
-                    } else {
-                        least
-                    })
-                }
+                // By the values the pages carry: the carry stage takes
+                // the same gates either way.
+                (Some(Ok(least)), Ok(cut)) => Ok(if cut.0.slots.len() < least.0.slots.len() {
+                    cut
+                } else {
+                    least
+                }),
                 (Some(Ok(least)), Err(_)) => Ok(least),
                 (Some(Err(error)), Err(_)) => Err(error),
                 (_, cut) => cut,
             });
         }
-        let mut planned = least.expect("an order")?;
-        planned.0.compile(&recording);
-        let paged = Self::cut_as(circuit, stages, planned);
+        let (mut plan, report) = least.expect("an order")?;
+        plan.compile(&recording);
+        let paged = Paged {
+            circuit,
+            plan: Arc::new(plan),
+            report,
+            stages: stages.clone(),
+        };
         #[cfg(feature = "std")]
         memo::put(key, paged.plan());
         Ok(paged)
-    }
-
-    /// Cuts `circuit` into as many pages of `page_gates` gates as it
-    /// takes, over `stages`, with a carry stage of
-    /// the size they turn out to need right after a page's gates.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the circuit cannot be walked or its stages do not follow
-    /// one another.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `page_gates` is zero.
-    pub fn fitted(circuit: C, stages: &Stages, page_gates: usize) -> Result<Self> {
-        assert!(page_gates > 0, "a page holds a gate");
-        let recording = Recording::of(&circuit)?;
-        let own = recording.num_gates.saturating_sub(stages.own_start());
-        let pages = own.div_ceil(page_gates).max(1);
-        let stages = stages.clone().pages(pages);
-        let first = stages.own_start();
-        let layout = Layout {
-            own_start: first,
-            starts: (0..pages).map(|page| first + page * page_gates).collect(),
-            carry: first + page_gates.min(own)..usize::MAX,
-        };
-        let placement = Placement::of(&recording, stages.own_start(), Feeders::Deepest);
-        let (mut plan, report) = arrange(&recording, &placement, &stages, layout)?;
-        plan.layout.carry.end = plan.layout.carry.start + plan.slots.len().div_ceil(2);
-        plan.compile(&recording);
-        Ok(Self::cut_as(circuit, &stages, (plan, report)))
     }
 }

@@ -64,6 +64,7 @@ use core::{
 
 use ragu_circuits::{
     Circuit, CircuitExt, WithAux,
+    paging::Pageable,
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryBuilder},
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
@@ -94,28 +95,46 @@ use crate::{
 /// How a profile cuts one of the fuse's internal circuits into pages, each
 /// loading every stage the circuit reserves. Experimental.
 ///
-/// The count sizes the proof, and the circuits a profile pages work on
-/// every polynomial of a proof, the pages' among them, so a profile states
-/// its count and no circuit is cut into fewer or more pages than it says.
-/// The fewest a circuit cuts in are found by cutting it: the `paging`
-/// census does, with the crate's `test-utils` feature.
+/// A cut is a number of pages and the values the circuit's carry stage
+/// holds. Each page loads every stage the circuit reserves, then the carry
+/// stage, through which the pages pass values to one another. Both numbers
+/// size the proof and its polynomials, and the circuits a profile pages
+/// work on every polynomial of a proof, the pages' among them, so a profile
+/// states them and no circuit is cut otherwise: a circuit that takes more
+/// pages, or carries more values, is refused where it is registered. What
+/// a circuit takes is found by cutting it: the `paging` census does, with
+/// the crate's `test-utils` feature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cut {
     pages: usize,
+    /// The values the carry stage holds.
+    carry: usize,
 }
 
 impl Cut {
     /// The circuit whole.
     pub const WHOLE: Self = Cut::pages(1);
 
-    /// `pages` pages that each load every stage the circuit reserves.
+    /// `pages` pages, over a carry stage that holds nothing yet
+    /// ([`carrying`](Self::carrying)).
     pub const fn pages(pages: usize) -> Self {
-        Cut { pages }
+        Cut { pages, carry: 0 }
+    }
+
+    /// The same cut, over a carry stage of `values` values.
+    pub const fn carrying(mut self, values: usize) -> Self {
+        self.carry = values;
+        self
     }
 
     /// The pages.
     pub const fn num_pages(&self) -> usize {
         self.pages
+    }
+
+    /// The values the carry stage holds.
+    pub const fn carry(&self) -> usize {
+        self.carry
     }
 }
 
@@ -123,15 +142,15 @@ impl Cut {
 /// Experimental.
 ///
 /// A circuit with more than one page is cut into that many circuits, which
-/// pass values to one another through a carry stage as large as they turn
-/// out to need (see [`ragu_circuits::paging`]). Every page loads every
-/// stage its circuit reserves. The profile says how many pages; the pager
-/// chooses where the cuts fall: where the fewest values pass from page to
-/// page, among the places that leave every page room past the stages. The
-/// pages before the last are registered as circuits of the profile's
-/// extension and the carry stage as one of its stages, after what the
-/// profile declares; the last page takes the circuit's own slot. The cuts
-/// are declared because they size the proof; the registration fails if the
+/// pass values to one another through a carry stage of the size its cut
+/// states (see [`ragu_circuits::paging`]). Every page loads every stage its
+/// circuit reserves. The profile says how many pages; the pager chooses
+/// where the cuts fall: where the fewest values pass from page to page,
+/// among the places that leave every page room past the stages. The pages
+/// before the last are registered as circuits of the profile's extension
+/// and the carry stage as one of its stages, after what the profile
+/// declares; the last page takes the circuit's own slot. The cuts are
+/// declared because they size the proof; the registration fails if the
 /// pages do not have the room.
 ///
 /// A walk's steps are all cut alike.
@@ -163,12 +182,10 @@ pub struct Pages {
 
 impl Pages {
     /// Every circuit whole.
-    pub const WHOLE: Self = Pages::uniform(1);
+    pub const WHOLE: Self = Pages::uniform(Cut::WHOLE);
 
-    /// Every circuit in `pages` pages, each loading every stage its circuit
-    /// reserves, with the walks' steps whole.
-    pub const fn uniform(pages: usize) -> Self {
-        let cut = Cut::pages(pages);
+    /// Every circuit cut as `cut` says, with the walks' steps whole.
+    pub const fn uniform(cut: Cut) -> Self {
         Pages {
             hashes_1: cut,
             hashes_2: cut,
@@ -321,7 +338,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     where
         F: Field,
         R: Rank,
-        S: MultiStageCircuit<F, R>,
+        S: Pageable<F, R>,
         MultiStage<F, R, S>: 'params,
     {
         let _ = (pages, which);
@@ -350,7 +367,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     where
         F: Field,
         R: Rank,
-        S: MultiStageCircuit<F, R>,
+        S: Pageable<F, R>,
         RNG: CryptoRng,
     {
         let _ = (pages, which, extension);
@@ -1198,9 +1215,6 @@ pub(crate) enum Registration {
     StageMask(Range<usize>),
     /// A final mask, from a gate on ([`MaskSlot::register_final_mask`]).
     FinalMask(usize),
-    /// The mask of a page's own polynomial, over the page's own gates
-    /// (see [`paging`]).
-    Window(Range<usize>),
 }
 
 /// A circuit with a constant zero appended to its public output; see
@@ -1558,7 +1572,7 @@ impl Extension {
                 Registration::StageMask(gates) if j < self.stages => {
                     stage_masks.push(gates.clone())
                 }
-                Registration::FinalMask(_) | Registration::Window(_) if j >= self.stages => {}
+                Registration::FinalMask(_) if j >= self.stages => {}
                 _ if j < self.stages => {
                     return refuse(alloc::format!(
                         "registers mask {j} as something other than stage {j}'s mask"
@@ -1608,19 +1622,7 @@ impl Extension {
             else {
                 return refuse(alloc::format!("names circuit {k} in no final mask"));
             };
-            // A page's own gates are a window apart from every stage it
-            // loads, rather than the gates past the last of them.
-            let apart = |own: &Range<usize>| {
-                loaded
-                    .iter()
-                    .all(|stage| stage.end <= own.start || own.end <= stage.start)
-            };
-            let held = match &masks[self.stages + mask] {
-                Registration::FinalMask(gate) => *gate == last.end,
-                Registration::Window(own) => apart(own),
-                _ => false,
-            };
-            if !held {
+            if masks[self.stages + mask] != Registration::FinalMask(last.end) {
                 return refuse(alloc::format!(
                     "registers circuit {k}'s final mask elsewhere than at gate {}, where its last stage ends",
                     last.end

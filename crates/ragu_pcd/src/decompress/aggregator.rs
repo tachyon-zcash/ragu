@@ -281,22 +281,24 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // With the extension's polynomials the larger fuse circuits do not fit
     // a polynomial of the aggregator rank whole. Every page loads every
     // stage of its circuit, so each page's stage claim matches the unpaged
-    // circuit's. The page counts are fixed across header sizes, and a
-    // circuit that does not cut at its size is refused where it is
-    // registered.
+    // circuit's. The page counts and the carry stages' sizes are fixed
+    // across header sizes, and a circuit that does not cut with them at its
+    // size is refused where it is registered. Each carry stage holds more
+    // than the census finds its circuit to carry, 14 to 41 values at header
+    // sizes 4 and 195.
     const PAGES: Pages = {
         Pages {
             hashes_1: Cut::WHOLE,
             hashes_2: Cut::WHOLE,
             collapse: Cut::WHOLE,
-            compute_v: Cut::pages(3),
-            bind_challenges: Cut::pages(2),
+            compute_v: Cut::pages(3).carrying(64),
+            bind_challenges: Cut::pages(2).carrying(48),
             bind_beta: Cut::WHOLE,
-            bind_endoscalar: Cut::pages(2),
-            endoscaling_step: Cut::pages(Self::NATIVE_STEP_PAGES),
-            nested_collapse: Cut::pages(5),
-            nested_compute_v: Cut::pages(4),
-            nested_endoscaling_step: Cut::pages(Self::NESTED_STEP_PAGES),
+            bind_endoscalar: Cut::pages(2).carrying(48),
+            endoscaling_step: Cut::pages(Self::NATIVE_STEP_PAGES).carrying(32),
+            nested_collapse: Cut::pages(5).carrying(48),
+            nested_compute_v: Cut::pages(4).carrying(48),
+            nested_endoscaling_step: Cut::pages(Self::NESTED_STEP_PAGES).carrying(32),
         }
     };
 

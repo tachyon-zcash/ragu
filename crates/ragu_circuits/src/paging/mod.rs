@@ -16,17 +16,22 @@
 //! A page's polynomial holds, in gate order ([`Layout`]):
 //!
 //! ```text
-//! gate 0   | the circuit's stages | the page's own gates | carry stage
-//! SYSTEM   | the same gates as    | up to the carry      | same gates
-//!          | in the circuit      | stage                | on every page
+//! gate 0   | the circuit's stages | carry stage   | the page's own gates
+//! SYSTEM   | the same gates as    | same gates    | up to the last gate a
+//!          | in the circuit       | on every page | polynomial holds
 //! ```
 //!
 //! The circuit's stages are polynomials of their own, each holding its
 //! values at fixed gates, one stage after another ([`Stages::spans`]).
-//! Every page loads every one of them, where the circuit has them, and its
-//! own gates start past the last. The *carry stage* is one more such
-//! polynomial, which paging adds and every page loads, at the same gates
-//! past every page's own.
+//! Every page loads every one of them, where the circuit has them. The
+//! *carry stage* ([`CarryStage`]) is one more stage, which paging adds
+//! after the circuit's last and every page loads. A page is a multi-stage
+//! circuit whose last stage it is, so a page's own gates start where it
+//! ends.
+//!
+//! The carry stage's size is the circuit's to state ([`Pageable::Carry`]):
+//! a circuit that carries more values between its pages than the stage
+//! holds is not cut.
 //!
 //! # Carrying
 //!
@@ -61,11 +66,11 @@
 //! - every page's claim is checked, on the sum of its own polynomial, the
 //!   carry polynomial and the polynomials of the circuit's stages;
 //! - the carry polynomial is the same one in the sum of every page, and
-//!   is zero off its own wires ([`Paged::carry_mask`]);
-//! - a page's own polynomial is zero off the gates between the stages and
-//!   the carry stage ([`Paged::own_mask`]), which are apart from both. A
-//!   page may hold fewer gates than those: the rest are gates no
-//!   constraint of its names, as a circuit's are past its last;
+//!   is zero off its own wires: the carry stage's stage mask holds it
+//!   ([`Paged::carry_mask`]);
+//! - a page's own polynomial is zero on the gates of the stages and of the
+//!   carry stage: the carry stage's final mask holds it, as any
+//!   multi-stage circuit's is held ([`Paged::page_mask`]);
 //! - the stages share no gate, and are those the circuit was cut over,
 //!   which [`Paged::check`] holds the plan to and the caller lays where
 //!   the stages' polynomials hold them;
@@ -99,19 +104,28 @@
 //! the check rests on is the rest. The `record` module walks a circuit for
 //! the gates and constraints it emits; the `check` module compares that
 //! recording of the circuit with those of its pages; and the `page` module
-//! is what is registered and proven: the pages, and their carry stage's
-//! polynomial and mask. This module holds what they share: the stages,
-//! the layout, and the plan between them.
+//! is what is registered and proven: the pages. This module holds what
+//! they share: the carry stage, the stages, the layout, and the plan
+//! between them.
 
 use alloc::{collections::BTreeMap, format, string::String, sync::Arc, vec::Vec};
-use core::ops::Range;
+use core::{marker::PhantomData, ops::Range};
 
-use ragu_core::{Coeff, Error, Result};
+use ragu_core::{
+    Coeff, Error, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
+};
+use ragu_primitives::{
+    Element,
+    vec::{FixedVec, Len},
+};
 use udon::field::Field;
 
 use crate::{
     polynomials::Rank,
-    staging::{MultiStageCircuit, Stage},
+    staging::{MultiStage, MultiStageCircuit, Stage},
 };
 
 mod check;
@@ -137,36 +151,83 @@ fn refuse<T>(what: String) -> Result<T> {
     Err(Error::Initialization(what.into()))
 }
 
-/// A circuit's stages, as its pages see them, and the pages it is cut
-/// into.
+/// A multi-stage circuit that can be cut into pages.
+pub trait Pageable<F: Field, R: Rank>: MultiStageCircuit<F, R> {
+    /// The values the circuit's carry stage holds: at least as many as
+    /// the circuit's pages pass to one another. It is stated and not
+    /// found where the circuit is cut, since it sizes a stage every page
+    /// loads.
+    type Carry: Len;
+}
+
+/// The carry stage of a circuit in pages: the values its pages pass to one
+/// another, after `Parent`, the circuit's last stage.
+///
+/// Each value is a slot. A page that has the wires a slot stands for holds
+/// the slot to them, and the pages that read them read the slot.
+pub struct CarryStage<F, R, Parent, L>(PhantomData<fn() -> (F, R, Parent, L)>);
+
+impl<F, R, Parent, L> Default for CarryStage<F, R, Parent, L> {
+    fn default() -> Self {
+        CarryStage(PhantomData)
+    }
+}
+
+impl<F: Field, R: Rank, Parent: Stage<F, R>, L: Len> Stage<F, R> for CarryStage<F, R, Parent, L> {
+    type Parent = Parent;
+    type Witness<'source> = &'source [F];
+    type OutputKind = Kind![F; FixedVec<Element<'_, _>, L>];
+
+    fn values() -> usize {
+        L::len()
+    }
+
+    /// Allocates the slots, with the values given and zero past them.
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, &'source [F]>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        FixedVec::try_from_fn(|slot| {
+            let value = witness
+                .as_ref()
+                .map(|values| values.get(slot).copied().unwrap_or(F::ZERO));
+            Element::alloc(dr, &mut (), value)
+        })
+    }
+}
+
+/// The carry stage of circuit `S`.
+pub type Carry<F, R, S> =
+    CarryStage<F, R, <S as MultiStageCircuit<F, R>>::Last, <S as Pageable<F, R>>::Carry>;
+
+/// What a circuit is cut over: its stages, as its pages see them, the
+/// values its carry stage holds, and the pages it is cut into.
 ///
 /// The circuit reserves its stages one after another from the SYSTEM gate,
-/// and every page loads every one of them at the same gates.
+/// and every page loads every one of them at the same gates, then the
+/// carry stage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stages {
     /// Each stage's gates in a polynomial, in the order the circuit
     /// reserves the stages: each starts where the one before it ends.
     pub spans: Vec<Range<usize>>,
+    /// The values the carry stage holds.
+    pub carry: usize,
     /// The pages the circuit is cut into.
     pub pages: usize,
 }
 
 impl Stages {
-    /// One span over every gate before `own_start`, for one page: a
-    /// circuit whose stages follow one another from the SYSTEM gate.
-    pub fn whole(own_start: usize) -> Self {
-        let spans: Vec<_> = Some(1..own_start)
-            .filter(|span| !span.is_empty())
-            .into_iter()
-            .collect();
-        Stages { spans, pages: 1 }
-    }
-
-    /// A multi-stage circuit's stages, where their polynomials hold them,
-    /// for one page.
-    pub fn of<F: Field, R: Rank, S: MultiStageCircuit<F, R>>() -> Self {
+    /// A pageable circuit's stages, where their polynomials hold them, and
+    /// its carry stage's size, for one page.
+    pub fn of<F: Field, R: Rank, S: Pageable<F, R>>() -> Self {
         Stages {
             spans: <S::Last as Stage<F, R>>::gate_ranges(),
+            carry: S::Carry::len(),
             pages: 1,
         }
     }
@@ -182,10 +243,18 @@ impl Stages {
         self.pages
     }
 
-    /// The first gate of the circuit's own, in the circuit's polynomial
-    /// and in every page's: past the SYSTEM gate and every stage's gates.
+    /// The first gate of the circuit's own in the circuit's polynomial,
+    /// and the carry stage's first gate in a page's: past the SYSTEM gate
+    /// and every stage's gates.
     pub fn own_start(&self) -> usize {
         1 + self.spans.iter().map(Range::len).sum::<usize>()
+    }
+
+    /// The carry stage's gates in a page's polynomial: two values a gate,
+    /// after the circuit's stages.
+    pub fn carry_gates(&self) -> Range<usize> {
+        let start = self.own_start();
+        start..start + self.carry.div_ceil(2)
     }
 
     /// The stage of a gate, and the gate's place in it.
@@ -224,17 +293,21 @@ pub struct Layout {
     /// past the SYSTEM gate and every stage's gates (see
     /// [`Stages::own_start`]).
     pub own_start: usize,
+    /// The carry stage's gates, the same in every page's polynomial:
+    /// after the circuit's stages, where the circuit's own gates start in
+    /// its own polynomial. It holds two values per gate.
+    pub carry: Range<usize>,
+    /// The gates a page's polynomial holds: a page's own gates end before
+    /// this one.
+    pub limit: usize,
     /// For each page, the first gate of the circuit's own it holds, counted
     /// from [`own_start`](Self::own_start) in the order the plan places
     /// the gates in: the order the circuit allocates them in, or one that
     /// puts a gate allocated long before it is used beside the gates it
     /// feeds. A page ends where the next starts, and the last holds the
-    /// rest. A page's polynomial holds them from gate
-    /// [`own_start`](Self::own_start) on.
+    /// rest. A page's polynomial holds them from the gate the carry stage
+    /// ends at.
     pub starts: Vec<usize>,
-    /// The carry stage's gates, the same in every page's polynomial and
-    /// past every page's own. It holds two values per gate.
-    pub carry: Range<usize>,
 }
 
 impl Layout {
@@ -249,10 +322,10 @@ impl Layout {
         self.window().len()
     }
 
-    /// The gates of a page's polynomial that hold the page's own: from past
-    /// the stages to the carry stage, the same on every page.
+    /// The gates of a page's polynomial that hold the page's own: from
+    /// past the carry stage on, the same on every page.
     pub fn window(&self) -> Range<usize> {
-        self.own_start..self.carry.start.max(self.own_start)
+        self.carry.end..self.limit.max(self.carry.end)
     }
 
     /// The page of the gate at place `place` among the circuit's own, in
@@ -357,11 +430,8 @@ struct Plan<F: Field> {
 /// circuit that another page holds.
 #[derive(Clone, Debug)]
 struct Program<F: Field> {
-    /// The gates the page allocates past the SYSTEM gate: up to the end of
-    /// the carry stage, or of its own gates if the carry stage holds none.
-    gates: usize,
-    /// Its own gates among them, by their index in its polynomial.
-    own: Range<usize>,
+    /// The gates of its own the page allocates, past the carry stage.
+    own: usize,
     /// The linear combinations it makes, in order, each over its wires and
     /// the combinations before it: what the circuit's own combinations
     /// have of the page's wires, or of the page's own gates' among them. A
@@ -389,7 +459,7 @@ impl<F: Field> Plan<F> {
 
     /// Refuses a carry stage too small for its slots.
     fn fits(&self) -> Result<()> {
-        let holds = self.layout.carry.len().saturating_mul(2);
+        let holds = self.stages.carry;
         if self.slots.len() > holds {
             return refuse(format!(
                 "the circuit carries {} values between pages, more than the {holds} their carry \
@@ -406,11 +476,11 @@ fn diverged(what: &str) -> Error {
 }
 
 /// A circuit cut into pages.
-pub struct Paged<F: Field, C> {
-    circuit: Arc<C>,
+pub struct Paged<F: Field, R: Rank, S: Pageable<F, R>> {
+    circuit: Arc<MultiStage<F, R, S>>,
     plan: Arc<Plan<F>>,
     report: PagingReport,
-    /// The stages the circuit was cut over, as the caller told them: what
+    /// What the circuit was cut over, as its type says: what
     /// [`Paged::check`] holds the plan's to, since nothing of the plan is
     /// trusted.
     stages: Stages,
@@ -423,5 +493,15 @@ pub struct Paged<F: Field, C> {
 pub struct Planned<F: Field> {
     plan: Arc<Plan<F>>,
     report: PagingReport,
-    stages: Stages,
+}
+
+/// What one walk of a circuit with a witness gives its pages
+/// ([`Paged::capture`]).
+#[derive(Clone, Debug)]
+pub struct Captured<F> {
+    /// For each page before the last, the values of the gates it holds, in
+    /// the order of its polynomial: the page's witness.
+    pub pages: Vec<Vec<[F; 4]>>,
+    /// The carry stage's values: its witness.
+    pub carry: Vec<F>,
 }

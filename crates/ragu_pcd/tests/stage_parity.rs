@@ -26,9 +26,9 @@ use alloc::{vec, vec::Vec};
 use core::any::type_name;
 
 use ragu_circuits::{
-    paging::{Stages, reads},
+    paging::{Pageable, Stages, reads},
     polynomials::{Rank, WalletRank},
-    staging::{MultiStage, MultiStageCircuit, Stage},
+    staging::{MultiStage, Stage},
 };
 use ragu_core::{Cycle, pasta::Pasta};
 use udon::field::Field;
@@ -422,7 +422,7 @@ fn chain<F: Field, R: Rank, S: Stage<F, R>>(depth: usize, names: &mut Vec<&'stat
 
 /// Checks each of `claims`, the stages a claim of `circuit` sums by type,
 /// against the stages `circuit` reserves and the wires it reads of them.
-fn check_reserved<F: Field, R: Rank, S: MultiStageCircuit<F, R>>(
+fn check_reserved<F: Field, R: Rank, S: Pageable<F, R>>(
     which: paging::Circuit,
     circuit: MultiStage<F, R, S>,
     claims: &[Vec<&'static str>],
