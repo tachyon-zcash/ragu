@@ -172,6 +172,7 @@ jobs:
           PROPTEST_CASES: "1"
         run: >-
           cargo test --release -p ragu_pcd --locked --all-features --lib
+          --jobs 1
           --config .github/actions/rust-setup/ci-release.toml
           -- --ignored --test-threads=1
           proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations
@@ -218,6 +219,12 @@ jobs:
           # PCD unit-test target with the decompression tests; the same build
           # passes without it.
           cache-compiler: false
+      # Compiling the PCD unit tests alongside the paging integration tests
+      # exceeds the runner's memory. Build the unit tests first.
+      - name: Build unit tests (default features)
+        run: >-
+          cargo test --release --all --locked --lib --no-run --timings --jobs 1
+          --config .github/actions/rust-setup/ci-release.toml
       - name: Run tests (default features)
         run: >-
           cargo test --release --all --locked
@@ -247,11 +254,11 @@ jobs:
           cache-compiler: false
           cache-pcd-incremental: ${{ runner.os == 'macOS' || runner.os == 'Windows' }}
       - name: Build tests (all features)
-        if: runner.os == 'macOS' || runner.os == 'Windows'
         shell: bash
         run: >-
-          env -u CARGO_INCREMENTAL
+          ${{ runner.os != 'Linux' && 'env -u CARGO_INCREMENTAL' || '' }}
           cargo test --release --all --locked --all-features --no-run --timings
+          ${{ runner.os == 'Linux' && '--lib --jobs 1' || '' }}
           --config .github/actions/rust-setup/ci-release.toml
           ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
           ${{ runner.os == 'Windows' && '--config .github/actions/rust-setup/ci-release-windows.toml' || '' }}
