@@ -336,6 +336,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         native_tables::<C, K, R, HEADER_SIZE>()
     }
 
+    #[cfg(test)]
     fn verify<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
         dr: &mut D,
         run: &mut Run<'_, '_, 'dr, D, C, Self>,
@@ -810,7 +811,10 @@ where
     // nested IPA's final scalar: the digest of everything both IPAs' round
     // challenges are squeezed from.
     let digest = other[squeezed::ROUNDS + rounds - 1].clone();
-    run.digest = Some(digest.clone());
+    #[cfg(test)]
+    {
+        run.digest = Some(digest.clone());
+    }
     let other_challenge = |i: usize| Challenge::squeezed(i, &other[i]);
 
     // The wire bindings: the preamble's children from the instance, the

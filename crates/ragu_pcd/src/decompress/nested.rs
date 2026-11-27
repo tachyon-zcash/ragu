@@ -302,6 +302,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
         nested_tables::<C, K, R, HEADER_SIZE>()
     }
 
+    #[cfg(test)]
     fn verify<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
         dr: &mut D,
         run: &mut Run<'_, '_, 'dr, D, C, Self>,

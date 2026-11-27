@@ -216,6 +216,33 @@ fn refill<S: Prepare<Pasta>>(prepared: &mut Prepared<Pasta, S>) {
     prepared.digits.elements = ran.digits;
 }
 
+/// Asserts that what the prover fills for side `S`, its lifts and digits
+/// stages and the circuit-field side's digest, is what the side's verifier
+/// writes over `prepared`.
+fn filled_as_written<S: Prepare<Pasta>>(prepared: &Prepared<Pasta, S>) {
+    let ran = prepared
+        .run::<TestR, HEADER_SIZE>(crate::pasta::baked_aggregator())
+        .expect("the side runs");
+    assert_eq!(prepared.lifts.elements, ran.lifts, "the lifts stage");
+    assert_eq!(prepared.digits.elements, ran.digits, "the digits stage");
+    assert_eq!(prepared.digest, ran.digest, "the digest");
+}
+
+/// The prover fills each side's stages as the side's verifier writes them,
+/// and the circuit-field side's again under the decompression flag.
+#[test]
+fn the_prover_fills_the_stages_the_verifiers_write() {
+    let setup = Setup::new();
+    let sides = setup.sides();
+    filled_as_written(&sides.native);
+    filled_as_written(&sides.nested);
+    let digest = sides
+        .native
+        .digest
+        .expect("the circuit-field side has a digest");
+    filled_as_written(&sides.native.for_decompression(digest));
+}
+
 /// Side `S`'s stage polynomials are well formed: each is under its
 /// stage's mask, at a random point.
 fn well_formed<S: Front<Pasta, TestR, R, HEADER_SIZE>>(
@@ -1005,8 +1032,7 @@ fn the_step_binding_holds_g_prime_to_the_host_batch_commitment() {
     };
     let prepared = |opening, digest| {
         native
-            .for_decompression::<TestR, HEADER_SIZE>(params, digest)
-            .unwrap()
+            .for_decompression(digest)
             .with_online(native.online_input.elements.clone(), query(opening))
             .unwrap()
     };

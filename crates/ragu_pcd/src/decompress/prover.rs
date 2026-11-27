@@ -35,26 +35,32 @@ use ragu_circuits::{
     registry::{CircuitIndex, Registry},
     staging::StageExt,
 };
+use ragu_core::{Cycle, Error, FixedGenerators, Result};
+#[cfg(test)]
 use ragu_core::{
-    Cycle, Error, FixedGenerators, Result,
     drivers::{
         Driver,
         emulator::{Emulator, Wireless},
     },
     maybe::{Always, Maybe},
 };
-use ragu_primitives::{Element, Point, Uendo, extract_endoscalar, lift_endoscalar};
+#[cfg(test)]
+use ragu_primitives::{Element, Point};
+use ragu_primitives::{Uendo, extract_endoscalar, lift_endoscalar};
 use rand::CryptoRng;
 use udon::{
     curve::{Affine as _, EndomorphismAffine as Affine, Projective},
     field::Field,
 };
 
+#[cfg(test)]
+use super::common::{Cells, Run, View};
 use super::{
     common::{
-        self, AbValue, Aux, Cells, Prepared, Run, Side, SideCircuit, Supplied, Tables, View,
-        challenges_per_curve, squeezed,
+        self, AbValue, Aux, Prepared, Side, SideCircuit, Supplied, Tables, challenges_per_curve,
+        squeezed,
     },
+    gadgets::derive::{signed_digit, signed_digits},
     native::{Native, NativeExtra},
     nested::{Nested, NestedExtra},
     online::{self, input},
@@ -77,7 +83,7 @@ use crate::{
     },
     header::{Header, NUM_ONLINE_FP_POLYS, Padding},
     internal::{ky, native, nested},
-    ipa::{IpaCycle, IpaTranscript, MSM, Params},
+    ipa::{IpaCycle, IpaTranscript, MSM, Params, convert_challenge},
     profile::{
         Aggregator, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext, Standard,
     },
@@ -321,10 +327,7 @@ where
                 stepped = decompressed
                     .0
                     .native
-                    .for_decompression::<WalletRank, HEADER_SIZE>(
-                        params,
-                        online_openings[DIGEST_SLOT][0],
-                    )?;
+                    .for_decompression(online_openings[DIGEST_SLOT][0]);
                 &stepped
             }
             None => &self.canonical.native,
@@ -1050,6 +1053,32 @@ pub(crate) trait Prepare<C: Cycle>: Side<C> {
     /// reduction whose points it checks, then what the side adds.
     fn foreign(witness: &Witness<C>, tables: &Tables) -> Result<Vec<Self::Other>>;
     fn extra(witness: &Witness<C>) -> Result<Self::Extra>;
+    /// The lifts stage's values, as the side's verifier writes them: the
+    /// lifts of the challenges it squeezes, on the circuit-field side, or
+    /// of every challenge it takes from bits (`aux`), on the scalar-field
+    /// side.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a challenge has no endoscalar.
+    fn lifts(witness: &Witness<C>, aux: &Aux<Self::Other>) -> Result<Vec<Self::F>>;
+    /// The digits stage's values, as the side's verifier writes them: the
+    /// signed digits of the side's full-width scalars the other side scales
+    /// by, in the other side's [`foreign`](Self::foreign) order, then the
+    /// digits of the other side's flags, unset.
+    ///
+    /// # Errors
+    ///
+    /// Fails as the other side's [`foreign`](Self::foreign) does.
+    fn digits(witness: &Witness<C>, tables: &Tables) -> Result<Vec<Self::F>>;
+    /// The compression transcript's digest, its last squeeze, which the
+    /// circuit-field side's verifier squeezes; none on the scalar-field
+    /// side.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the nested IPA has no rounds.
+    fn digest(witness: &Witness<C>) -> Result<Option<Self::F>>;
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepare<C> for Native {
@@ -1139,6 +1168,39 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepare<C> for Native {
             omega_j: instance.circuit_id.omega_j(),
         })
     }
+
+    fn lifts(witness: &Witness<C>, _: &Aux<Self::Other>) -> Result<Vec<Self::F>> {
+        // The host curve's challenges, in [`squeezed`] order, as the side
+        // squeezes them.
+        Self::own(witness)
+            .raw
+            .in_order()
+            .into_iter()
+            .map(lift)
+            .collect()
+    }
+
+    fn digits(witness: &Witness<C>, tables: &Tables) -> Result<Vec<Self::F>> {
+        let mut digits: Vec<Self::F> = <Nested as Prepare<C>>::foreign(witness, tables)?
+            .into_iter()
+            .flat_map(signed_digits)
+            .collect();
+        // The decompression flag, unset until the step that proves the side
+        // sets it ([`for_decompression`](Prepared::for_decompression)).
+        digits.extend((0..<Nested as Side<C>>::FLAGS).map(|_| signed_digit::<Self::F>(false)));
+        Ok(digits)
+    }
+
+    fn digest(witness: &Witness<C>) -> Result<Option<Self::F>> {
+        // The nested curve's last round challenge, which the side squeezes
+        // last, in its own field, as the nested transcript converts it.
+        let last = Self::other(witness)
+            .raw
+            .rounds
+            .last()
+            .ok_or_else(|| Error::InvalidWitness("the nested IPA has rounds".into()))?;
+        convert_challenge(*last).map(Some)
+    }
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepare<C> for Nested {
@@ -1202,6 +1264,29 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepare<C> for Nested {
         Ok(NestedExtra {
             unified: witness.proof.instance.nested_unified(&witness.fuse)?,
         })
+    }
+
+    fn lifts(_: &Witness<C>, aux: &Aux<Self::Other>) -> Result<Vec<Self::F>> {
+        // Every challenge the side takes from bits, in the order it holds
+        // them: the nested curve's, the fuse's and the host curve's.
+        Ok(aux
+            .challenge_bits
+            .iter()
+            .map(|&bits| lift_endoscalar(bits))
+            .collect())
+    }
+
+    fn digits(witness: &Witness<C>, tables: &Tables) -> Result<Vec<Self::F>> {
+        let mut digits: Vec<Self::F> = <Native as Prepare<C>>::foreign(witness, tables)?
+            .into_iter()
+            .flat_map(signed_digits)
+            .collect();
+        digits.extend((0..<Native as Side<C>>::FLAGS).map(|_| signed_digit::<Self::F>(false)));
+        Ok(digits)
+    }
+
+    fn digest(_: &Witness<C>) -> Result<Option<Self::F>> {
+        Ok(None)
     }
 }
 
@@ -1324,13 +1409,15 @@ pub(crate) fn nested_inputs<C: Cycle>(witness: &Witness<C>) -> Result<Vec<C::Sca
     )
 }
 
-/// A stage's values allocated as witnesses under a driver, for the
-/// prover's native run of a side.
+/// A stage's values allocated as witnesses under a driver, for the tests'
+/// native run of a side.
+#[cfg(test)]
 struct Allocated<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
     points: Vec<Point<'dr, D, P>>,
     elements: Vec<Element<'dr, D>>,
 }
 
+#[cfg(test)]
 impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
     fn alloc(dr: &mut D, values: &Values<D::F, P>) -> Result<Self> {
         Ok(Allocated {
@@ -1355,6 +1442,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
     }
 }
 
+#[cfg(test)]
 type Executor<F> = Emulator<Wireless<Always<()>, F>>;
 
 /// The endoscalars of raw challenges, as their bits.
@@ -1365,21 +1453,19 @@ fn bits<F: Field>(raw: &[F]) -> Result<Vec<Uendo>> {
 /// What a native run of a side's verifier leaves: the two stages it
 /// writes, its lifts and its digits, and, on the circuit-field side, the
 /// compression transcript's digest.
+#[cfg(test)]
 pub(crate) struct Ran<F, P> {
     pub lifts: Vec<F>,
     pub digits: Vec<F>,
     pub digest: Option<F>,
     /// The points the side exposes.
-    #[cfg(test)]
     pub exposed: Vec<P>,
-    #[cfg(not(test))]
-    _points: PhantomData<P>,
 }
 
 impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
     /// Prepares side `S` from the prepared `witness` for a whole circuit at
-    /// rank `R` and runs its verifier natively to fill the lifts and
-    /// digits stages.
+    /// rank `R`, with the lifts and digits stages as its verifier writes
+    /// them.
     pub(crate) fn new<K: Rank, R: Rank, const HEADER_SIZE: usize>(
         params: &C::Params,
         witness: &Witness<C>,
@@ -1443,7 +1529,14 @@ impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
             #[cfg(test)]
             read: None,
         };
-        let mut prepared = Prepared {
+        let lifts = S::lifts(witness, &aux)?;
+        let digits = S::digits(witness, &tables)?;
+        if lifts.len() != layout.lifts || digits.len() != layout.digits {
+            return Err(Error::InvalidWitness(
+                "the side fills its lifts and digits stages".into(),
+            ));
+        }
+        Ok(Prepared {
             instance: S::instance(params, instance, &witness.header),
             messages: S::messages(params, &witness.proof),
             online_input: Values {
@@ -1455,30 +1548,33 @@ impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
                 elements: S::ONLINE.evaluations(own),
             },
             extra: Arc::new(S::extra(witness)?),
-            lifts: Values::blank(0, layout.lifts, placeholder),
-            digits: Values::blank(0, layout.digits, placeholder),
+            lifts: Values {
+                points: Vec::new(),
+                elements: lifts,
+            },
+            digits: Values {
+                points: Vec::new(),
+                elements: digits,
+            },
+            digest: S::digest(witness)?,
             tables,
             aux,
             supplied,
-            digest: None,
-        };
-        let ran = prepared.run::<K, HEADER_SIZE>(params)?;
-        prepared.lifts.elements = ran.lifts;
-        prepared.digits.elements = ran.digits;
-        prepared.digest = ran.digest;
-        Ok(prepared)
+        })
     }
 
     /// Runs the side's verifier natively over the stages' values, as its
     /// whole circuit runs it over their wires, and returns what it leaves:
     /// the lifts and digits stages it writes, the points it exposes and
     /// its transcript's digest. The lifts and digits stages `self` holds
-    /// are not read.
+    /// are not read. The tests' oracle for what the prover fills, and for
+    /// an honest prover's stages over what a test has changed.
     ///
     /// # Errors
     ///
     /// Fails if a gadget cannot be given its witness, which a verified
     /// proof's side does not.
+    #[cfg(test)]
     pub(crate) fn run<K: Rank, const HEADER_SIZE: usize>(
         &self,
         params: &C::Params,
@@ -1500,8 +1596,6 @@ impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
             Executor::<S::F>::just(|| self),
         );
         let exposed = S::verify::<_, K, HEADER_SIZE>(&mut dr, &mut run)?;
-        #[cfg(not(test))]
-        drop(exposed);
         let written = |cells: Cells<'_, '_, Executor<S::F>>| -> Result<Vec<S::F>> {
             cells
                 .filled()
@@ -1518,10 +1612,7 @@ impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
             digest: run.digest.as_ref().map(|digest| *digest.value().take()),
             lifts: written(run.lifts)?,
             digits: written(run.digits)?,
-            #[cfg(test)]
             exposed: exposed.iter().map(|point| point.value().take()).collect(),
-            #[cfg(not(test))]
-            _points: PhantomData,
         })
     }
 }
@@ -1557,20 +1648,17 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
-    /// Sets the flag and the staged compression transcript digest, and
-    /// fills the digits stage again: it holds the flag's digit for the
-    /// scalar-field side.
-    pub(crate) fn for_decompression<K: Rank, const HEADER_SIZE: usize>(
-        &self,
-        params: &C::Params,
-        digest: C::CircuitField,
-    ) -> Result<Self> {
+    /// Sets the flag and the staged compression transcript digest, and the
+    /// flag's digit for the scalar-field side, which the digits stage holds
+    /// last.
+    pub(crate) fn for_decompression(&self, digest: C::CircuitField) -> Self {
         let mut prepared = self.clone();
-        let step = prepared.tables.layout.instance.step;
+        let layout = prepared.tables.layout;
+        let step = layout.instance.step;
         prepared.instance.elements[step.at(stages::step::FLAG)] = C::CircuitField::ONE;
         prepared.instance.elements[step.at(stages::step::DIGEST)] = digest;
-        prepared.digits.elements = prepared.run::<K, HEADER_SIZE>(params)?.digits;
-        Ok(prepared)
+        prepared.digits.elements[layout.digits - layout.flags] = signed_digit(true);
+        prepared
     }
 }
 

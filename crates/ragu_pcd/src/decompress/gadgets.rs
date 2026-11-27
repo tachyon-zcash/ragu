@@ -683,7 +683,7 @@ pub(crate) mod derive {
             scalar: DriverValue<D, S>,
             range: Range<usize>,
         ) -> Result<Self> {
-            let bits = scalar.map(Self::bits_of);
+            let bits = scalar.map(digit_bits);
             range
                 .map(|i| Boolean::alloc(dr, &mut (), bits.as_ref().map(|bits| bits[i])))
                 .collect::<Result<Vec<_>>>()
@@ -723,15 +723,29 @@ pub(crate) mod derive {
                 .enforce_zero(dr)?;
             Ok(digits)
         }
+    }
 
-        /// The bits of $B = (k + 2^n - 1) / 2$ for the scalar $k$.
-        pub(crate) fn bits_of<S: Field>(scalar: S) -> Vec<bool> {
-            let n = S::CAPACITY as usize + 1;
-            let two = S::ONE.double();
-            let b = (scalar + two.pow_u64(n as u64) - S::ONE)
-                * two.invert().expect("two is invertible");
-            b.to_le_bits().as_ref()[..n].to_vec()
-        }
+    /// The bits of $B = (k + 2^n - 1) / 2$ for the scalar $k$ of the field
+    /// `S`, $n$ its [`digit_width`]: $b_i$ for its $i$th signed digit
+    /// $2 b_i - 1$.
+    pub(crate) fn digit_bits<S: Field>(scalar: S) -> Vec<bool> {
+        let n = digit_width::<S>();
+        let two = S::ONE.double();
+        let b =
+            (scalar + two.pow_u64(n as u64) - S::ONE) * two.invert().expect("two is invertible");
+        b.to_le_bits().as_ref()[..n].to_vec()
+    }
+
+    /// The signed digits $2 b_i - 1$ of the scalar $k$ of the field `S`, in
+    /// order, as values of `S`: what a side's digits stage holds for $k$,
+    /// for the other side to scale by.
+    pub(crate) fn signed_digits<S: Field>(scalar: S) -> impl Iterator<Item = S> {
+        digit_bits(scalar).into_iter().map(signed_digit)
+    }
+
+    /// The signed digit $2 b - 1$ of the bit $b$, as a value of `S`.
+    pub(crate) fn signed_digit<S: Field>(bit: bool) -> S {
+        if bit { S::ONE } else { -S::ONE }
     }
 
     /// The signed-digit chain $\text{acc} = 2 \text{acc} \pm P$ over `digits`

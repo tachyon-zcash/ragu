@@ -543,17 +543,6 @@ pub(crate) struct Values<F, P> {
     pub elements: Vec<F>,
 }
 
-impl<F: Field, P: Affine> Values<F, P> {
-    /// Blank values over `points` and `elements` slots, every point
-    /// `placeholder` rather than the identity so that it allocates.
-    pub(crate) fn blank(points: usize, elements: usize, placeholder: P) -> Self {
-        Values {
-            points: vec![placeholder; points],
-            elements: vec![F::ZERO; elements],
-        }
-    }
-}
-
 /// A values stage's wires.
 #[derive(Gadget)]
 pub(crate) struct Output<'dr, D: Driver<'dr>, P: Affine<Base = D::F>, LP: Len, LE: Len> {

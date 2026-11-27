@@ -224,11 +224,13 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// The side's verifier for a proof at rank `K`, run over `run`'s
     /// stages: returns the points the side exposes, in the order the
     /// profile's [`Binding`](crate::profile::Binding) names what they hold
-    /// to.
+    /// to. The side's circuit runs its verifier itself; this is the tests'
+    /// oracle's way in ([`Prepared::run`]).
     ///
     /// # Errors
     ///
     /// Fails if a gadget does, or if the witness is not the side's.
+    #[cfg(test)]
     fn verify<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
         dr: &mut D,
         run: &mut Run<'_, '_, 'dr, D, C, Self>,
@@ -908,15 +910,18 @@ where
 
 /// A stage the side writes, its lifts or its digits: the stage's wires
 /// where the side's circuit loads them, each held to what the side writes
-/// there; or what the side wrote, where the prover runs it to fill the
-/// stage.
+/// there. The prover fills the stage itself
+/// ([`Prepare`](super::prover::Prepare)); the tests' oracle runs the side
+/// natively to keep what it writes instead.
 pub(crate) enum Cells<'a, 'dr, D: Driver<'dr>> {
     Loaded(&'a [Element<'dr, D>]),
+    #[cfg(test)]
     Filled(Vec<Option<Element<'dr, D>>>),
 }
 
 impl<'dr, D: Driver<'dr>> Cells<'_, 'dr, D> {
     /// A stage of `len` values for the side to fill.
+    #[cfg(test)]
     pub(crate) fn blank(len: usize) -> Self {
         Cells::Filled(vec![None; len])
     }
@@ -925,6 +930,7 @@ impl<'dr, D: Driver<'dr>> Cells<'_, 'dr, D> {
     pub(super) fn write(&mut self, dr: &mut D, slot: usize, value: Element<'dr, D>) -> Result<()> {
         match self {
             Cells::Loaded(wires) => value.enforce_equal(dr, &wires[slot]),
+            #[cfg(test)]
             Cells::Filled(values) => {
                 values[slot] = Some(value);
                 Ok(())
@@ -936,6 +942,7 @@ impl<'dr, D: Driver<'dr>> Cells<'_, 'dr, D> {
     pub(super) fn read(&self, slot: usize) -> Result<Element<'dr, D>> {
         match self {
             Cells::Loaded(wires) => Ok(wires[slot].clone()),
+            #[cfg(test)]
             Cells::Filled(values) => values[slot].clone().ok_or_else(|| {
                 Error::InvalidWitness("a side reads a stage's value before it writes it".into())
             }),
@@ -943,6 +950,7 @@ impl<'dr, D: Driver<'dr>> Cells<'_, 'dr, D> {
     }
 
     /// What the side wrote, slot by slot, where it filled the stage.
+    #[cfg(test)]
     pub(crate) fn filled(self) -> Option<Vec<Option<Element<'dr, D>>>> {
         match self {
             Cells::Loaded(_) => None,
@@ -1067,7 +1075,9 @@ where
     /// equalities under the flags leave them.
     flag_bound: Vec<Option<Point<'dr, D, S::P>>>,
     /// Circuit-field side: the compression transcript's digest, its last
-    /// squeeze, once the side has replayed the transcript.
+    /// squeeze, once the side has replayed the transcript, for the tests'
+    /// oracle.
+    #[cfg(test)]
     pub digest: Option<Element<'dr, D>>,
 }
 
@@ -1117,6 +1127,7 @@ where
             witness,
             bound: vec![None; scalars],
             flag_bound: vec![None; S::FLAGS],
+            #[cfg(test)]
             digest: None,
         }
     }
