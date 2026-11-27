@@ -36,14 +36,16 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Endoscalar, EndoscalarChallenge, GadgetExt, Point, WithSuffix, vec::FixedVec,
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, WithSuffix,
+    poseidon::Sponge, vec::FixedVec,
 };
+use udon::field::Field;
 
 use super::{
     common::{
-        AbValue, Body, Carried, Cells, Challenge, Exposed, Prepared, Replay, Run, Side,
-        SideCircuit, Src, Tables, View, Whole, ab_layout, body, challenges_per_curve, coordinates,
-        fuse, native_claims, nested_claims, squeezed,
+        AbValue, Carried, Cells, Challenge, Exposed, Prepared, Run, Side, SideCircuit, Src, Tables,
+        View, Whole, ab_layout, challenges_per_curve, coordinates, fuse, native_claims,
+        nested_claims, squeezed,
     },
     gadgets::derive::{self},
     nested::Nested,
@@ -871,21 +873,17 @@ where
         run.scalar(native_scalars::A_AT_U),
         run.scalar(native_scalars::B_AT_U),
     ];
-    let (digits, g_prime) = body::<_, C, Native, K>(
-        dr,
-        run,
-        Body {
-            targets,
-            expected,
-            opening,
-            extra_digits: Vec::new(),
-            point_challenge: &other_challenge,
-            components,
-            ab,
-            inputs,
-            digest: Some(digest),
-        },
-    )?;
+    // The registry's evaluations, then the reduction the side checks in its
+    // field, leaving v and c b z, whose digits and c's the scalar-field
+    // side scales by.
+    let registry = run.registry(dr, expected, &inputs)?;
+    let [v, cbz] = run.reduction::<K>(dr, targets, registry, opening, Some(&digest))?;
+    let digits = vec![v, run.message_scalars().c().clone(), cbz];
+    // The point checks of the nested curve under the nested reduction's
+    // challenges, leaving G', then every point the stages hold on the
+    // curve.
+    let g_prime = run.point_checks::<K>(dr, &other_challenge, components, ab)?;
+    run.points_on_curve(dr)?;
 
     // The ab bridge: its coefficients' digits times their generators.
     {
@@ -918,4 +916,127 @@ where
     let flag = run.instance.elements[instance.step.at(stages::step::FLAG)].clone();
     run.write_digits(dr, &digits, &[flag])?;
     Ok(exposed)
+}
+
+/// The circuit-field side's own parts of its verifier: the sums its
+/// recomputations of the scalar-field side's stages take over the nested
+/// curve's points.
+impl<'dr, D, C> Run<'_, '_, 'dr, D, C, Native>
+where
+    D: Driver<'dr, F = C::CircuitField>,
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+{
+    /// Adds the fixed `point` scaled by `endoscalar`, a challenge's the
+    /// side has at hand, onto the running sum `sum`, or starts it.
+    pub(super) fn add_term(
+        &self,
+        dr: &mut D,
+        sum: &mut Option<Point<'dr, D, C::NestedCurve>>,
+        endoscalar: &Endoscalar<'dr, D>,
+        point: C::NestedCurve,
+    ) -> Result<()> {
+        let point = Point::constant(dr, point)?;
+        let term = endoscalar.group_scale(dr, &point)?;
+        *sum = Some(match sum.take() {
+            None => term,
+            Some(sum) => NonzeroBank::scope(dr, |dr, bank| sum.add_incomplete(dr, &term, bank))?,
+        });
+        Ok(())
+    }
+}
+
+/// A transcript as the native verifier runs it, with the commitment it
+/// absorbs for a run of scalar-field values before whatever ends the run:
+/// [`foreign`](Self::foreign) marks that such values were absorbed, and
+/// the next absorption or squeeze absorbs the next run's commitment, a
+/// point the prover supplies, when they were.
+pub(super) struct Replay<'w, 'dr, D, C, S>
+where
+    D: Driver<'dr>,
+    C: Cycle,
+    S: Side<C, F = D::F>,
+{
+    sponge: Sponge<'dr, D, S::Poseidon>,
+    witness: DriverValue<D, &'w Prepared<C, S>>,
+    /// The runs' commitments absorbed so far, in order.
+    runs: Vec<Point<'dr, D, S::P>>,
+    pending: bool,
+}
+
+impl<'w, 'dr, D, C, S> Replay<'w, 'dr, D, C, S>
+where
+    D: Driver<'dr>,
+    C: Cycle,
+    S: Side<C, F = D::F>,
+{
+    /// A transcript under `tag`, which it absorbs as [`Transcript::new`]
+    /// does: the length, then each 16-byte chunk as a little-endian
+    /// integer.
+    ///
+    /// [`Transcript::new`]: crate::internal::transcript::Transcript::new
+    pub(super) fn new(dr: &mut D, run: &Run<'_, 'w, 'dr, D, C, S>, tag: &[u8]) -> Result<Self> {
+        let mut sponge = Sponge::new(dr, run.poseidon);
+        let chunks = tag.chunks(16).map(|chunk| {
+            let bytes: [u8; 16] = core::array::from_fn(|i| chunk.get(i).copied().unwrap_or(0));
+            u128::from_le_bytes(bytes)
+        });
+        for value in once(tag.len() as u128).chain(chunks) {
+            let element = Element::constant(dr, D::F::from_u128(value));
+            sponge.absorb(dr, &element)?;
+        }
+        Ok(Replay {
+            sponge,
+            witness: run.witness.as_ref().map(|w| *w),
+            runs: Vec::new(),
+            pending: false,
+        })
+    }
+
+    /// Absorbs a point: its coordinates, $x$ then $y$.
+    pub(super) fn point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
+        for coordinate in &coordinates(dr, point)? {
+            self.sponge.absorb(dr, coordinate)?;
+        }
+        Ok(())
+    }
+
+    /// Absorbs the run's commitment, if a run is pending.
+    pub(super) fn flush(&mut self, dr: &mut D) -> Result<()> {
+        if self.pending {
+            let next = self.runs.len();
+            let value = self.witness.as_ref().map(|w| w.supplied.runs[next]);
+            let run = Point::alloc(dr, value)?;
+            self.point(dr, &run)?;
+            self.runs.push(run);
+            self.pending = false;
+        }
+        Ok(())
+    }
+
+    /// Scalar-field values absorbed: the run's commitment covers them.
+    pub(super) fn foreign(&mut self) {
+        self.pending = true;
+    }
+
+    pub(super) fn absorb(&mut self, dr: &mut D, element: &Element<'dr, D>) -> Result<()> {
+        self.flush(dr)?;
+        self.sponge.absorb(dr, element)
+    }
+
+    pub(super) fn absorb_point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
+        self.flush(dr)?;
+        self.point(dr, point)
+    }
+
+    pub(super) fn squeeze(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
+        self.flush(dr)?;
+        self.sponge.squeeze(dr)
+    }
+
+    /// The runs' commitments the transcript absorbed. Values pending at
+    /// the end precede no challenge and are not absorbed, as the verifier
+    /// leaves them.
+    pub(super) fn finish(self) -> Vec<Point<'dr, D, S::P>> {
+        self.runs
+    }
 }

@@ -35,14 +35,17 @@ use ragu_core::{
     gadgets::{Bound, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, Point, WithSuffix, vec::FixedVec};
+use ragu_primitives::{
+    Boolean, Element, Endoscalar, GadgetExt, NonzeroBank, Point, WithSuffix, vec::FixedVec,
+};
 
 use super::{
     common::{
-        AbValue, Body, Carried, Cells, Challenge, Exposed, Prepared, Run, Side, SideCircuit,
-        Tables, Whole, ab_layout, body, challenges_per_curve, coordinates, fuse, native_claims,
-        nested_claims, squeezed,
+        AbValue, Carried, Cells, Challenge, Exposed, Prepared, Run, Side, SideCircuit, Tables,
+        Whole, ab_layout, challenges_per_curve, coordinates, fuse, native_claims, nested_claims,
+        squeezed,
     },
+    gadgets::derive::{self, Digits},
     native::Native,
     online::input,
     stages::{
@@ -544,21 +547,24 @@ where
         run.scalar(nested_scalars::A_AT_U),
         run.scalar(nested_scalars::B_AT_U),
     ];
-    let (digits, g_prime) = body::<_, C, Nested, K>(
+    // The registry's evaluations, then the reduction the side checks in its
+    // field, leaving v and c b z, whose digits, c's and the ab bridge's
+    // terms' the circuit-field side scales by.
+    let registry = run.registry(dr, expected, &inputs)?;
+    let [v, cbz] = run.reduction::<K>(dr, targets, registry, opening, None)?;
+    let mut digits = vec![v, run.message_scalars().c().clone(), cbz];
+    digits.extend(extra_digits);
+    // The point checks of the host curve under the native reduction's
+    // challenges, taken from their bits, leaving G', then every point the
+    // stages hold on the curve.
+    let point_challenge = |i| Challenge::bits(per_curve + lifted + i);
+    let g_prime = run.point_checks::<K>(
         dr,
-        run,
-        Body {
-            targets,
-            expected,
-            opening,
-            extra_digits,
-            point_challenge: &|i| Challenge::bits(per_curve + lifted + i),
-            components: native_components::<Standard>().count(),
-            ab,
-            inputs,
-            digest: None,
-        },
+        &point_challenge,
+        native_components::<Standard>().count(),
+        ab,
     )?;
+    run.points_on_curve(dr)?;
 
     // The binding claim ties these commitments to the aggregator's PCS.
     // Under the decompression flag, its application slots carry the wallet
@@ -594,4 +600,85 @@ where
     );
     run.write_digits(dr, &digits, &[])?;
     Ok(exposed)
+}
+
+/// The scalar-field side's own parts of its verifier: the challenges it
+/// takes from their bits and the equalities it holds under the
+/// circuit-field side's flags.
+impl<'dr, D, C> Run<'_, '_, 'dr, D, C, Nested>
+where
+    D: Driver<'dr, F = C::ScalarField>,
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+{
+    /// The endoscalar of the challenge at `id` of the side's challenge
+    /// bits, allocated from them and held to nothing: what the side lifts
+    /// into the lifts stage's slot every other use holds its bits to.
+    pub(super) fn bits(&self, dr: &mut D, id: usize) -> Result<Endoscalar<'dr, D>> {
+        let bits = self.witness.as_ref().map(|w| w.aux.challenge_bits[id]);
+        Endoscalar::alloc(dr, bits)
+    }
+
+    /// Holds the points of each pair equal under the other side's flag
+    /// `flag`: its bit, by index into the side's foreign flags, which the
+    /// side allocates as a witness and the other side's digits stage
+    /// binds, its signed digit's part of that stage's commitment riding
+    /// along as a scaling's digits' does. A flag is taken once.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the flag was taken before.
+    pub(super) fn equal_if(
+        &mut self,
+        dr: &mut D,
+        flag: usize,
+        pairs: &[[Point<'dr, D, C::HostCurve>; 2]],
+    ) -> Result<()> {
+        assert!(
+            self.flag_bound[flag].is_none(),
+            "a foreign flag binds its digit once"
+        );
+        // Bind the flag once to the digit sent by the other side, and use
+        // the same bit for each point comparison.
+        let value = self.witness.as_ref().map(|w| w.aux.flags[flag]);
+        let bit = Boolean::alloc(dr, &mut (), value)?;
+        for [left, right] in pairs {
+            let left = coordinates(dr, left)?;
+            let right = coordinates(dr, right)?;
+            for (left, right) in left.iter().zip(&right) {
+                let gap = left.sub(dr, right);
+                bit.element().mul(dr, &gap)?.enforce_zero(dr)?;
+            }
+        }
+        let width = derive::digit_width::<C::CircuitField>();
+        let generator = self.tables.foreign[self.bound.len() * width + flag];
+        let digit = Digits::of_flag(bit);
+        self.flag_bound[flag] = Some(self.bind_sum(dr, &digit, &[generator], None)?);
+        Ok(())
+    }
+
+    /// The part of the other side's digits stage commitment over `digits`:
+    /// each digit's generator, `generators` names them, added or
+    /// subtracted by its bit, onto `init` or from nothing.
+    pub(super) fn bind_sum(
+        &self,
+        dr: &mut D,
+        digits: &Digits<'dr, D>,
+        generators: &[usize],
+        init: Option<Point<'dr, D, C::HostCurve>>,
+    ) -> Result<Point<'dr, D, C::HostCurve>> {
+        assert_eq!(generators.len(), digits.len(), "one generator per digit");
+        let mut acc = init;
+        NonzeroBank::scope(dr, |dr, bank| {
+            for (bit, &generator) in digits.bits().iter().zip(generators) {
+                let base = Point::constant(dr, self.generators[generator])?;
+                let negate = bit.not(dr);
+                let term = base.conditional_negate(dr, &negate)?;
+                acc = Some(match acc.take() {
+                    None => term,
+                    Some(acc) => acc.add_incomplete(dr, &term, bank)?,
+                });
+            }
+            acc.ok_or_else(|| Error::InvalidWitness("a scalar has a digit".into()))
+        })
+    }
 }

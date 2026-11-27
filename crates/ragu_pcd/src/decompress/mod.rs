@@ -63,19 +63,19 @@
 //!   an opening against; and the signed-digit chains that scale the other
 //!   curve's points by full-width scalars.
 //! - [`native`] and [`nested`]: each side's circuit, its verifier as
-//!   straight-line code, reading the compressed proof's data from stages
-//!   and deriving the commitments, $\[H\]$ and the IPA's final check as
-//!   endoscalar chains over the other curve's points. [`common`] holds
-//!   what the two share: the [`Side`](common::Side) interface, the whole
-//!   circuit that runs a side's verifier, the statement circuit, the
-//!   prepared witness and the verifier's part from the reduction on;
-//!   [`stages`] holds the stages they read. The circuit takes two ranks,
-//!   the compressed proof's and its own, an aggregator's being
-//!   [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank), and
-//!   has many times the gates of a polynomial at its own, so the pager
-//!   ([`paging`](ragu_circuits::paging)) cuts it into pages. The
-//!   aggregator profile pins how many, and how many values the pages pass
-//!   to one another through the circuit's carry stage
+//!   straight-line code, reading the compressed proof's data from stages and
+//!   deriving the commitments, $\[H\]$ and the IPA's final check as endoscalar
+//!   chains over the other curve's points. [`common`] holds what the two share:
+//!   the [`Side`](common::Side) and [`SideCircuit`](common::SideCircuit)
+//!   interfaces, the paging of a side's circuit, the statement circuit, the
+//!   prepared witness and the verifier's steps from the reduction on;
+//!   [`stages`] holds the stages they read. The circuit takes two ranks, the
+//!   compressed proof's and its own, an aggregator's being
+//!   [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank), and has
+//!   many times the gates of a polynomial at its own, so the pager
+//!   ([`paging`](ragu_circuits::paging)) cuts it into pages. The aggregator
+//!   profile pins how many, and how many values the pages pass to one another
+//!   through the circuit's carry stage
 //!   ([`NATIVE_PAGES`](crate::profile::Aggregator::NATIVE_PAGES) and
 //!   [`NESTED_PAGES`](crate::profile::Aggregator::NESTED_PAGES)).
 //! - [`aggregator`] and [`online`]: the aggregator profile, which declares

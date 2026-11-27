@@ -1,8 +1,8 @@
 //! What the decompression's two sides share: the interfaces each side
 //! implements ([`Side`] and [`SideCircuit`]), the paging of a side's whole
-//! circuit, the statement circuit, the side's prepared witness, and the
-//! verifier's part from the reduction on. The sides themselves, each with
-//! its whole circuit, are [`native`](super::native) and
+//! circuit, the statement circuit, the side's prepared witness, and the steps
+//! both sides' verifiers take from the reduction on. The sides themselves, each
+//! with its whole circuit, are [`native`](super::native) and
 //! [`nested`](super::nested).
 //!
 //! # The two sides
@@ -28,8 +28,8 @@
 //!
 //! A side's whole circuit ([`native::Circuit`](super::native::Circuit) and
 //! [`nested::Circuit`](super::nested::Circuit)) loads the side's stages and
-//! runs the side's verifier over them, as the prover's native run does
-//! ([`Prepared::run`]). It loads its stages unenforced, as the fuse's
+//! runs the side's verifier over them; the prover fills the stages the
+//! verifier writes itself. It loads its stages unenforced, as the fuse's
 //! endoscaling steps load theirs: the aggregator's two online stages
 //! ([`OnlineInputStage`] and [`OnlineQueryStage`]), then the side's front
 //! stages (see [`Front`]), the lifts stage and the digits stage. The
@@ -72,23 +72,23 @@
 //! exposes. The prover runs the same function natively to fill the two
 //! stages a side writes, its lifts and its digits ([`Cells`]).
 //!
-//! The verifier's parts follow one another as the native verifier's do:
-//! the two transcripts; the challenges' lifts; the targets, the reduction,
-//! the batch and the IPA's scalars; the claims' points; the fold, batch
-//! and IPA as Horner chains; the full-width scalings; the stages the side
-//! recomputes of the other's; the digits of the scalars the other side
-//! scales by; and the curve membership of every point a stage holds, which
-//! the stages load unenforced. The two sides share everything from the
-//! reduction on ([`body`]); they differ in how they obtain their
-//! challenges and in the stages each recomputes of the other's: the
-//! circuit-field side absorbs each run of the scalar field's values the
-//! transcript covers as the run stage's commitment, a point the prover
-//! supplies, endoscales the lifts stage's generators by the challenges it
-//! squeezed, and, as it scales by the scalar-field side's digits, sums
-//! their generators by sign into the digits stage's commitment; the
-//! scalar-field side does the last for the circuit-field side's digits.
-//! The absorbed run commitments and each side's recomputations of the
-//! lifts and digits stages are what the side exposes.
+//! The verifier's parts follow one another as the native verifier's do: the two
+//! transcripts; the challenges' lifts; the targets, the reduction, the batch
+//! and the IPA's scalars; the claims' points; the fold, batch and IPA as Horner
+//! chains; the full-width scalings; the stages the side recomputes of the
+//! other's; the digits of the scalars the other side scales by; and the curve
+//! membership of every point a stage holds, which the stages load unenforced.
+//! The two sides take the same steps from the reduction on ([`Run::registry`],
+//! [`Run::reduction`], [`Run::point_checks`] and [`Run::points_on_curve`]);
+//! they differ in how they obtain their challenges and in the stages each
+//! recomputes of the other's: the circuit-field side absorbs each run of the
+//! scalar field's values the transcript covers as the run stage's commitment, a
+//! point the prover supplies, endoscales the lifts stage's generators by the
+//! challenges it squeezed, and, as it scales by the scalar-field side's digits,
+//! sums their generators by sign into the digits stage's commitment; the
+//! scalar-field side does the last for the circuit-field side's digits. The
+//! absorbed run commitments and each side's recomputations of the lifts and
+//! digits stages are what the side exposes.
 //!
 //! What a side's verifier is laid out by beside its stage layout, the
 //! claims' structure, the wire bindings' degrees and the generators of the
@@ -126,9 +126,8 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
     consistent::Consistent,
-    poseidon::Sponge,
     vec::{ConstLen, FixedVec, Len},
 };
 use udon::{
@@ -966,7 +965,7 @@ pub(crate) struct Challenge<'dr, D: Driver<'dr>> {
     /// scales points by, its index in [`squeezed`] order; where it was
     /// squeezed on the other side, its index into the side's challenge
     /// bits, which is its lifts stage slot too.
-    key: usize,
+    pub(super) key: usize,
     /// The element the side squeezed, where it squeezed the challenge: the
     /// side reads its endoscalar off it, constraining it into range.
     raw: Option<Element<'dr, D>>,
@@ -1070,10 +1069,10 @@ where
     pub witness: DriverValue<D, &'w Prepared<C, S>>,
     /// Each foreign scalar's part of the other side's digits stage
     /// commitment, by the scalar's index, as the scalings leave them.
-    bound: Vec<Option<Point<'dr, D, S::P>>>,
+    pub(super) bound: Vec<Option<Point<'dr, D, S::P>>>,
     /// Each foreign flag's part of it, by the flag's index, as the
     /// equalities under the flags leave them.
-    flag_bound: Vec<Option<Point<'dr, D, S::P>>>,
+    pub(super) flag_bound: Vec<Option<Point<'dr, D, S::P>>>,
     /// Circuit-field side: the compression transcript's digest, its last
     /// squeeze, once the side has replayed the transcript, for the tests'
     /// oracle.
@@ -1165,14 +1164,6 @@ where
         self.witness.as_ref().map(|w| w.aux.foreign[id])
     }
 
-    /// The endoscalar of the challenge at `id` of the side's challenge
-    /// bits, allocated from them and held to nothing: what the side lifts
-    /// into the lifts stage's slot every other use holds its bits to.
-    pub(super) fn bits(&self, dr: &mut D, id: usize) -> Result<Endoscalar<'dr, D>> {
-        let bits = self.witness.as_ref().map(|w| w.aux.challenge_bits[id]);
-        Endoscalar::alloc(dr, bits)
-    }
-
     /// A challenge's endoscalar: read off the squeezed element,
     /// constrained into range, or allocated from its bits and held, by
     /// its lift, to the challenge's lifts stage slot. The bits are
@@ -1215,43 +1206,6 @@ where
             }
             Ok(acc)
         })
-    }
-
-    /// A Horner chain over `points` under `scale_by`, from the last
-    /// present point back to the first; `None` entries scale alone. `None`
-    /// if no point is present.
-    pub(super) fn horner(
-        &self,
-        dr: &mut D,
-        points: &[Option<Src<'dr, D, S::P>>],
-        scale_by: &Challenge<'dr, D>,
-    ) -> Result<Option<Point<'dr, D, S::P>>> {
-        let Some(first) = points.iter().rposition(Option::is_some) else {
-            return Ok(None);
-        };
-        let mut acc = match &points[first] {
-            Some(init) => init.point(dr)?,
-            None => unreachable!("the chain starts from a present point"),
-        };
-        let steps: Vec<&Option<Src<'dr, D, S::P>>> = points[..first].iter().rev().collect();
-        for stretch in steps.chunks(SCALINGS) {
-            let endoscalar = self.endoscalar(dr, scale_by)?;
-            acc = NonzeroBank::scope(dr, |dr, bank| {
-                let mut acc = acc;
-                for add in stretch {
-                    let scaled = endoscalar.group_scale(dr, &acc)?;
-                    acc = match add {
-                        Some(add) => {
-                            let add = add.point(dr)?;
-                            scaled.add_incomplete(dr, &add, bank)?
-                        }
-                        None => scaled,
-                    };
-                }
-                Ok(acc)
-            })?;
-        }
-        Ok(Some(acc))
     }
 
     /// One stretch of a sum of scaled terms onto `acc`, each challenge's
@@ -1325,22 +1279,41 @@ where
         Ok(acc)
     }
 
-    /// Adds the fixed `point` scaled by `endoscalar`, a challenge's the
-    /// side has at hand, onto the running sum `sum`, or starts it.
-    pub(super) fn add_term(
+    /// A Horner chain over `points` under `scale_by`, from the last
+    /// present point back to the first; `None` entries scale alone. `None`
+    /// if no point is present.
+    pub(super) fn horner(
         &self,
         dr: &mut D,
-        sum: &mut Option<Point<'dr, D, S::P>>,
-        endoscalar: &Endoscalar<'dr, D>,
-        point: S::P,
-    ) -> Result<()> {
-        let point = Point::constant(dr, point)?;
-        let term = endoscalar.group_scale(dr, &point)?;
-        *sum = Some(match sum.take() {
-            None => term,
-            Some(sum) => NonzeroBank::scope(dr, |dr, bank| sum.add_incomplete(dr, &term, bank))?,
-        });
-        Ok(())
+        points: &[Option<Src<'dr, D, S::P>>],
+        scale_by: &Challenge<'dr, D>,
+    ) -> Result<Option<Point<'dr, D, S::P>>> {
+        let Some(first) = points.iter().rposition(Option::is_some) else {
+            return Ok(None);
+        };
+        let mut acc = match &points[first] {
+            Some(init) => init.point(dr)?,
+            None => unreachable!("the chain starts from a present point"),
+        };
+        let steps: Vec<&Option<Src<'dr, D, S::P>>> = points[..first].iter().rev().collect();
+        for stretch in steps.chunks(SCALINGS) {
+            let endoscalar = self.endoscalar(dr, scale_by)?;
+            acc = NonzeroBank::scope(dr, |dr, bank| {
+                let mut acc = acc;
+                for add in stretch {
+                    let scaled = endoscalar.group_scale(dr, &acc)?;
+                    acc = match add {
+                        Some(add) => {
+                            let add = add.point(dr)?;
+                            scaled.add_incomplete(dr, &add, bank)?
+                        }
+                        None => scaled,
+                    };
+                }
+                Ok(acc)
+            })?;
+        }
+        Ok(Some(acc))
     }
 
     /// The claims' points. A circuit claim's point is the sum of its one
@@ -1400,32 +1373,6 @@ where
         }
         self.horner(dr, &groups, outer)?
             .ok_or_else(|| Error::InvalidWitness("a derived polynomial has a term".into()))
-    }
-
-    /// The part of the other side's digits stage commitment over `digits`:
-    /// each digit's generator, `generators` names them, added or
-    /// subtracted by its bit, onto `init` or from nothing.
-    pub(super) fn bind_sum(
-        &self,
-        dr: &mut D,
-        digits: &Digits<'dr, D>,
-        generators: &[usize],
-        init: Option<Point<'dr, D, S::P>>,
-    ) -> Result<Point<'dr, D, S::P>> {
-        assert_eq!(generators.len(), digits.len(), "one generator per digit");
-        let mut acc = init;
-        NonzeroBank::scope(dr, |dr, bank| {
-            for (bit, &generator) in digits.bits().iter().zip(generators) {
-                let base = Point::constant(dr, self.generators[generator])?;
-                let negate = bit.not(dr);
-                let term = base.conditional_negate(dr, &negate)?;
-                acc = Some(match acc.take() {
-                    None => term,
-                    Some(acc) => acc.add_incomplete(dr, &term, bank)?,
-                });
-            }
-            acc.ok_or_else(|| Error::InvalidWitness("a scalar has a digit".into()))
-        })
     }
 
     /// $k P$ for the full-width scalar at `id` of the side's foreign
@@ -1500,44 +1447,6 @@ where
         }
         self.bound[id] = bound;
         acc.ok_or_else(|| Error::InvalidWitness("a scaling has a digit".into()))
-    }
-
-    /// Holds the points of each pair equal under the other side's flag
-    /// `flag`: its bit, by index into the side's foreign flags, which the
-    /// side allocates as a witness and the other side's digits stage
-    /// binds, its signed digit's part of that stage's commitment riding
-    /// along as a scaling's digits' does. A flag is taken once.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the flag was taken before.
-    pub(super) fn equal_if(
-        &mut self,
-        dr: &mut D,
-        flag: usize,
-        pairs: &[[Point<'dr, D, S::P>; 2]],
-    ) -> Result<()> {
-        assert!(
-            self.flag_bound[flag].is_none(),
-            "a foreign flag binds its digit once"
-        );
-        // Bind the flag once to the digit sent by the other side, and use
-        // the same bit for each point comparison.
-        let value = self.witness.as_ref().map(|w| w.aux.flags[flag]);
-        let bit = Boolean::alloc(dr, &mut (), value)?;
-        for [left, right] in pairs {
-            let left = coordinates(dr, left)?;
-            let right = coordinates(dr, right)?;
-            for (left, right) in left.iter().zip(&right) {
-                let gap = left.sub(dr, right);
-                bit.element().mul(dr, &gap)?.enforce_zero(dr)?;
-            }
-        }
-        let width = derive::digit_width::<S::Other>();
-        let generator = self.tables.foreign[self.bound.len() * width + flag];
-        let digit = Digits::of_flag(bit);
-        self.flag_bound[flag] = Some(self.bind_sum(dr, &digit, &[generator], None)?);
-        Ok(())
     }
 
     /// The other side's digits stage commitment: the sum of every foreign
@@ -1788,338 +1697,288 @@ where
     }
 }
 
-/// A transcript as the native verifier runs it, with the commitment it
-/// absorbs for a run of scalar-field values before whatever ends the run:
-/// [`foreign`](Self::foreign) marks that such values were absorbed, and
-/// the next absorption or squeeze absorbs the next run's commitment, a
-/// point the prover supplies, when they were.
-pub(super) struct Replay<'w, 'dr, D, C, S>
-where
-    D: Driver<'dr>,
-    C: Cycle,
-    S: Side<C, F = D::F>,
-{
-    sponge: Sponge<'dr, D, S::Poseidon>,
-    witness: DriverValue<D, &'w Prepared<C, S>>,
-    /// The runs' commitments absorbed so far, in order.
-    runs: Vec<Point<'dr, D, S::P>>,
-    pending: bool,
+/// The registry's evaluations a side's verifier reads, which the prover
+/// supplies ([`Run::registry`]).
+pub(super) struct Registry<'dr, D: Driver<'dr>> {
+    /// The restriction at $(r, y)$ of each circuit a claim names, in the
+    /// order the claims first name them.
+    pub(super) named: Vec<(CircuitIndex, Element<'dr, D>)>,
+    /// The restriction at the compression's $w$.
+    pub(super) at_w: Element<'dr, D>,
+    /// The wire bindings, each with its expected values, the registry's
+    /// among them.
+    pub(super) bindings: Vec<revdot::Binding<'dr, D>>,
 }
 
-impl<'w, 'dr, D, C, S> Replay<'w, 'dr, D, C, S>
+impl<'dr, D, C, S> Run<'_, '_, 'dr, D, C, S>
 where
     D: Driver<'dr>,
     C: Cycle,
     S: Side<C, F = D::F>,
 {
-    /// A transcript under `tag`, which it absorbs as [`Transcript::new`]
-    /// does: the length, then each 16-byte chunk as a little-endian
-    /// integer.
+    /// The registry's evaluations, which the prover supplies, held to the
+    /// online stages: the restriction at $(r, y)$ of each circuit a claim
+    /// names, the restriction at the compression's $w$, and the wire
+    /// bindings, whose `expected` values are `None` where the registry
+    /// gives them; and each of the proof's `inputs` held to the input
+    /// stage's wire it names.
     ///
-    /// [`Transcript::new`]: crate::internal::transcript::Transcript::new
-    pub(super) fn new(dr: &mut D, run: &Run<'_, 'w, 'dr, D, C, S>, tag: &[u8]) -> Result<Self> {
-        let mut sponge = Sponge::new(dr, run.poseidon);
-        let chunks = tag.chunks(16).map(|chunk| {
-            let bytes: [u8; 16] = core::array::from_fn(|i| chunk.get(i).copied().unwrap_or(0));
-            u128::from_le_bytes(bytes)
-        });
-        for value in once(tag.len() as u128).chain(chunks) {
-            let element = Element::constant(dr, D::F::from_u128(value));
-            sponge.absorb(dr, &element)?;
+    /// # Errors
+    ///
+    /// Fails if a gadget does.
+    pub(super) fn registry(
+        &mut self,
+        dr: &mut D,
+        expected: Vec<Vec<Option<Element<'dr, D>>>>,
+        inputs: &[(Element<'dr, D>, usize)],
+    ) -> Result<Registry<'dr, D>> {
+        let tables = self.tables;
+
+        // The registry's evaluations, which the prover supplies: the
+        // restriction at (r, y) of each circuit a claim names, the claims
+        // naming one circuit sharing it, since the restriction is the
+        // circuit's; the restriction at the compression's w; and the wire
+        // bindings' registry values.
+        let mut named: Vec<(CircuitIndex, Element<'dr, D>)> = Vec::new();
+        for claim in &tables.claims {
+            if let Kind::Circuit(circuit) | Kind::Mask(circuit) = claim.kind
+                && !named.iter().any(|(listed, _)| *listed == circuit)
+            {
+                let index = named.len();
+                let value = self
+                    .witness
+                    .as_ref()
+                    .map(|w| w.supplied.restrictions[index]);
+                named.push((circuit, Element::alloc(dr, &mut (), value)?));
+            }
         }
-        Ok(Replay {
-            sponge,
-            witness: run.witness.as_ref().map(|w| *w),
-            runs: Vec::new(),
-            pending: false,
+        let restriction_at_w = {
+            let value = self.witness.as_ref().map(|w| w.supplied.restriction_at_w);
+            Element::alloc(dr, &mut (), value)?
+        };
+        assert_eq!(
+            expected.len(),
+            tables.bindings.len(),
+            "the expected values of every wire binding"
+        );
+        let mut registry_values = Vec::new();
+        let mut bindings = Vec::with_capacity(tables.bindings.len());
+        for (b, (degrees, expected)) in tables.bindings.iter().zip(expected).enumerate() {
+            assert_eq!(degrees.len(), expected.len(), "one value per bound wire");
+            let mut values = Vec::with_capacity(expected.len());
+            for (i, value) in expected.into_iter().enumerate() {
+                values.push(match value {
+                    Some(value) => value,
+                    None => {
+                        let value = self.witness.as_ref().map(|w| w.supplied.bindings[b][i]);
+                        let value = Element::alloc(dr, &mut (), value)?;
+                        registry_values.push(value.clone());
+                        value
+                    }
+                });
+            }
+            bindings.push(revdot::Binding {
+                degrees: degrees.clone(),
+                expected: values,
+            });
+        }
+        // Held to the query stage's wires, which the step's fuse proves are
+        // the wallet registry's: each named circuit's restriction, the
+        // instance's opening, then the wire bindings' values in the order the
+        // verifier lists them, the query's and the eval's. And each of the
+        // proof's inputs, a coordinate or point the side derives or loads, to
+        // the input stage's wire it names, which the step committed before its
+        // challenge and the evaluations are taken at.
+        {
+            let online = S::ONLINE;
+            let value = |wire: usize| &self.online_query[online::Values::value_at(wire)];
+            for (circuit, restriction) in &named {
+                restriction.enforce_equal(dr, value(online.claim(usize::from(*circuit))))?;
+            }
+            restriction_at_w.enforce_equal(dr, value(online.at_w_c()))?;
+            let wires: Vec<usize> = online
+                .query_binding()
+                .into_iter()
+                .chain(online.eval_binding().into_iter().flatten())
+                .collect();
+            assert_eq!(
+                registry_values.len(),
+                wires.len(),
+                "one value wire per registry value the wire bindings expect"
+            );
+            for (registry_value, wire) in registry_values.iter().zip(wires) {
+                registry_value.enforce_equal(dr, value(wire))?;
+            }
+            for (input, index) in inputs {
+                let wire = &self.online_input[online::Values::input_at(*index)];
+                input.enforce_equal(dr, wire)?;
+            }
+        }
+        Ok(Registry {
+            named,
+            at_w: restriction_at_w,
+            bindings,
         })
     }
 
-    /// Absorbs a point: its coordinates, $x$ then $y$.
-    pub(super) fn point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
-        for coordinate in &coordinates(dr, point)? {
-            self.sponge.absorb(dr, coordinate)?;
-        }
-        Ok(())
+    /// The reduction the side checks in its field, at the claims'
+    /// `targets` over `registry`: the fold's weights at $r$, each wire
+    /// binding's expected value and mask at $r$, the folded claim's public
+    /// parts and the split identity, then the batch and the IPA's scalars,
+    /// with the instance's `opening`, its point and values, and on the
+    /// circuit-field side the transcript's `digest`. Returns $v$ and
+    /// $c b z$.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a gadget does.
+    pub(super) fn reduction<K: Rank>(
+        &mut self,
+        dr: &mut D,
+        targets: Vec<Element<'dr, D>>,
+        registry: Registry<'dr, D>,
+        opening: [Element<'dr, D>; 4],
+        digest: Option<&Element<'dr, D>>,
+    ) -> Result<[Element<'dr, D>; 2]> {
+        let tables = self.tables;
+        let Registry {
+            named,
+            at_w: restriction_at_w,
+            bindings,
+        } = registry;
+        // The reduction: the fold's weights at r, each wire binding's expected
+        // value and mask at r, the folded claim's public parts and the split
+        // identity, leaving p(0)'s value; then the batch and the IPA's
+        // scalars, leaving v and c b z.
+        let challenges = self.revdot_challenges()?;
+        let messages = self.revdot_messages();
+        let at_r = revdot::weights::<_, K>(dr, tables.claims.len(), &challenges)?;
+        let sigma = self.lift(squeezed::SIGMA)?;
+        let bound = revdot::bindings_at::<_, K>(dr, &bindings, &sigma, &challenges.r)?;
+        let public = revdot::Public {
+            kinds: tables.claims.iter().map(|claim| claim.kind).collect(),
+            targets,
+            restrictions: named,
+            bindings,
+        };
+        let target = revdot::public::<_, K>(dr, &public, &challenges, &messages, &at_r, &bound)?;
+        self.batch_ipa::<K>(
+            dr,
+            &challenges,
+            &messages,
+            &at_r.inverse_r,
+            target,
+            opening,
+            restriction_at_w,
+            digest,
+        )
     }
 
-    /// Absorbs the run's commitment, if a run is pending.
-    pub(super) fn flush(&mut self, dr: &mut D) -> Result<()> {
-        if self.pending {
-            let next = self.runs.len();
-            let value = self.witness.as_ref().map(|w| w.supplied.runs[next]);
-            let run = Point::alloc(dr, value)?;
-            self.point(dr, &run)?;
-            self.runs.push(run);
-            self.pending = false;
-        }
-        Ok(())
-    }
-
-    /// Scalar-field values absorbed: the run's commitment covers them.
-    pub(super) fn foreign(&mut self) {
-        self.pending = true;
-    }
-
-    pub(super) fn absorb(&mut self, dr: &mut D, element: &Element<'dr, D>) -> Result<()> {
-        self.flush(dr)?;
-        self.sponge.absorb(dr, element)
-    }
-
-    pub(super) fn absorb_point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
-        self.flush(dr)?;
-        self.point(dr, point)
-    }
-
-    pub(super) fn squeeze(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
-        self.flush(dr)?;
-        self.sponge.squeeze(dr)
-    }
-
-    /// The runs' commitments the transcript absorbed. Values pending at
-    /// the end precede no challenge and are not absorbed, as the verifier
-    /// leaves them.
-    pub(super) fn finish(self) -> Vec<Point<'dr, D, S::P>> {
-        self.runs
-    }
-}
-
-/// What the shared part of a side's verifier takes from the side.
-pub(super) struct Body<'x, 'dr, D: Driver<'dr>> {
-    /// Every claim's target of the reduction the side checks in its
-    /// field, in claim order.
-    pub(super) targets: Vec<Element<'dr, D>>,
-    /// The wire bindings' expected values, by binding: a `None` is a
-    /// registry value the prover supplies.
-    pub(super) expected: Vec<Vec<Option<Element<'dr, D>>>>,
-    /// The instance's openings' point and values: the fuse's $u$ as the
-    /// side holds it, $v$, $a(u)$ and $b(u)$.
-    pub(super) opening: [Element<'dr, D>; 4],
-    /// Elements beyond $v$, $c$ and $c b z$ whose digits the side binds
-    /// for the other.
-    pub(super) extra_digits: Vec<Element<'dr, D>>,
-    /// The compression challenge at a [`squeezed`] index of the reduction
-    /// whose points the side checks.
-    pub(super) point_challenge: &'x dyn Fn(usize) -> Challenge<'dr, D>,
-    /// The number of that curve's listed components, after which its
-    /// registry restriction's and $p$'s commitments sit.
-    pub(super) components: usize,
-    /// The positions of that curve's $A$ and $B$ commitments.
-    pub(super) ab: [usize; 2],
-    /// The proof's online inputs as the side holds them, each with the
-    /// input stage's wire it is held to.
-    pub(super) inputs: Vec<(Element<'dr, D>, usize)>,
-    /// The compression transcript's last squeeze, on the side that
-    /// squeezes it.
-    pub(super) digest: Option<Element<'dr, D>>,
-}
-
-/// What both sides share: the reduction, the batch and the IPA's scalars
-/// in the side's field, then the claims, the folds, the batched commitment
-/// and the IPA's points on the side's curve. Returns the elements whose
-/// digits the side holds for the other, which its verifier ends with
-/// ([`Run::write_digits`]), and its $G'$.
-pub(super) fn body<'dr, D, C, S, K>(
-    dr: &mut D,
-    run: &mut Run<'_, '_, 'dr, D, C, S>,
-    body: Body<'_, 'dr, D>,
-) -> Result<(Vec<Element<'dr, D>>, Point<'dr, D, S::P>)>
-where
-    D: Driver<'dr>,
-    C: Cycle,
-    S: Side<C, F = D::F>,
-    K: Rank,
-{
-    let tables = run.tables;
-    let layout = tables.layout;
-    let rounds = K::RANK as usize;
-
-    // The registry's evaluations, which the prover supplies: the
-    // restriction at (r, y) of each circuit a claim names, the claims
-    // naming one circuit sharing it, since the restriction is the
-    // circuit's; the restriction at the compression's w; and the wire
-    // bindings' registry values.
-    let mut named: Vec<(CircuitIndex, Element<'dr, D>)> = Vec::new();
-    for claim in &tables.claims {
-        if let Kind::Circuit(circuit) | Kind::Mask(circuit) = claim.kind
-            && !named.iter().any(|(listed, _)| *listed == circuit)
-        {
-            let index = named.len();
-            let value = run.witness.as_ref().map(|w| w.supplied.restrictions[index]);
-            named.push((circuit, Element::alloc(dr, &mut (), value)?));
-        }
-    }
-    let restriction_at_w = {
-        let value = run.witness.as_ref().map(|w| w.supplied.restriction_at_w);
-        Element::alloc(dr, &mut (), value)?
-    };
-    assert_eq!(
-        body.expected.len(),
-        tables.bindings.len(),
-        "the expected values of every wire binding"
-    );
-    let mut registry_values = Vec::new();
-    let mut bindings = Vec::with_capacity(tables.bindings.len());
-    for (b, (degrees, expected)) in tables.bindings.iter().zip(body.expected).enumerate() {
-        assert_eq!(degrees.len(), expected.len(), "one value per bound wire");
-        let mut values = Vec::with_capacity(expected.len());
-        for (i, value) in expected.into_iter().enumerate() {
-            values.push(match value {
-                Some(value) => value,
-                None => {
-                    let value = run.witness.as_ref().map(|w| w.supplied.bindings[b][i]);
-                    let value = Element::alloc(dr, &mut (), value)?;
-                    registry_values.push(value.clone());
-                    value
-                }
-            });
-        }
-        bindings.push(revdot::Binding {
-            degrees: degrees.clone(),
-            expected: values,
-        });
-    }
-    // Held to the query stage's wires, which the step's fuse proves are
-    // the wallet registry's: each named circuit's restriction, the
-    // instance's opening, then the wire bindings' values in the order the
-    // verifier lists them, the query's and the eval's. And each of the
-    // proof's inputs, a coordinate or point the side derives or loads, to
-    // the input stage's wire it names, which the step committed before its
-    // challenge and the evaluations are taken at.
-    {
-        let online = S::ONLINE;
-        let value = |wire: usize| &run.online_query[online::Values::value_at(wire)];
-        for (circuit, restriction) in &named {
-            restriction.enforce_equal(dr, value(online.claim(usize::from(*circuit))))?;
-        }
-        restriction_at_w.enforce_equal(dr, value(online.at_w_c()))?;
-        let wires: Vec<usize> = online
-            .query_binding()
-            .into_iter()
-            .chain(online.eval_binding().into_iter().flatten())
+    /// The point checks of the side's curve under `challenge`, the
+    /// challenges of the reduction whose points it checks: the claims, the
+    /// folds, the batched commitment, whose registry restriction's and
+    /// $p$'s commitments sit after that curve's `components` and whose $A$
+    /// and $B$ are at `ab`, and the IPA. Returns $G'$.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a gadget does.
+    pub(super) fn point_checks<K: Rank>(
+        &mut self,
+        dr: &mut D,
+        challenge: &dyn Fn(usize) -> Challenge<'dr, D>,
+        components: usize,
+        ab: [usize; 2],
+    ) -> Result<Point<'dr, D, S::P>> {
+        let tables = self.tables;
+        let rounds = K::RANK as usize;
+        // The point checks of the side's curve under its reduction's
+        // challenges.
+        let claim_points = self.claims(dr, &tables.point_claims, &challenge(squeezed::Z))?;
+        let a = self.fold(
+            dr,
+            &tables.point_claims,
+            &claim_points,
+            |_| true,
+            &challenge(squeezed::MU),
+            &challenge(squeezed::MU_PRIME),
+        )?;
+        let dilated = self.fold(
+            dr,
+            &tables.point_claims,
+            &claim_points,
+            |claim| matches!(claim.kind, Kind::Circuit(_)),
+            &challenge(squeezed::NU),
+            &challenge(squeezed::NU_PRIME),
+        )?;
+        // The raw polynomial: the raw claims' b under the b weights, here the
+        // one raw claim's at weight one.
+        let raw_b: Vec<(usize, usize)> = tables
+            .point_claims
+            .iter()
+            .enumerate()
+            .filter_map(|(i, claim)| claim.b.map(|b| (i, b)))
             .collect();
-        assert_eq!(
-            registry_values.len(),
-            wires.len(),
-            "one value wire per registry value the wire bindings expect"
-        );
-        for (registry_value, wire) in registry_values.iter().zip(wires) {
-            registry_value.enforce_equal(dr, value(wire))?;
+        assert_eq!(raw_b.len(), 1, "one raw claim at the first slot");
+        assert_eq!(raw_b[0].0, 0);
+        let raw = self.commitment(raw_b[0].1);
+        let batched = {
+            use stages::message_points::*;
+            // The batch weights f highest: a Horner chain from f down.
+            let terms: Vec<Option<Src<'dr, D, S::P>>> = [
+                self.message_point(F),
+                a,
+                dilated,
+                raw,
+                self.message_point(INNER),
+                self.message_point(OUTER),
+                self.message_point(P),
+                self.message_point(Q),
+                self.commitment(components),
+                self.commitment(components + 1),
+                self.commitment(ab[0]),
+                self.commitment(ab[1]),
+            ]
+            .into_iter()
+            .rev()
+            .map(|point| Some(Src::Wire(point)))
+            .collect();
+            self.horner(dr, &terms, &challenge(squeezed::BETA))?
+                .ok_or_else(|| Error::InvalidWitness("the batch has a term".into()))?
+        };
+        self.ipa(
+            dr,
+            batched,
+            rounds,
+            &challenge(squeezed::XI),
+            |j| challenge(squeezed::ROUNDS + j),
+            [0, 1, 2],
+        )
+    }
+
+    /// Holds every point the instance and messages stages hold to the
+    /// curve: the stages load their points unenforced, so the equation
+    /// their allocation emits does not reach the circuit on its own.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a gadget does.
+    pub(super) fn points_on_curve(&self, dr: &mut D) -> Result<()> {
+        let layout = self.tables.layout;
+        // Every point a stage holds, held to the curve: the stages load their
+        // points unenforced, so the equation their allocation emits does not
+        // reach the circuit on its own. The instance's and the messages'
+        // commitments; the points the prover supplies beside the stages are
+        // allocated on the curve, and the side's own are sums and scalings of
+        // these.
+        for position in layout.instance.commitments.positions() {
+            self.instance.points[position].enforce_consistent(dr)?;
         }
-        for (input, index) in &body.inputs {
-            let wire = &run.online_input[online::Values::input_at(*index)];
-            input.enforce_equal(dr, wire)?;
+        for position in layout.messages.points_of_curve.positions() {
+            self.messages.points[position].enforce_consistent(dr)?;
         }
+        Ok(())
     }
-
-    // The reduction: the fold's weights at r, each wire binding's expected
-    // value and mask at r, the folded claim's public parts and the split
-    // identity, leaving p(0)'s value; then the batch and the IPA's
-    // scalars, leaving v and c b z.
-    let challenges = run.revdot_challenges()?;
-    let messages = run.revdot_messages();
-    let at_r = revdot::weights::<_, K>(dr, tables.claims.len(), &challenges)?;
-    let sigma = run.lift(squeezed::SIGMA)?;
-    let bound = revdot::bindings_at::<_, K>(dr, &bindings, &sigma, &challenges.r)?;
-    let public = revdot::Public {
-        kinds: tables.claims.iter().map(|claim| claim.kind).collect(),
-        targets: body.targets,
-        restrictions: named,
-        bindings,
-    };
-    let target = revdot::public::<_, K>(dr, &public, &challenges, &messages, &at_r, &bound)?;
-    let [v, cbz] = run.batch_ipa::<K>(
-        dr,
-        &challenges,
-        &messages,
-        &at_r.inverse_r,
-        target,
-        body.opening,
-        restriction_at_w,
-        body.digest.as_ref(),
-    )?;
-    // The digits of v, c and cbz, the full-width scalars the other side
-    // scales by, and whatever else it needs from this field.
-    let mut digits = vec![v, run.message_scalars().c().clone(), cbz];
-    digits.extend(body.extra_digits);
-
-    // The point checks of the side's curve under its reduction's
-    // challenges.
-    let challenge = body.point_challenge;
-    let claim_points = run.claims(dr, &tables.point_claims, &challenge(squeezed::Z))?;
-    let a = run.fold(
-        dr,
-        &tables.point_claims,
-        &claim_points,
-        |_| true,
-        &challenge(squeezed::MU),
-        &challenge(squeezed::MU_PRIME),
-    )?;
-    let dilated = run.fold(
-        dr,
-        &tables.point_claims,
-        &claim_points,
-        |claim| matches!(claim.kind, Kind::Circuit(_)),
-        &challenge(squeezed::NU),
-        &challenge(squeezed::NU_PRIME),
-    )?;
-    // The raw polynomial: the raw claims' b under the b weights, here the
-    // one raw claim's at weight one.
-    let raw_b: Vec<(usize, usize)> = tables
-        .point_claims
-        .iter()
-        .enumerate()
-        .filter_map(|(i, claim)| claim.b.map(|b| (i, b)))
-        .collect();
-    assert_eq!(raw_b.len(), 1, "one raw claim at the first slot");
-    assert_eq!(raw_b[0].0, 0);
-    let raw = run.commitment(raw_b[0].1);
-    let batched = {
-        use stages::message_points::*;
-        // The batch weights f highest: a Horner chain from f down.
-        let terms: Vec<Option<Src<'dr, D, S::P>>> = [
-            run.message_point(F),
-            a,
-            dilated,
-            raw,
-            run.message_point(INNER),
-            run.message_point(OUTER),
-            run.message_point(P),
-            run.message_point(Q),
-            run.commitment(body.components),
-            run.commitment(body.components + 1),
-            run.commitment(body.ab[0]),
-            run.commitment(body.ab[1]),
-        ]
-        .into_iter()
-        .rev()
-        .map(|point| Some(Src::Wire(point)))
-        .collect();
-        run.horner(dr, &terms, &challenge(squeezed::BETA))?
-            .ok_or_else(|| Error::InvalidWitness("the batch has a term".into()))?
-    };
-    let g_prime = run.ipa(
-        dr,
-        batched,
-        rounds,
-        &challenge(squeezed::XI),
-        |j| challenge(squeezed::ROUNDS + j),
-        [0, 1, 2],
-    )?;
-
-    // Every point a stage holds, held to the curve: the stages load their
-    // points unenforced, so the equation their allocation emits does not
-    // reach the circuit on its own. The instance's and the messages'
-    // commitments; the points the prover supplies beside the stages are
-    // allocated on the curve, and the side's own are sums and scalings of
-    // these.
-    for position in layout.instance.commitments.positions() {
-        run.instance.points[position].enforce_consistent(dr)?;
-    }
-    for position in layout.messages.points_of_curve.positions() {
-        run.messages.points[position].enforce_consistent(dr)?;
-    }
-    Ok((digits, g_prime))
 }
 
 /// The values a side's tables are the pure function of their types for,
