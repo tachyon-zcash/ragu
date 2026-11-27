@@ -103,6 +103,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_online_polynomials` and `_online_points`, and reads its wires from
   extension circuits listed in `Profile::{NATIVE,NESTED}_ONLINE_CONSUMERS`,
   traced through `Profile::{native,nested}_extension_rxs_with_online`.
+- Added `Profile::{native,nested}_extension_pages`, through which a profile
+  proves a circuit of its own extension in pages
+  (`profile::paging::ExtensionPages`): the pages are held to the circuit,
+  as many as the profile pins, and each is registered at the extension
+  circuit the profile declares for it.
+  `Profile::{native,nested}_extension_rxs_with_online` take the pages the
+  registry build cut, so that the prover traces them without cutting again.
 - Added source-registry meshes: `Profile::{NATIVE,NESTED}_MESH` declare a
   `profile::online::mesh::Mesh` over a batch's slots, and
   `ApplicationBuilder::with_source_registries` captures the registries it

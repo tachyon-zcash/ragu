@@ -896,6 +896,20 @@ fn a_gate_is_placed_with_the_first_gate_it_feeds() -> Result<()> {
     Ok(())
 }
 
+/// A cut that fits with every gate where the circuit allocates it is taken,
+/// though another order carries less: no other order is looked for.
+#[test]
+fn a_cut_that_fits_as_allocated_is_taken() -> Result<()> {
+    // The same circuit and the same room, over a carry stage that holds
+    // every square a cut between the squares and the product carries.
+    let limit = Stages::of::<Fp, R, Flat<Batch<40>>>().carry_gates().end + 25;
+    let paged = Pages::cut_within(flat(Batch::<40>), 4, limit)?;
+    check::check(&paged)?;
+    assert!(paged.plan.held.iter().flatten().is_sorted());
+    assert!(paged.report().slots > 3 * 3, "{:?}", paged.report().cuts);
+    Ok(())
+}
+
 /// A plan is held to the stages its circuit was cut over: one that lays a
 /// stage elsewhere names the same wires in its constraints, but a page
 /// would read them at gates the stage's polynomial does not hold them at.
@@ -1328,7 +1342,7 @@ fn a_slot_is_written_by_the_page_that_holds_its_wires() -> Result<()> {
     let slot = |wire: u32| wire & DERIVED == 0 && carry.contains(&((wire / 4) as usize));
     // The first page reads no slot, so a constraint of its own that names
     // one writes it. One over gates' wires alone is as well formed on the
-    // next page, which holds as many gates.
+    // next page, which holds no fewer gates.
     let definition = paged.plan.programs[0]
         .constraints
         .iter()
@@ -1337,7 +1351,7 @@ fn a_slot_is_written_by_the_page_that_holds_its_wires() -> Result<()> {
                 && terms.iter().all(|&(wire, _)| wire & DERIVED == 0)
         })
         .expect("the first page writes a slot over its gates' wires");
-    assert_eq!(paged.plan.programs[0].own, paged.plan.programs[1].own);
+    assert!(paged.plan.programs[0].own <= paged.plan.programs[1].own);
 
     // The same constraint on the next page is over that page's gates: the
     // slot is left without the page that holds its wires.
@@ -1478,37 +1492,81 @@ impl Circuit<Fp> for Linked {
     }
 }
 
+/// Nine gates: the fifth takes the sum of the first four's $a$ wires, and
+/// the sixth and the seventh each take another wire of the fifth.
+struct Summed;
+
+impl Circuit<Fp> for Summed {
+    type Instance<'source> = ();
+    type Witness<'source> = ();
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        _: DriverValue<D, ()>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(Element::zero(dr))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        _: DriverValue<D, ()>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+        let mut gates = Vec::new();
+        for _ in 0..9 {
+            let (a, b, c, extra) = dr.gate(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
+            dr.assign_extra(extra, || Ok(Coeff::Zero))?;
+            gates.push((a, b, c));
+        }
+        dr.enforce_zero(|lc| {
+            gates[..4]
+                .iter()
+                .fold(lc, |lc, (a, _, _)| lc.add(a))
+                .sub(&gates[4].0)
+        })?;
+        dr.enforce_zero(|lc| lc.add(&gates[4].1).sub(&gates[5].0))?;
+        dr.enforce_zero(|lc| lc.add(&gates[4].2).sub(&gates[6].0))?;
+        Ok(WithAux::new(Element::zero(dr), D::unit()))
+    }
+}
+
+/// A slot holds a linear combination, so a cut is weighed by the
+/// combinations the constraints past it name of the gates before it, not by
+/// the wires: a sum of four wires that one constraint takes is one value to
+/// carry, and two wires that two constraints take are two.
 #[test]
-fn retry_counts_each_export_once() -> Result<()> {
-    let six = Linked {
-        gates: 6,
-        extra: &[(0, 2), (2, 5)],
-        output: None,
-    };
-    // Both carry stages take two gates, leaving room for two own gates per page.
-    let roomy = Pages::cut_within(MultiStage::new(Flat::<_, 4>(six)), 4, 5)?.check()?;
-    assert_eq!(roomy.pages().layout().starts, [1, 3, 5, 7]);
-    assert_eq!(roomy.pages().report().slots, 4);
-    let tight = Pages::cut_within(MultiStage::new(Flat::<_, 3>(six)), 4, 5)?.check()?;
-    assert_eq!(tight.pages().layout().starts, [1, 2, 4, 6]);
-    assert_eq!(tight.pages().report().slots, 3);
+fn a_cut_is_weighed_by_the_combinations_it_carries() -> Result<()> {
+    // The carry stage holds one value, in one gate, and a page has room
+    // for five gates of the nine: the cut falls after the fourth, which
+    // carries the sum, or after the fifth, which carries its two wires.
+    let paged = Pages::cut_within(MultiStage::new(Flat::<_, 1>(Summed)), 2, 7)?.check()?;
+    assert_eq!(paged.pages().layout().starts, [1, 5]);
+    assert_eq!(paged.pages().report().slots, 1);
+    assert_eq!(paged.pages().report().carried_wires, 4);
     Ok(())
 }
 
+/// The public output is the last page's, so a cut that leaves the output's
+/// gate on an earlier page carries it. The cost of a cut counts that, and
+/// the cut keeps the gate on the last page, as a cut there carries less,
+/// however much the carry stage holds.
 #[test]
-fn retry_shifts_the_grid_when_the_output_needs_an_extra_slot() -> Result<()> {
+fn a_cut_counts_the_outputs_export() -> Result<()> {
     let room = GRID + 2;
     let circuit = Linked {
         gates: 2 * GRID,
         extra: &[],
         output: Some(room - 1),
     };
-    // Both carry stages take one gate. The latest even cut leaves the output
-    // on the first page. The latest shifted cut puts it on the last page.
+    // Both carry stages take one gate. Every cut carries the link across
+    // it, and a cut past the output's gate carries the output too.
     let limit = 2 + room;
     let roomy = Pages::cut_within(MultiStage::new(Flat::<_, 2>(circuit)), 2, limit)?.check()?;
-    assert_eq!(roomy.pages().report().slots, 2);
-    assert_eq!(roomy.pages().layout().starts, [1, room + 1]);
+    assert_eq!(roomy.pages().report().slots, 1);
+    assert_eq!(roomy.pages().layout().starts, [1, room]);
     let tight = Pages::cut_within(MultiStage::new(Flat::<_, 1>(circuit)), 2, limit)?.check()?;
     assert_eq!(tight.pages().report().slots, 1);
     assert_eq!(tight.pages().layout().starts, [1, room]);

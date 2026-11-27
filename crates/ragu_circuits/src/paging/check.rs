@@ -286,7 +286,8 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
     let body = Recording::<F>::raw_of(&*paged.circuit)?;
     let (body_gates, body_constraints) = (body.num_gates, body.raw.len());
     let places = places(plan, stages, layout, body_gates)?;
-    // A routine the circuit calls is on one page, whole.
+    // A routine the circuit calls has its gates on one page, together.
+    // TODO(#1038): hold the routine's constraints to that page too.
     let place = |gate: usize| places.get(gate.checked_sub(stages.own_start())?).copied();
     if let Some(routine) = body.split_routine(place) {
         return refuse(format!(

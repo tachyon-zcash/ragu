@@ -71,19 +71,18 @@ use crate::{
 /// What the aggregator profile pins for the decompression's native side:
 /// the pages its whole circuit is cut into, and the values its carry stage
 /// holds. They hold for every header size from 1 through 195: the circuit
-/// grows with the header, from 69 pages to 75, and where it cuts into
-/// fewer some pages hold no gates of its own. Its pages carry 657 values
-/// at the most.
+/// grows with the header, and where it cuts into fewer pages some hold no
+/// gates of its own. How many pages it takes and how many values they
+/// carry at each size is the census's to report (`decompression_census`).
 ///
 /// Changing the carry capacity changes how many gates of its own each
 /// page can hold, so the census measures page count and capacity together
 /// at every supported header size. These pins fit on the pager's first
-/// pass. Smaller capacities can also fit when the pager retries a cut by
-/// counting exports.
+/// pass: its retry, which counts each export once, is headroom that lets
+/// a smaller capacity fit, and no pin relies on it.
 pub(crate) const NATIVE_PAGES: PageCount = PageCount::new(75).carrying(1200);
 
 /// What the profile pins for the decompression's nested side, likewise.
-/// With this pin the nested circuit cuts into 44 pages carrying 227 values.
 pub(crate) const NESTED_PAGES: PageCount = PageCount::new(44).carrying(320);
 
 /// The aggregator profile: the fuse plus the circuits that verify a

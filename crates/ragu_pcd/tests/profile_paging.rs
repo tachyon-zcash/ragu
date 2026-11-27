@@ -452,9 +452,9 @@ fn nested_circuit(placement: &Placement, page: usize) -> nested::InternalCircuit
 struct Side<'a, Id, Rx> {
     name: &'a str,
     /// The side's paged circuits, and the layout and stages each was
-    /// registered with.
+    /// registered with, and the carry slots its pages use.
     placements: &'a [Placement],
-    plans: &'a [(Layout, Stages)],
+    plans: &'a [(Layout, Stages, usize)],
     /// The side's claims in order, each with the polynomials it sums.
     claims: &'a [(Claim<Id>, Vec<Rx>)],
     /// The circuit whose claim a page has.
@@ -537,7 +537,7 @@ where
     let mut wrong: Vec<String> = Vec::new();
     let (mut pages, mut carries, mut stages) = (0, 0, 0);
     let mut seen = vec![false; side.claims.len()];
-    for (placement, (layout, loads)) in side.placements.iter().zip(side.plans) {
+    for (placement, (layout, loads, slots)) in side.placements.iter().zip(side.plans) {
         // A walk's steps are cut alike: the first stands for them where a
         // value is planted. What every step's claims sum is looked at.
         let planted = !matches!(
@@ -594,11 +594,11 @@ where
                  gates, at gate {}",
                 gates.start - 1
             );
-            // Its first slot: the mask says nothing of it, and the pages
-            // that name it are the one that holds it to its wires and
-            // those that read it. A circuit whose pages pass nothing, as a
-            // walk's short last step may be, leaves the slot a padding
-            // zero that no page names.
+            // Its first slot: the mask says nothing of it. A circuit whose
+            // pages use a slot names it on the page that holds it to its
+            // wires and on those that read it; one whose pages pass
+            // nothing, as a walk's short last step may be, leaves it a
+            // padding zero that no page names.
             let slot_moved = moved(polynomial, gates.start, Wire::A)?;
             assert!(
                 !slot_moved[own],
@@ -608,11 +608,19 @@ where
             let named = (0..=placement.last())
                 .filter(|&page| slot_moved[claim(Claim::Circuit((side.circuit)(placement, page)))])
                 .count();
-            assert!(
-                named != 1,
-                "{name} {which:?}: a value on a slot of the carry stage moved the claim of one \
-                 page, where one page holds a slot and another reads it, or none names it"
-            );
+            if *slots > 0 {
+                assert!(
+                    named >= 2,
+                    "{name} {which:?}: a value on a slot of the carry stage moved the claims of \
+                     {named} pages, where one page holds the slot and another reads it"
+                );
+            } else {
+                assert_eq!(
+                    named, 0,
+                    "{name} {which:?}: a value on the padding slot of a carry stage no page \
+                     uses moved the claim of a page"
+                );
+            }
             carries += 1;
         }
 
@@ -698,15 +706,19 @@ where
 }
 
 /// The layout and the stages each of one side's paged circuits was
-/// registered with.
-fn plans<F: Field>(plans: &[Option<Planned<F>>]) -> Vec<(Layout, Stages)> {
+/// registered with, and the carry slots its pages use.
+fn plans<F: Field>(plans: &[Option<Planned<F>>]) -> Vec<(Layout, Stages, usize)> {
     plans
         .iter()
         .map(|planned| {
             let planned = planned
                 .as_ref()
                 .expect("every paged circuit was registered");
-            (planned.layout().clone(), planned.stages().clone())
+            (
+                planned.layout().clone(),
+                planned.stages().clone(),
+                planned.report().slots,
+            )
         })
         .collect()
 }

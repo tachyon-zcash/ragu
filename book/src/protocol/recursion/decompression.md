@@ -204,7 +204,14 @@ sequenceDiagram
 Each side's checks run in one circuit, so an intermediate value is a wire
 that a later check reads directly. Where the two fall on different pages,
 the value passes through the committed $[\mathrm{carry}]$ stage, which every
-page of the side loads.
+page of the side loads. The page that holds the wire constrains a slot of
+the stage to it, and the page that reads it names the slot in the wire's
+place. Every page's claim sums the same stage commitments and the one
+$[\mathrm{carry}]$ commitment, each held to its own gates by its mask, so
+the reader sees the value the holder constrained. Before any page is
+registered, the cut is checked against the side's whole circuit: each gate
+and each constraint on one page, each slot a page reads held to a wire by
+another, and the output on the last page.
 
 1. **Field equations.** The native circuit checks the host scalar equations
    over $\F_p$ and the nested circuit the nested scalar equations over $\F_q$.

@@ -114,8 +114,9 @@ impl<F: Field> Program<F> {
         // TODO(#503): a routine the circuit calls is replayed here as part
         // of the page's flat run, so it has no segment a memo can key on.
         // The check holds its gates to this page, together and in order
-        // (`Recording::split_routine`); what is left is for the page to
-        // call it as a routine on `dr`.
+        // (`Recording::split_routine`), and not yet its constraints
+        // (TODO(#1038)); what is left is for the page to call it as a
+        // routine on `dr`, once they are held here too.
         let one = D::ONE;
         let wires = (reserved, &gates[..]);
         let mut sums: Vec<D::Wire> = Vec::with_capacity(self.sums.len());
@@ -256,6 +257,11 @@ impl<F: Field> Planned<F> {
     /// What that circuit was cut over.
     pub fn stages(&self) -> &Stages {
         &self.stages
+    }
+
+    /// How that circuit spreads over the pages.
+    pub fn report(&self) -> &PagingReport {
+        &self.report
     }
 }
 
