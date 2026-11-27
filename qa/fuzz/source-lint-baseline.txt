@@ -43,30 +43,30 @@ RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|806|The first square is the ba
 RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|834|The exponent is a constant of the rank; its set bits fix which squares multiply.
 RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|835|The exponent is a constant of the rank; its first set bit seeds the product.
 RAGU005|crates/ragu_pcd/src/decompress/gadgets.rs|853|The first two powers are one and the base; later ones multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|593|Whether a stage the side writes is loaded or being filled is the run's mode, the circuit's or the prover's native run's, never the witness.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|682|Whether a chain reads a wire or a fixed point is a constant of the call site.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|838|Which challenges a side squeezes and which it takes from bits is fixed by the side: the circuit-field side squeezes them, the scalar-field side takes their bits.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|881|Which points of a Horner chain are present is fixed by the claims' structure, a pure function of the proof system's constants.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|884|A Horner chain starts from its last present point, which the claims' structure fixes.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|895|A Horner step with or without an addend is fixed by the claims' structure.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|922|Whether a term is scaled is fixed by the verifier's code at the call site.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|925|A challenge's endoscalar is read once per stretch of a sum; which terms share a challenge is a constant of the call site.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|962|Where a sum's stretches end is fixed by its terms' challenges and the stretch limits, constants of the call site.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|974|A sum's last stretch is added once; a sum has a term by the verifier's code.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|991|The first term seeds the running sum; later terms add once each, in the transcript's fixed order.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1013|A claim's group count is fixed by the claims' structure: a circuit claim has one group, a mask claim one per component.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1074|The first digit's term seeds the sum; later digits add once each, over the fixed digit range.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1137|The first digit's generator seeds the scalar's part of the digits stage commitment; later digits add once each.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1142|Whether a scaling removes its offset after its last digit is a constant of the call site.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1341|Whether a side's instance stage carries a step binding is a constant of the side's layout: the circuit-field side's does, and holds the IPA opening and the staged digest under its flag.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1500|Whether a run of scalar-field values is pending at an absorption or a squeeze is fixed by the transcript's order as the verifier's code replays it.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1596|A claim's kind is fixed by the protocol's claim list, never by the witness.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|1619|Which of a wire binding's values the registry gives is fixed by the side's code; the instance supplies the others.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|2086|Which bridge commitment the fuse's transcript absorbs before each challenge is the fuse's fixed order.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|2097|Which of the fuse's challenges the scalar-field side lifts is a constant list.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|2175|The steps of a curve's part of the compression's transcript are a constant list of the protocol; the host curve's points and the nested curve's scalars are the scalar field's.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|2200|The steps of a curve's part of the compression's transcript are a constant list of the protocol; the nested curve's points are this field's and its scalars the scalar field's.
-RAGU005|crates/ragu_pcd/src/decompress/verifier.rs|2388|Which value an ab bridge coefficient holds is fixed by the bridge stage's layout.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|924|Whether a stage the side writes is loaded or being filled is the run's mode, the circuit's or the prover's native run's, never the witness.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1013|Whether a chain reads a wire or a fixed point is a constant of the call site.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1173|Which challenges a side squeezes and which it takes from bits is fixed by the side: the circuit-field side squeezes them, the scalar-field side takes their bits.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1216|Which points of a Horner chain are present is fixed by the claims' structure, a pure function of the proof system's constants.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1219|A Horner chain starts from its last present point, which the claims' structure fixes.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1230|A Horner step with or without an addend is fixed by the claims' structure.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1257|Whether a term is scaled is fixed by the verifier's code at the call site.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1260|A challenge's endoscalar is read once per stretch of a sum; which terms share a challenge is a constant of the call site.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1297|Where a sum's stretches end is fixed by its terms' challenges and the stretch limits, constants of the call site.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1309|A sum's last stretch is added once; a sum has a term by the verifier's code.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1326|The first term seeds the running sum; later terms add once each, in the transcript's fixed order.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1348|A claim's group count is fixed by the claims' structure: a circuit claim has one group, a mask claim one per component.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1409|The first digit's term seeds the sum; later digits add once each, over the fixed digit range.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1472|The first digit's generator seeds the scalar's part of the digits stage commitment; later digits add once each.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1477|Whether a scaling removes its offset after its last digit is a constant of the call site.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1676|Whether a side's instance stage carries a step binding is a constant of the side's layout: the circuit-field side's does, and holds the IPA opening and the staged digest under its flag.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1835|Whether a run of scalar-field values is pending at an absorption or a squeeze is fixed by the transcript's order as the verifier's code replays it.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1931|A claim's kind is fixed by the protocol's claim list, never by the witness.
+RAGU005|crates/ragu_pcd/src/decompress/common.rs|1954|Which of a wire binding's values the registry gives is fixed by the side's code; the instance supplies the others.
+RAGU005|crates/ragu_pcd/src/decompress/native.rs|665|Which bridge commitment the fuse's transcript absorbs before each challenge is the fuse's fixed order.
+RAGU005|crates/ragu_pcd/src/decompress/native.rs|676|Which of the fuse's challenges the scalar-field side lifts is a constant list.
+RAGU005|crates/ragu_pcd/src/decompress/native.rs|754|The steps of a curve's part of the compression's transcript are a constant list of the protocol; the host curve's points and the nested curve's scalars are the scalar field's.
+RAGU005|crates/ragu_pcd/src/decompress/native.rs|779|The steps of a curve's part of the compression's transcript are a constant list of the protocol; the nested curve's points are this field's and its scalars the scalar field's.
+RAGU005|crates/ragu_pcd/src/decompress/nested.rs|502|Which value an ab bridge coefficient holds is fixed by the bridge stage's layout.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|390|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.
 RAGU005|crates/ragu_pcd/src/internal/shared/ky.rs|272|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
 RAGU005|crates/ragu_pcd/src/step/oracles.rs|244|A second opening of the same slot is a structural API misuse by the step: which slots a step opens is fixed by its circuit, not by witness values.

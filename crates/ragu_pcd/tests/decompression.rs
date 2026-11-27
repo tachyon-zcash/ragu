@@ -33,16 +33,18 @@ use udon::{
 };
 
 use super::{
-    circuits::{Prepared, StatementCircuit},
+    common::{
+        Prepared, Side, SideCircuit, StatementCircuit, Whole, WholeCarry, challenges_per_curve,
+        cut, fuse, squeezed,
+    },
+    native::Native,
+    nested::Nested,
     online::{self, Values},
     prover::{Prepare, Sides, Witness},
-    side::{Native, Nested, Side},
     stages::{
         DigitsStage, Front, InstanceStage, LiftsStage, OnlineInputStage, OnlineQueryStage, Run,
         message_points, native_scalars, num_runs, runs,
     },
-    verifier::{challenges_per_curve, fuse, squeezed},
-    whole::{Whole, WholeCarry, WholeCircuit, cut},
 };
 use crate::{Application, ApplicationBuilder, CompressedProof, ipa::convert_challenge};
 
@@ -171,10 +173,10 @@ fn reserved<S: Front<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pasta, S
 }
 
 /// Side `S`'s whole circuit, laid out as `prepared` is.
-fn circuit<S: Front<Pasta, TestR, R, HEADER_SIZE>>(
+fn circuit<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(
     prepared: &Prepared<Pasta, S>,
 ) -> Whole<'static, Pasta, S, TestR, R, HEADER_SIZE> {
-    WholeCircuit::new(prepared.tables.clone(), crate::pasta::baked_aggregator())
+    S::circuit(prepared.tables.clone(), crate::pasta::baked_aggregator())
 }
 
 /// Captures side `S`'s whole circuit over `prepared`, with the stages'
@@ -184,14 +186,14 @@ fn circuit<S: Front<Pasta, TestR, R, HEADER_SIZE>>(
 /// # Errors
 ///
 /// Fails if `prepared` does not satisfy the circuit.
-fn capture<S: Front<Pasta, TestR, R, HEADER_SIZE>>(
+fn capture<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(
     prepared: &Prepared<Pasta, S>,
 ) -> ragu_core::Result<Capture<S::F>> {
     capture_with_stage_values(&circuit(prepared), prepared, &reserved(prepared))
 }
 
 /// Side `S`'s whole circuit rejects `prepared`.
-fn rejected<S: Front<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pasta, S>) -> bool {
+fn rejected<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pasta, S>) -> bool {
     capture(prepared).is_err()
 }
 
@@ -532,7 +534,7 @@ impl<F: Field> Forced<F> {
 /// the other wires hold.
 #[test]
 fn every_stage_point_is_held_to_the_curve() {
-    fn check<S: Front<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pasta, S>) {
+    fn check<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pasta, S>) {
         let capture = capture(prepared).expect("the honest circuit satisfies its constraints");
         let (events, stage_wires) = (&capture.recorder.events, &capture.stage_wires);
         let honest = &capture.recorder.values;
@@ -594,7 +596,7 @@ fn every_stage_point_is_held_to_the_curve() {
 /// header element of its instance.
 #[test]
 fn every_tampered_scalar_is_rejected() {
-    fn check<S: Front<Pasta, TestR, R, HEADER_SIZE>>(prepared: &mut Prepared<Pasta, S>) {
+    fn check<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(prepared: &mut Prepared<Pasta, S>) {
         let layout = prepared.tables.layout;
         for position in layout.messages.scalars.positions() {
             prepared.messages.elements[position] += S::F::ONE;
@@ -681,7 +683,7 @@ fn the_reduction_holds_each_message() {
 /// a decompression step.
 #[test]
 fn the_ipa_rejects_other_witness_points() {
-    fn check<S: Front<Pasta, TestR, R, HEADER_SIZE>>(prepared: &mut Prepared<Pasta, S>) {
+    fn check<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(prepared: &mut Prepared<Pasta, S>) {
         // Another point of the curve: the point doubled.
         let other = |point: S::P| (point * S::Other::ONE.double()).to_affine();
         let g_prime = prepared.supplied.g_prime;
@@ -1233,7 +1235,9 @@ fn whole_circuits_expose_the_other_sides_commitments() {
     assert_eq!(exposed(&sides.nested), of_native);
 
     // Each circuit's public output is the exposed points.
-    fn output<S: Front<Pasta, TestR, R, HEADER_SIZE>>(prepared: &Prepared<Pasta, S>) -> Vec<S::F> {
+    fn output<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(
+        prepared: &Prepared<Pasta, S>,
+    ) -> Vec<S::F> {
         let captured = capture(prepared).expect("the circuit is satisfied");
         captured
             .instance
@@ -1295,7 +1299,7 @@ fn whole_circuits_expose_the_other_sides_commitments() {
 /// gates from there to the polynomial's end.
 fn cuts_into<S, const H: usize>()
 where
-    S: Front<Pasta, TestR, R, H>,
+    S: SideCircuit<Pasta, TestR, R, H>,
 {
     use ragu_circuits::staging::Stage;
 
@@ -1544,9 +1548,9 @@ mod aggregator {
         {
             use crate::profile::{PageCount, paging::ExtensionPages};
 
-            let checked = crate::decompress::whole::checked::<
+            let checked = crate::decompress::common::checked::<
                 Pasta,
-                crate::decompress::side::Nested,
+                crate::decompress::nested::Nested,
                 WalletRank,
                 AggregatorRank,
                 H,

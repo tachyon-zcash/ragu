@@ -4,14 +4,14 @@
 //! The public types are re-exported through [`profile`](crate::profile).
 //!
 //! Each side of the verification is one circuit, the side's verifier
-//! ([`WholeCircuit`](super::whole::WholeCircuit)), cut into
+//! ([`SideCircuit`](super::common::SideCircuit)), cut into
 //! pages: a side's extension is its pages, each a circuit over the side's
 //! stages and the circuit's carry stage. On the native side the stages are
 //! the instance, messages, lifts and digits stages every page loads, and
 //! the carry stage, which every page loads last. After the pages comes the
 //! statement circuit, which loads the instance stage alone and exposes the
 //! output header the pages verified, then the step binding as its public
-//! output, under a final mask (see [`StatementCircuit`](super::circuits::StatementCircuit)).
+//! output, under a final mask (see [`StatementCircuit`](super::common::StatementCircuit)).
 //! On the nested side the stages are one per run of the compression's
 //! transcript, then the trailing and lifts stages (see [`Front`]), the
 //! digits stage and the carry stage. A side's last page carries its whole
@@ -49,11 +49,12 @@ use ragu_core::{Error, Result};
 use rand::CryptoRng;
 
 use super::{
-    circuits, online,
+    common,
+    native::Native,
+    nested::Nested,
+    online,
     prover::{Decompressed, Decompression},
-    side::{Native, Nested},
     stages::{DigitsStage, Front, InstanceStage, LiftsStage, Runs, num_runs},
-    whole,
 };
 use crate::{
     SelectableBackend,
@@ -207,14 +208,13 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
     {
-        use super::{verifier::tables, whole::WholeCircuit};
-        type Whole<'p, Base, S, R, const H: usize> = WholeCircuit<'p, Base, S, WalletRank, R, H>;
+        use super::{common::tables, native, nested};
         Ok(vec![
             crate::profile::paging::sized_extension(
                 "decompression.native",
                 NATIVE_PAGES,
                 fewest,
-                Whole::<Base, Native, R, HEADER_SIZE>::new(
+                native::Circuit::<Base, WalletRank, R, HEADER_SIZE>::new(
                     tables::<Base, Native, WalletRank, R, HEADER_SIZE>()?,
                     params,
                 ),
@@ -223,7 +223,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
                 "decompression.nested",
                 NESTED_PAGES,
                 fewest,
-                Whole::<Base, Nested, R, HEADER_SIZE>::new(
+                nested::Circuit::<Base, WalletRank, R, HEADER_SIZE>::new(
                     tables::<Base, Nested, WalletRank, R, HEADER_SIZE>()?,
                     params,
                 ),
@@ -497,7 +497,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(H)?;
-        let checked = whole::checked::<Base, Native, WalletRank, R, H>(params)?;
+        let checked = common::checked::<Base, Native, WalletRank, R, H>(params)?;
         Ok(vec![ExtensionPages::new(0, NATIVE_PAGES, &checked)?])
     }
 
@@ -509,7 +509,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(HEADER_SIZE)?;
-        let checked = whole::checked::<Base, Nested, WalletRank, R, HEADER_SIZE>(params)?;
+        let checked = common::checked::<Base, Nested, WalletRank, R, HEADER_SIZE>(params)?;
         Ok(vec![ExtensionPages::new(0, NESTED_PAGES, &checked)?])
     }
 
@@ -804,7 +804,7 @@ pub(crate) fn nested_layout(pages: usize, runs: usize) -> Extension {
 /// is the instance stage.
 ///
 /// The carry stage is a stage as the others are
-/// ([`WholeCarry`](whole::WholeCarry)), of the size the side pins, so its
+/// ([`WholeCarry`](common::WholeCarry)), of the size the side pins, so its
 /// masks are its type's: no cut of the circuit is asked for here.
 fn register_mask<'params, C, S, K, R, const HEADER_SIZE: usize>(
     mask: usize,
@@ -820,7 +820,7 @@ where
     type Instance<C, S, K, R, const H: usize> = InstanceStage<C, S, K, R, H>;
     type Lifts<C, S, K, R, const H: usize> = LiftsStage<C, S, K, R, H>;
     type Digits<C, S, K, R, const H: usize> = DigitsStage<C, S, K, R, H>;
-    type Carry<C, S, K, R, const H: usize> = whole::WholeCarry<C, S, K, R, H>;
+    type Carry<C, S, K, R, const H: usize> = common::WholeCarry<C, S, K, R, H>;
     if mask < indices.front {
         return S::register_stage_mask(mask, slot);
     }
@@ -858,7 +858,7 @@ where
     if circuit != NATIVE_PAGES.num_pages() {
         return Err(Error::Initialization("no such circuit".into()));
     }
-    slot.register_staged(circuits::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new())
+    slot.register_staged(common::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new())
 }
 
 /// Registers native mask `mask`; see [`native_layout`] for the layout.

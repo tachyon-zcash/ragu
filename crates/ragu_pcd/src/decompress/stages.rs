@@ -14,7 +14,7 @@
 //! lifts stage, the lifts of the challenges the side's field checks use,
 //! and the digits stage, the signed digits of the full-width scalars the
 //! other side scales by. The side's whole circuit
-//! ([`WholeCircuit`](super::whole::WholeCircuit)) loads the chain after
+//! ([`SideCircuit`](super::common::SideCircuit)) loads the chain after
 //! the aggregator's two online stages, and every page it is cut into
 //! loads every stage in the chain. A [`Layout`]
 //! names where in the instance and messages each part
@@ -60,7 +60,7 @@
 //! The digits stage comes right after the lifts stage, so its generators,
 //! which the other side's verifier is laid out by, follow from the side's
 //! [`Layout`] alone: neither side's layout waits on the other's (see
-//! [`Tables`](super::verifier::Tables)). The generators are computed from
+//! [`Tables`](super::common::Tables)). The generators are computed from
 //! the stages' shapes alone
 //! ([`shape_degrees`]), as [`StageExt::rx`] lays a stage out, so that the
 //! compression, which commits the runs for a profile's decompression
@@ -88,10 +88,10 @@ use ragu_primitives::{
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::{
-    circuits::{Prepared, View},
+    common::{Prepared, Side, View, challenges_per_curve},
     gadgets::derive::digit_width,
-    side::{Native, Nested, Side},
-    verifier::challenges_per_curve,
+    native::Native,
+    nested::Nested,
 };
 pub(crate) use crate::compress::runs::{
     NESTED_SCALARS, Run, StageShape, native_points_of, num_runs, runs, shape_degrees,
@@ -116,7 +116,7 @@ pub(crate) const MESSAGE_SCALARS: usize =
 /// The scalar field's values beyond $v$, $c$ and $c b z$ whose digits the
 /// circuit-field side scales generators by: the `ab` bridge stage's
 /// coefficients, the coordinates of three host-curve commitments and the
-/// alpha (see [`ab_layout`](super::verifier::ab_layout)).
+/// alpha (see [`ab_layout`](super::common::ab_layout)).
 pub(crate) const AB_TERMS: usize = 7;
 
 /// Positions within the circuit-field side's step binding, the instance
@@ -382,7 +382,7 @@ pub(crate) struct Layout {
     pub instance: InstanceLayout,
     pub messages: MessagesLayout,
     /// The lifts stage's elements: the lifts of the challenges the side's
-    /// field checks use, in [`squeezed`](super::verifier::squeezed) order,
+    /// field checks use, in [`squeezed`](super::common::squeezed) order,
     /// and on the scalar-field side those of the fuse's challenges and of
     /// the other curve's after them.
     pub lifts: usize,
@@ -439,7 +439,7 @@ impl Layout {
         Layout {
             instance,
             messages: Self::messages::<K>(),
-            lifts: 2 * challenges_per_curve::<K>() + super::verifier::fuse::LIFTED.len(),
+            lifts: 2 * challenges_per_curve::<K>() + super::common::fuse::LIFTED.len(),
             digits: (3 + AB_TERMS) * digit_width::<F>(),
             flags: 0,
         }
@@ -919,41 +919,9 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
 {
     /// The chain's last stage, the lifts stage's parent.
     type Last: Stage<Self::F, R> + Default + 'static;
-    /// The guards of the chain's stages, as [`add`](Self::add) returns
-    /// them and [`load`](Self::load) takes them.
-    type Guards<'dr, D: Driver<'dr, F = Self::F>>;
 
     /// The stages in the chain.
     fn stages() -> usize;
-
-    /// Adds the chain's stages to `dr`, in order.
-    ///
-    /// # Errors
-    ///
-    /// Fails as [`StageBuilder::add_stage`] does.
-    fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Self, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, D>,
-        StageBuilder<'a, 'dr, D, R, Self::Last, T>,
-    )>
-    where
-        D: Driver<'dr, F = Self::F>,
-        T: Stage<Self::F, R>;
-
-    /// Loads the chain's stages unenforced, as the side's verifier reads
-    /// them.
-    ///
-    /// # Errors
-    ///
-    /// Fails as [`StageGuard::unenforced`] does.
-    fn load<'dr, 'source: 'dr, D>(
-        guards: Self::Guards<'dr, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Self>>,
-    ) -> Result<FrontLoaded<'dr, D, Self::P>>
-    where
-        D: Driver<'dr, F = Self::F>;
 
     /// Registers stage `index`'s mask into `slot`.
     ///
@@ -1002,46 +970,9 @@ where
     R: Rank,
 {
     type Last = MessagesStage<C, Native, K, R, HEADER_SIZE>;
-    type Guards<'dr, D: Driver<'dr, F = Self::F>> = (
-        StageGuard<'dr, D, R, InstanceStage<C, Native, K, R, HEADER_SIZE>>,
-        StageGuard<'dr, D, R, MessagesStage<C, Native, K, R, HEADER_SIZE>>,
-    );
 
     fn stages() -> usize {
         2
-    }
-
-    fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Native, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, D>,
-        StageBuilder<'a, 'dr, D, R, Self::Last, T>,
-    )>
-    where
-        D: Driver<'dr, F = Self::F>,
-        T: Stage<Self::F, R>,
-    {
-        let (instance, dr) = dr.add_stage::<InstanceStage<C, Native, K, R, HEADER_SIZE>>()?;
-        let (messages, dr) = dr.add_stage::<MessagesStage<C, Native, K, R, HEADER_SIZE>>()?;
-        Ok(((instance, messages), dr))
-    }
-
-    fn load<'dr, 'source: 'dr, D>(
-        (instance, messages): Self::Guards<'dr, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Self>>,
-    ) -> Result<FrontLoaded<'dr, D, Self::P>>
-    where
-        D: Driver<'dr, F = Self::F>,
-    {
-        let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
-        let messages = messages.unenforced(dr, witness.as_ref().map(|w| &w.messages))?;
-        Ok(FrontLoaded {
-            instance_points: instance.points.into_inner(),
-            instance_elements: instance.elements.into_inner(),
-            messages_points: messages.points.into_inner(),
-            messages_elements: messages.elements.into_inner(),
-        })
     }
 
     fn register_stage_mask<'params>(
@@ -1088,44 +1019,9 @@ where
     R: Rank,
 {
     type Last = TrailingStage<C, K, R>;
-    type Guards<'dr, D: Driver<'dr, F = Self::F>> = (
-        <K::Last as RunIndex>::Guards<'dr, C, K, R, D>,
-        StageGuard<'dr, D, R, TrailingStage<C, K, R>>,
-    );
 
     fn stages() -> usize {
         num_runs::<K>() + 1
-    }
-
-    fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, D>,
-        StageBuilder<'a, 'dr, D, R, Self::Last, T>,
-    )>
-    where
-        D: Driver<'dr, F = Self::F>,
-        T: Stage<Self::F, R>,
-    {
-        let (runs, dr) = K::Last::add::<C, K, R, D, T>(dr)?;
-        let (trailing, dr) = dr.add_stage::<TrailingStage<C, K, R>>()?;
-        Ok(((runs, trailing), dr))
-    }
-
-    fn load<'dr, 'source: 'dr, D>(
-        (runs, trailing): Self::Guards<'dr, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Self>>,
-    ) -> Result<FrontLoaded<'dr, D, Self::P>>
-    where
-        D: Driver<'dr, F = Self::F>,
-    {
-        let layout = nested_layout::<C, K>();
-        let mut slots = FrontSlots::new(&layout);
-        K::Last::load::<C, K, R, D>(runs, dr, witness, &mut slots)?;
-        let output = trailing.unenforced(dr, witness.as_ref().map(|w| *w))?;
-        slots.place(&trailing_source(&layout), output)?;
-        slots.finish()
     }
 
     fn register_stage_mask<'params>(
@@ -1169,6 +1065,33 @@ where
     fn zero_alpha(index: usize) -> bool {
         index < num_runs::<K>()
     }
+}
+
+/// Loads the scalar-field side's front stages unenforced, its run stages
+/// up to `K`'s last and its trailing stage, as the side's verifier reads
+/// them: the instance and messages they hold between them.
+///
+/// # Errors
+///
+/// Fails as [`StageGuard::unenforced`] does.
+pub(crate) fn load_nested_front<'dr, 'source: 'dr, C, K, R, D>(
+    runs: <K::Last as RunIndex>::Guards<'dr, C, K, R, D>,
+    trailing: StageGuard<'dr, D, R, TrailingStage<C, K, R>>,
+    dr: &mut D,
+    witness: &DriverValue<D, &'source Prepared<C, Nested>>,
+) -> Result<FrontLoaded<'dr, D, C::HostCurve>>
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Runs,
+    R: Rank,
+    D: Driver<'dr, F = C::ScalarField>,
+{
+    let layout = nested_layout::<C, K>();
+    let mut slots = FrontSlots::new(&layout);
+    K::Last::load::<C, K, R, D>(runs, dr, witness, &mut slots)?;
+    let output = trailing.unenforced(dr, witness.as_ref().map(|w| *w))?;
+    slots.place(&trailing_source(&layout), output)?;
+    slots.finish()
 }
 
 /// The scalar-field side's layout for the decompression of a Standard

@@ -1023,11 +1023,11 @@ fn a_registered_page_is_held_to_one() -> Result<()> {
 
 #[test]
 fn extension_pages_share_their_stages_and_stay_inside_the_user_declaration() {
-    use crate::decompress::{side::Nested, whole};
     use super::{ExtensionPages, Registrar};
+    use crate::decompress::{common, nested::Nested};
 
     type Profile = Aggregator<HEADER_SIZE>;
-    let checked = whole::checked::<Pasta, Nested, WalletRank, AggregatorRank, HEADER_SIZE>(
+    let checked = common::checked::<Pasta, Nested, WalletRank, AggregatorRank, HEADER_SIZE>(
         crate::pasta::baked_aggregator(),
     )
     .unwrap();
@@ -1097,9 +1097,18 @@ fn extension_census_counts_the_last_output_at_the_constraint_limit() -> Result<(
     // constraint, and the extension adds one public output.
     let body = TestRank::num_coeffs() - 2;
     let circuit = |n| MultiStage::new(Constraints(n));
-    assert!(super::sized("plain", count, (&[], false), circuit(body))?.pages.is_ok());
+    assert!(
+        super::sized("plain", count, (&[], false), circuit(body))?
+            .pages
+            .is_ok()
+    );
     let overflow = super::sized_extension("extension", count, true, circuit(body))?;
-    assert!(overflow.pages.unwrap_err().contains("ConstraintBoundExceeded"));
+    assert!(
+        overflow
+            .pages
+            .unwrap_err()
+            .contains("ConstraintBoundExceeded")
+    );
     assert!(overflow.digest.is_none());
     assert_ne!(overflow.fewest, Some(1));
     let fits = super::sized_extension("extension", count, true, circuit(body - 1))?;

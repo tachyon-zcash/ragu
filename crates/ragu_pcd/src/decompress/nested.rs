@@ -1,0 +1,584 @@
+//! The scalar-field side of the decompression ([`Nested`]): the
+//! compressed proof's verifier in the scalar field, over the host curve,
+//! as one circuit ([`Circuit`]) that the pager cuts into the pages of the
+//! aggregator profile's nested extension
+//! ([`NESTED_PAGES`](crate::profile::Aggregator::NESTED_PAGES)).
+//!
+//! The side checks the nested reduction's scalars in its field and the
+//! native reduction's points on its curve ([`nested_tables`]). It squeezes
+//! no challenge: it takes each from its bits, and every read holds the
+//! bits' lift to the challenge's slot of the lifts stage. It binds the
+//! nested unified instance to the instance stage and to the lifts of the
+//! fuse's challenges ([`nested_targets`]), and recomputes the
+//! circuit-field side's digits stage, summing the digits' generators by
+//! sign as it scales by them. Its public output is that recomputation, the
+//! two application output commitments and the commitment of the host
+//! IPA's $s(X)$ in the native batch of the step that proves the side
+//! ([`nested_side`]).
+//!
+//! What both sides share, the paging of the circuit among it, is
+//! [`common`](super::common).
+
+use alloc::{sync::Arc, vec, vec::Vec};
+use core::{iter::once, marker::PhantomData};
+
+use ragu_circuits::{
+    WithAux,
+    paging::Pageable,
+    polynomials::Rank,
+    staging::{MultiStage, MultiStageCircuit, StageBuilder, wires_of},
+};
+use ragu_core::{
+    Cycle, Error, FixedGenerators, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
+};
+use ragu_primitives::{Element, GadgetExt, Point, vec::FixedVec};
+
+use super::{
+    common::{
+        AbValue, Body, Carried, Cells, Challenge, Exposed, Prepared, Run, Side, SideCircuit,
+        Tables, Whole, ab_layout, body, challenges_per_curve, coordinates, fuse, native_claims,
+        nested_claims, squeezed,
+    },
+    native::Native,
+    online::input,
+    stages::{
+        AB_TERMS, DigitsStage, Layout, LiftsStage, OnlineInputStage, OnlineQueryStage, RunIndex,
+        Runs, StageShape, TrailingStage, digits_degrees, load_nested_front, nested_front,
+        nested_scalars,
+    },
+};
+use crate::{
+    compress::{
+        instance::{NestedEval, NestedPreamble, NestedQuery, degrees},
+        revdot::{native_components, native_position},
+    },
+    internal::{
+        native,
+        nested::{
+            claims::{KySource as NestedKySource, ky_values as nested_ky_values},
+            unified as nested_unified,
+        },
+    },
+    ipa::IpaCycle,
+    profile::{PageCount, ProfiledCycle, Standard},
+};
+
+/// The scalar-field side's whole circuit: its verifier ([`nested_side`])
+/// over its stages, for a proof at rank `K` in polynomials of rank `R`.
+pub(crate) struct Circuit<'p, C: Cycle, K, R, const HEADER_SIZE: usize> {
+    tables: Arc<Tables>,
+    params: &'p C::Params,
+    _marker: PhantomData<fn() -> (K, R)>,
+}
+
+impl<C: Cycle, K, R, const HEADER_SIZE: usize> Clone for Circuit<'_, C, K, R, HEADER_SIZE> {
+    fn clone(&self) -> Self {
+        Circuit {
+            tables: self.tables.clone(),
+            params: self.params,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'p, C, K, R, const HEADER_SIZE: usize> Circuit<'p, C, K, R, HEADER_SIZE>
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Runs,
+    R: Rank,
+{
+    /// The side's whole circuit, laid out by `tables`, the side's
+    /// ([`tables`](super::common::tables)).
+    pub(crate) fn new(
+        tables: Arc<Tables>,
+        params: &'p C::Params,
+    ) -> MultiStage<C::ScalarField, R, Self> {
+        MultiStage::new(Circuit {
+            tables,
+            params,
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<C, K, R, const HEADER_SIZE: usize> MultiStageCircuit<C::ScalarField, R>
+    for Circuit<'_, C, K, R, HEADER_SIZE>
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Runs,
+    R: Rank,
+{
+    type Last = DigitsStage<C, Nested, K, R, HEADER_SIZE>;
+    type Instance<'source> = FixedVec<C::HostCurve, Exposed<C, Nested, K>>;
+    type Witness<'source> = &'source Prepared<C, Nested>;
+    type Output =
+        Kind![C::ScalarField; FixedVec<Point<'_, _, C::HostCurve>, Exposed<C, Nested, K>>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::ScalarField>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        FixedVec::try_from_fn(|i| Point::alloc(dr, instance.as_ref().map(|points| points[i])))
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::ScalarField>>(
+        &self,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+    where
+        Self: 'dr,
+    {
+        let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, Nested, R>>()?;
+        let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, Nested, R>>()?;
+        // One stage per run of the compression's transcript, then the
+        // trailing stage.
+        let (runs, dr) = K::Last::add::<C, K, R, D, _>(dr)?;
+        let (trailing, dr) = dr.add_stage::<TrailingStage<C, K, R>>()?;
+        let (lifts, dr) = dr.add_stage::<LiftsStage<C, Nested, K, R, HEADER_SIZE>>()?;
+        let (digits, dr) = dr.add_stage::<DigitsStage<C, Nested, K, R, HEADER_SIZE>>()?;
+        let dr = dr.finish();
+        let online_input =
+            online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+        let online_query =
+            online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
+        let front = load_nested_front::<C, K, R, D>(runs, trailing, dr, &witness)?;
+        let lifts = lifts.unenforced(dr, witness.as_ref().map(|w| &w.lifts))?;
+        let digits = digits.unenforced(dr, witness.as_ref().map(|w| &w.digits))?;
+
+        let mut run = Run::new(
+            &self.tables,
+            front.instance(),
+            front.messages(),
+            [&online_input.elements[..], &online_query.elements[..]],
+            Cells::Loaded(&lifts.elements[..]),
+            Cells::Loaded(&digits.elements[..]),
+            (
+                <Nested as Side<C>>::generators(self.params),
+                <Nested as Side<C>>::u(self.params),
+                <Nested as Side<C>>::poseidon(self.params),
+            ),
+            witness,
+        );
+        let exposed = nested_side::<_, C, K>(dr, &mut run)?;
+        if exposed.len() != <Nested as Side<C>>::exposed::<K>() {
+            return Err(Error::InvalidWitness(
+                "the side's verifier exposes the side's points".into(),
+            ));
+        }
+        Ok(WithAux::new(FixedVec::try_from(exposed)?, D::unit()))
+    }
+}
+
+impl<C, K, R, const HEADER_SIZE: usize> Pageable<C::ScalarField, R>
+    for Circuit<'_, C, K, R, HEADER_SIZE>
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Runs,
+    R: Rank,
+{
+    type Carry = Carried<C, Nested>;
+}
+
+/// The scalar-field side.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Nested;
+
+/// What the scalar-field side's targets derive from: the nested
+/// unified instance.
+pub(crate) struct NestedExtra<C: Cycle> {
+    pub unified: nested_unified::Instance<C::HostCurve>,
+}
+
+/// The nested targets as elements.
+pub(crate) struct NestedTargets<'dr, D: Driver<'dr>> {
+    pub c: Element<'dr, D>,
+    pub unified: Element<'dr, D>,
+    pub one: Element<'dr, D>,
+    pub zero: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
+    type Ky = Element<'dr, D>;
+
+    fn raw_c(&self) -> impl Iterator<Item = Self::Ky> {
+        once(self.c.clone())
+    }
+
+    fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone {
+        once(self.one.clone())
+    }
+
+    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
+        once(self.unified.clone())
+    }
+
+    fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky> {
+        // The standard profile has no online batch, so the circuit's
+        // instance is the unified one.
+        once(self.unified.clone())
+    }
+
+    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky> {
+        // Nor an online helper.
+        core::iter::empty()
+    }
+
+    fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
+        // The standard profile's nested extension has no binding circuit.
+        core::iter::empty()
+    }
+
+    fn zero(&self) -> Self::Ky {
+        self.zero.clone()
+    }
+}
+
+impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
+    type F = C::ScalarField;
+    type Other = C::CircuitField;
+    type P = C::HostCurve;
+    type Q = C::NestedCurve;
+    type Poseidon = C::ScalarPoseidon;
+    type Extra = NestedExtra<C>;
+
+    #[cfg(test)]
+    const NAME: &'static str = "scalar-field";
+
+    const ONLINE: super::online::Values = super::online::Values::NESTED;
+    const PAGES: PageCount = super::aggregator::NESTED_PAGES;
+    /// The decompression flag, which the circuit-field side's statement
+    /// circuit binds.
+    const FLAGS: usize = 1;
+
+    /// The other side's digits stage, the two application output
+    /// commitments and the host IPA helper's native batch commitment.
+    fn exposed<K: Rank>() -> usize {
+        2 + crate::header::NUM_ONLINE_FP_POLYS
+    }
+
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {
+        let layout = <Self as Side<C>>::layout::<K, HEADER_SIZE>();
+        nested_front::<K>(&layout)
+            .iter()
+            .map(|source| source.shape())
+            .collect()
+    }
+
+    fn generators(params: &C::Params) -> &[Self::P] {
+        C::host_generators(params).g()
+    }
+
+    fn u(params: &C::Params) -> Self::P {
+        *C::host_u(params)
+    }
+
+    fn poseidon(params: &C::Params) -> &Self::Poseidon {
+        C::scalar_poseidon(params)
+    }
+
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout {
+        Layout::nested::<C::ScalarField, Standard, K>()
+    }
+
+    fn tables<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Tables> {
+        nested_tables::<C, K, R, HEADER_SIZE>()
+    }
+
+    fn verify<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
+        dr: &mut D,
+        run: &mut Run<'_, '_, 'dr, D, C, Self>,
+    ) -> Result<Vec<Point<'dr, D, Self::P>>> {
+        nested_side::<_, C, K>(dr, run)
+    }
+}
+
+impl<C, K, R, const HEADER_SIZE: usize> SideCircuit<C, K, R, HEADER_SIZE> for Nested
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Runs,
+    R: Rank,
+{
+    type Circuit<'p> = Circuit<'p, C, K, R, HEADER_SIZE>;
+
+    fn circuit(tables: Arc<Tables>, params: &C::Params) -> Whole<'_, C, Self, K, R, HEADER_SIZE> {
+        Circuit::new(tables, params)
+    }
+}
+
+/// The coefficient degrees of the nested wire bindings' stage wires, in
+/// the order [`Instance::nested_bindings`] lists them: the bridge
+/// preamble's children, the bridge query's registry values and the bridge
+/// eval's evaluations.
+///
+/// [`Instance::nested_bindings`]: crate::compress::instance::Instance::nested_bindings
+pub(crate) fn nested_binding_degrees<C: ProfiledCycle, R: Rank>() -> Result<[Vec<usize>; 3]> {
+    Ok([
+        degrees::<_, R, NestedPreamble<C, R>>(|out| {
+            let mut wires = Vec::new();
+            for child in [&out.left, &out.right] {
+                wires.extend(wires_of(&child.nested.x)?);
+                wires.extend(wires_of(&child.nested.y)?);
+            }
+            Ok(wires)
+        })?,
+        degrees::<_, R, NestedQuery<C, R>>(|out| {
+            let q = &out.nested;
+            let mut wires = wires_of(&q.fixed_registry)?;
+            wires.extend(wires_of(&q.registry_wxy)?);
+            for child in [&q.left, &q.right] {
+                wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
+                wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
+            }
+            Ok(wires)
+        })?,
+        degrees::<_, R, NestedEval<C, R>>(|out| {
+            let e = &out.nested;
+            let mut wires = Vec::new();
+            for element in [
+                &e.registry_wx0,
+                &e.registry_wx1,
+                &e.registry_wy,
+                &e.a_poly,
+                &e.b_poly,
+                &e.registry_xy,
+            ] {
+                wires.extend(wires_of(element)?);
+            }
+            Ok(wires)
+        })?,
+    ])
+}
+
+/// The scalar-field side's tables, as
+/// [`native_tables`](super::native::native_tables).
+pub(crate) fn nested_tables<
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Rank,
+    R: Rank,
+    const HEADER_SIZE: usize,
+>() -> Result<Tables> {
+    Ok(Tables {
+        layout: Layout::nested::<C::ScalarField, Standard, K>(),
+        claims: nested_claims()?,
+        point_claims: native_claims()?,
+        bindings: nested_binding_degrees::<C, K>()?.to_vec(),
+        foreign: digits_degrees::<C, Native, K, R, HEADER_SIZE>(),
+        ab_terms: ab_layout::<C, K>()?,
+        lifts: Vec::new(),
+    })
+}
+
+/// The claims' targets of the scalar-field side's reduction, as the
+/// circuit-field side's: allocates the nested unified instance, binds it to
+/// the instance stage and to the lifts of the fuse's challenges, and
+/// derives the targets.
+fn nested_targets<'dr, D, C, K>(
+    dr: &mut D,
+    run: &Run<'_, '_, 'dr, D, C, Nested>,
+) -> Result<Vec<Element<'dr, D>>>
+where
+    D: Driver<'dr, F = C::ScalarField>,
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Rank,
+{
+    let output = nested_unified::Output::<D, C::HostCurve>::alloc(
+        dr,
+        &mut (),
+        run.witness.as_ref().map(|w| &w.extra.unified),
+    )?;
+    // The fuse's x, y and u, in `fuse::LIFTED` order after the nested
+    // curve's compression challenges in the lifts stage.
+    let fuse_lifts = challenges_per_curve::<K>();
+    for (i, ours) in [&output.x, &output.y, &output.u].into_iter().enumerate() {
+        ours.enforce_equal(dr, &run.lift(fuse_lifts + i)?)?;
+    }
+    output.c.enforce_equal(dr, &run.scalar(nested_scalars::C))?;
+    output.v.enforce_equal(dr, &run.scalar(nested_scalars::V))?;
+    let listed = native_components::<Standard>().count();
+    let exported: [usize; nested_unified::NUM_EXPORTED] = {
+        use native::{RxComponent::*, RxIndex::*};
+        [
+            native_position::<Standard>(Rx(Preamble)),
+            native_position::<Standard>(Rx(InnerError)),
+            native_position::<Standard>(Rx(OuterError)),
+            native_position::<Standard>(Rx(Query)),
+            native_position::<Standard>(Rx(Eval)),
+            native_position::<Standard>(AbA),
+            native_position::<Standard>(AbB),
+            listed,
+            listed + 1,
+            native_position::<Standard>(Rx(PointsBinding)),
+            native_position::<Standard>(Rx(PointsPreamble)),
+            native_position::<Standard>(Rx(PointsRegistryWx)),
+            native_position::<Standard>(Rx(PointsAb)),
+            native_position::<Standard>(Rx(PointsF)),
+            listed + 2,
+            listed + 3,
+        ]
+    };
+    for (position, theirs) in exported.iter().zip(output.exported.iter()) {
+        run.commitment(*position).enforce_equal(dr, theirs)?;
+    }
+    let y = run.lift(squeezed::Y)?;
+    let targets = NestedTargets {
+        c: run.scalar(nested_scalars::C),
+        unified: output.ky(dr, &y)?,
+        one: Element::one(),
+        zero: Element::zero(dr),
+    };
+    Ok(nested_ky_values::<Standard, _>(&targets)
+        .take(run.tables.claims.len())
+        .collect())
+}
+
+/// The scalar-field side of the decompressed verifier for a proof at rank
+/// `K`, over the host curve: returns the points the side exposes, its
+/// recomputation of the circuit-field side's digits stage, then the two
+/// application output commitments and the commitment of the host IPA's
+/// $s(X)$ in the native batch of the step that proves the side.
+pub(crate) fn nested_side<'dr, D, C, K>(
+    dr: &mut D,
+    run: &mut Run<'_, '_, 'dr, D, C, Nested>,
+) -> Result<Vec<Point<'dr, D, C::HostCurve>>>
+where
+    D: Driver<'dr, F = C::ScalarField>,
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Rank,
+{
+    let tables = run.tables;
+    let instance = tables.layout.instance;
+    let per_curve = challenges_per_curve::<K>();
+    let lifted = fuse::LIFTED.len();
+
+    // The lifts: the nested curve's compression challenges, the fuse's x,
+    // y, u and w and the host curve's compression challenges, all squeezed
+    // on the other side, from their bits, into the lifts stage in that
+    // order, which the other side recomputes. Each fills the slot every
+    // other use of the challenge holds its bits' lift to, so it allocates
+    // the bits alone and lets the write hold them.
+    for id in 0..2 * per_curve + lifted {
+        let lift = run.bits(dr, id)?.lift(dr)?;
+        run.lifts.write(dr, id, lift)?;
+    }
+    let fuse_lift = |run: &Run<'_, '_, 'dr, D, C, Nested>, i: usize| run.lift(per_curve + i);
+
+    // The wire bindings on the nested side.
+    let expected = vec![
+        (nested_scalars::LEFT_X..=nested_scalars::RIGHT_Y)
+            .map(|i| Some(run.scalar(i)))
+            .collect(),
+        vec![None; tables.bindings[1].len()],
+        vec![
+            None,
+            None,
+            None,
+            Some(run.scalar(nested_scalars::A_AT_U)),
+            Some(run.scalar(nested_scalars::B_AT_U)),
+            None,
+        ],
+    ];
+
+    // The ab bridge's values, whose digits the other side scales by: the
+    // coordinates of the host curve's A, B and points-ab commitments and
+    // the stage's alpha, bridge_alpha squared.
+    let ab = [
+        native_position::<Standard>(native::RxComponent::AbA),
+        native_position::<Standard>(native::RxComponent::AbB),
+    ];
+    let extra_digits = {
+        let a = coordinates(dr, &run.commitment(ab[0]))?;
+        let b = coordinates(dr, &run.commitment(ab[1]))?;
+        let points_ab =
+            native_position::<Standard>(native::RxComponent::Rx(native::RxIndex::PointsAb));
+        let points_ab = coordinates(dr, &run.commitment(points_ab))?;
+        let mut digits = Vec::with_capacity(tables.ab_terms.len());
+        for &(_, which) in &tables.ab_terms {
+            digits.push(match which {
+                AbValue::A(i) => a[i].clone(),
+                AbValue::B(i) => b[i].clone(),
+                AbValue::PointsAb(i) => points_ab[i].clone(),
+                AbValue::Alpha => run.scalar(nested_scalars::BRIDGE_ALPHA).square(dr)?,
+            });
+        }
+        digits
+    };
+
+    // The lifts the lifts stage holds, in `fuse::LIFTED` order for the
+    // fuse's, and the children's values as the instance holds them.
+    let inputs = vec![
+        (run.lift(squeezed::R)?, input::R),
+        (run.lift(squeezed::Y)?, input::Y_C),
+        (fuse_lift(run, 0)?, input::X),
+        (fuse_lift(run, 1)?, input::Y),
+        (run.scalar(nested_scalars::LEFT_X), input::LEFT_X),
+        (run.scalar(nested_scalars::LEFT_Y), input::LEFT_Y),
+        (run.scalar(nested_scalars::RIGHT_X), input::RIGHT_X),
+        (run.scalar(nested_scalars::RIGHT_Y), input::RIGHT_Y),
+        (fuse_lift(run, 2)?, input::U),
+        (fuse_lift(run, 3)?, input::W),
+        (run.lift(squeezed::W)?, input::W_C),
+    ];
+    let targets = nested_targets::<_, C, K>(dr, run)?;
+    let opening = [
+        fuse_lift(run, 2)?,
+        run.scalar(nested_scalars::V),
+        run.scalar(nested_scalars::A_AT_U),
+        run.scalar(nested_scalars::B_AT_U),
+    ];
+    let (digits, g_prime) = body::<_, C, Nested, K>(
+        dr,
+        run,
+        Body {
+            targets,
+            expected,
+            opening,
+            extra_digits,
+            point_challenge: &|i| Challenge::bits(per_curve + lifted + i),
+            components: native_components::<Standard>().count(),
+            ab,
+            inputs,
+            digest: None,
+        },
+    )?;
+
+    // The binding claim ties these commitments to the aggregator's PCS.
+    // Under the decompression flag, its application slots carry the wallet
+    // proof's own commitments, and the native batch's s(X) commits to G'.
+    let mut outputs = Vec::with_capacity(crate::header::NUM_ONLINE_FP_POLYS);
+    for i in 0..crate::header::NUM_ONLINE_FP_POLYS {
+        let value = run.witness.as_ref().map(|w| w.supplied.outputs[i]);
+        outputs.push(Point::alloc(dr, value)?);
+    }
+    let host_ipa = Point::alloc(dr, run.witness.as_ref().map(|w| w.supplied.host_ipa))?;
+    let wallet_start = instance
+        .commitments
+        .at(instance.commitments.len - outputs.len());
+    let pairs: Vec<[Point<'dr, D, C::HostCurve>; 2]> = outputs
+        .iter()
+        .enumerate()
+        .map(|(i, output)| {
+            [
+                output.clone(),
+                run.instance.points[wallet_start + i].clone(),
+            ]
+        })
+        .chain([[host_ipa.clone(), g_prime]])
+        .collect();
+    run.equal_if(dr, 0, &pairs)?;
+
+    let digits_sum = run.digits_sum(dr)?;
+    let exposed: Vec<_> = once(digits_sum).chain(outputs).chain([host_ipa]).collect();
+    assert_eq!(
+        digits.len(),
+        3 + AB_TERMS,
+        "the ab bridge's terms are pinned"
+    );
+    run.write_digits(dr, &digits, &[])?;
+    Ok(exposed)
+}

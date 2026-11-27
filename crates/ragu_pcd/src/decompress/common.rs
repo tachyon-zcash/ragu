@@ -1,14 +1,74 @@
-//! The decompressed verifier, each side as straight-line code.
+//! What the decompression's two sides share: the interfaces each side
+//! implements ([`Side`] and [`SideCircuit`]), the paging of a side's whole
+//! circuit, the statement circuit, the side's prepared witness, and the
+//! verifier's part from the reduction on. The sides themselves, each with
+//! its whole circuit, are [`native`](super::native) and
+//! [`nested`](super::nested).
 //!
-//! A side's verifier is one function over a driver ([`native_side`] and
-//! [`nested_side`]): it reads the compressed proof off the side's stages,
-//! does the native verifier's arithmetic in its field, the scalar checks
-//! of the other curve's reduction and the point checks of its own curve's,
-//! and returns the points the side exposes. The side's whole circuit
-//! ([`WholeCircuit`](super::whole::WholeCircuit)) runs it over the stages'
-//! wires, and the pager cuts that circuit into pages; the prover runs the
-//! same function natively to fill the two stages a side writes, its lifts
-//! and its digits ([`Cells`]).
+//! # The two sides
+//!
+//! A side runs in one field of the cycle over the points of the curve
+//! whose base field it is: the circuit-field side
+//! ([`Native`](super::native::Native)) in the circuit field over the nested
+//! curve, the scalar-field side ([`Nested`](super::nested::Nested)) in the
+//! scalar field over the host curve. Each side does the native verifier's
+//! arithmetic in its field, the scalar checks of the other curve's
+//! reduction and the point checks of its own curve's, so the two sides are
+//! mirror images up to how they obtain their inputs: the
+//! circuit-field side replays the transcripts, absorbing the other field's
+//! values as the commitments of their runs, which it holds to the
+//! scalar-field side's run stages; the scalar-field side takes its
+//! challenges from their bits and derives its targets from the nested
+//! unified instance.
+//!
+//! The prover's half of a side, what it reads off a compressed proof to
+//! fill the side's stages, is [`Prepare`](super::prover::Prepare).
+//!
+//! # The whole circuit
+//!
+//! A side's whole circuit ([`native::Circuit`](super::native::Circuit) and
+//! [`nested::Circuit`](super::nested::Circuit)) loads the side's stages and
+//! runs the side's verifier over them, as the prover's native run does
+//! ([`Prepared::run`]). It loads its stages unenforced, as the fuse's
+//! endoscaling steps load theirs: the aggregator's two online stages
+//! ([`OnlineInputStage`] and [`OnlineQueryStage`]), then the side's front
+//! stages (see [`Front`]), the lifts stage and the digits stage. The
+//! stages' masks bind the layout the verifier reads. The lifts and digits
+//! the verifier writes are held to their stages' wires, which the other
+//! side recomputes. Its public output is the points the side exposes for
+//! the proof's consumer: the other side's stage commitments the side
+//! absorbed or recomputed and the commitments it took of the step's own
+//! online polynomials (see [`Binding`](crate::profile::Binding)).
+//!
+//! The circuit is an unpaged circuit ([`Pageable`]): it has many times the
+//! gates of a polynomial at the rank it is proven at, so the pager cuts it
+//! ([`cut`]). Each page is a circuit of the side's extension, with a trace
+//! polynomial of its own, and loads every stage of the whole circuit, then
+//! the circuit's carry stage ([`CarryStage`]), one more stage of the
+//! extension, through which the pages pass values to one another. The last
+//! page carries the public output, and so is the extension's binding
+//! circuit. How many pages a side takes, and how many values its carry
+//! stage holds, is the aggregator profile's to state
+//! ([`Side::PAGES`]): each page is a polynomial of the proof. The pages
+//! are held to the circuit where a registry is built
+//! ([`Pages::check`]), before any is registered, so nothing that chose the
+//! cuts is trusted.
+//!
+//! Beside the whole circuit, a [`StatementCircuit`] loads the online stages
+//! and the instance stage, and no other, and exposes the output header the
+//! verifier checked, then the step binding, as its public output, the one
+//! place the decompressed statement reaches a claim.
+//!
+//! # The verifier
+//!
+//! A side's verifier is one function over a driver
+//! ([`native_side`](super::native::native_side) and
+//! [`nested_side`](super::nested::nested_side)): it reads the compressed
+//! proof off the side's stages, does the native verifier's arithmetic in
+//! its field, the scalar checks of the other curve's reduction and the
+//! point checks of its own curve's, and returns the points the side
+//! exposes. The prover runs the same function natively to fill the two
+//! stages a side writes, its lifts and its digits ([`Cells`]).
 //!
 //! The verifier's parts follow one another as the native verifier's do:
 //! the two transcripts; the challenges' lifts; the targets, the reduction,
@@ -49,18 +109,25 @@ use alloc::{sync::Arc, vec, vec::Vec};
 use core::{iter::once, marker::PhantomData};
 
 use ragu_circuits::{
+    WithAux,
+    paging::{CarryStage, Checked, Pageable, Pages, Planned},
     polynomials::Rank,
     registry::CircuitIndex,
-    staging::{stage_wire_indices, wire_degree, wires_of},
+    staging::{
+        MultiStage, MultiStageCircuit, StageBuilder, stage_wire_indices, wire_degree, wires_of,
+    },
 };
 use ragu_core::{
-    Coeff, Cycle, Error, Result,
+    Coeff, Cycle, Error, PoseidonPermutation, Result,
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point,
-    consistent::Consistent, poseidon::Sponge,
+    Boolean, Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
+    consistent::Consistent,
+    poseidon::Sponge,
+    vec::{ConstLen, FixedVec, Len},
 };
 use udon::{
     curve::{EndomorphismAffine as Affine, Projective},
@@ -68,48 +135,446 @@ use udon::{
 };
 
 use super::{
-    circuits::{Prepared, View},
     gadgets::{
         batch,
         derive::{self, Digits},
         ipa, revdot,
     },
-    online::{self, input},
-    side::{Native, NativeTargets, Nested, NestedTargets, Side},
+    online,
     stages::{
-        self, AB_TERMS, Layout, MESSAGE_SCALARS, MessageScalars, digits_degrees, lifts_degrees,
-        native_scalars, nested_scalars, num_runs,
+        self, DigitsStage, Front, InstanceStage, Layout, MessageScalars, OnlineInputStage,
+        OnlineQueryStage, StageShape, Values, step,
     },
 };
 use crate::{
-    RAGU_TAG,
     compress::{
-        instance::{
-            NativeEval, NativePreamble, NativeQuery, NestedEval, NestedPreamble, NestedQuery,
-            OPENED, degrees,
-        },
+        instance::OPENED,
         revdot::{
             OpeningClaim,
             claims::Kind,
             fold::{Derived, Layout as FoldLayout, Weights},
-            native_components, native_position, nested_components, nested_position,
+            native_position, nested_position,
         },
     },
     internal::{
-        native::{
-            self,
-            claims::ky_values as native_ky_values,
-            stages::{eval::generator_index, preamble::ProofInputs},
-        },
-        nested::{
-            self, claims::ky_values as nested_ky_values, stages::challenges as challenge_stage,
-            unified as nested_unified,
-        },
+        native::{self},
+        nested::{self},
         revdot::Source,
     },
-    ipa::{IPA_TAG, IpaCycle},
-    profile::{ProfiledCycle, Standard},
+    profile::{PageCount, ProfiledCycle, Standard},
 };
+
+/// One side of the decompression proof.
+pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
+    /// The side's field: the one its circuits are over.
+    type F: Field;
+    /// The other field of the cycle.
+    type Other: Field;
+    /// The curve whose points the side holds: its base field is `F`.
+    type P: Affine<Base = Self::F, Scalar = Self::Other>;
+    /// The curve whose reduction the side checks in its field: its scalar
+    /// field is `F`.
+    type Q: Affine<Base = Self::Other, Scalar = Self::F>;
+    /// The Poseidon permutation over `F`.
+    type Poseidon: PoseidonPermutation<Self::F>;
+    /// What the side's verifier needs beyond the stages: its unified
+    /// instance and what else the targets derive from.
+    type Extra: Send + Sync;
+
+    #[cfg(test)]
+    const NAME: &'static str;
+
+    /// The wires of the aggregator's online stages of the side's field,
+    /// which every circuit of the side loads first: the wallet registry's
+    /// evaluations the side's verifier reads are their query stage's values.
+    const ONLINE: super::online::Values;
+    /// How many flags the side takes from the other side, whose digits
+    /// follow the foreign scalars' in that side's digits stage.
+    const FLAGS: usize;
+    /// What the aggregator profile pins for the side's whole circuit
+    /// ([`SideCircuit::Circuit`]): the pages it is cut into and the values
+    /// its carry stage holds.
+    const PAGES: PageCount;
+    /// The points the side's whole circuit exposes for a proof at rank
+    /// `K`: the other side's stage commitments it absorbed or recomputed,
+    /// in the order the profile's [`Binding`](crate::profile::Binding)
+    /// names the stages.
+    fn exposed<K: Rank>() -> usize;
+    /// The shapes of the side's front stages, in chain order (see
+    /// [`Front`]).
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape>;
+
+    /// The fixed generators of `P`.
+    fn generators(params: &C::Params) -> &[Self::P];
+    /// The IPA's $U$ on `P`.
+    fn u(params: &C::Params) -> Self::P;
+    fn poseidon(params: &C::Params) -> &Self::Poseidon;
+    /// The side's stage layout for a proof at rank `K`.
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout;
+    /// What the side's verifier is laid out by beside its stage layout,
+    /// for a proof at rank `K` in a circuit at rank `R`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the claims cannot be enumerated or a stage's wires cannot
+    /// be read off its layout.
+    fn tables<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Tables>;
+    /// The side's verifier for a proof at rank `K`, run over `run`'s
+    /// stages: returns the points the side exposes, in the order the
+    /// profile's [`Binding`](crate::profile::Binding) names what they hold
+    /// to.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a gadget does, or if the witness is not the side's.
+    fn verify<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
+        dr: &mut D,
+        run: &mut Run<'_, '_, 'dr, D, C, Self>,
+    ) -> Result<Vec<Point<'dr, D, Self::P>>>;
+}
+
+/// A side with its whole circuit: the side's verifier as one circuit over
+/// the side's stages, for a proof at rank `K` in polynomials of rank `R`,
+/// which the pager cuts into the side's pages. Each side's is its own,
+/// [`native::Circuit`](super::native::Circuit) and
+/// [`nested::Circuit`](super::nested::Circuit), and takes the side's
+/// prepared witness.
+pub(crate) trait SideCircuit<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
+    Front<C, K, R, HEADER_SIZE>
+{
+    /// The side's whole circuit.
+    type Circuit<'p>: Pageable<Self::F, R, Carry = Carried<C, Self>>
+        + for<'source> MultiStageCircuit<Self::F, R, Witness<'source> = &'source Prepared<C, Self>>;
+
+    /// The side's whole circuit, laid out by `tables`.
+    fn circuit(tables: Arc<Tables>, params: &C::Params) -> Whole<'_, C, Self, K, R, HEADER_SIZE>;
+}
+
+/// A side's whole circuit, as the pager and the registry take it.
+pub(crate) type Whole<'p, C, S, K, R, const HEADER_SIZE: usize> =
+    MultiStage<<S as Side<C>>::F, R, <S as SideCircuit<C, K, R, HEADER_SIZE>>::Circuit<'p>>;
+
+/// The values the carry stage of side `S`'s whole circuit holds: what the
+/// aggregator profile pins for the side ([`Side::PAGES`]).
+pub(crate) struct Carried<C, S>(PhantomData<fn() -> (C, S)>);
+
+impl<C: Cycle, S: Side<C>> Len for Carried<C, S> {
+    fn len() -> usize {
+        S::PAGES.carry()
+    }
+}
+
+/// The carry stage of side `S`'s whole circuit: the last stage every page
+/// loads, after the digits stage.
+pub(crate) type WholeCarry<C, S, K, R, const HEADER_SIZE: usize> =
+    CarryStage<<S as Side<C>>::F, R, DigitsStage<C, S, K, R, HEADER_SIZE>, Carried<C, S>>;
+
+/// Side `S`'s whole circuit in pages.
+pub(crate) type WholePages<'p, C, S, K, R, const HEADER_SIZE: usize> =
+    Pages<<S as Side<C>>::F, R, <S as SideCircuit<C, K, R, HEADER_SIZE>>::Circuit<'p>>;
+
+/// Cuts side `S`'s whole circuit into the pages the side pins
+/// ([`Side::PAGES`]), in polynomials of rank `R`, over the carry stage the
+/// side pins. Where the circuit cuts into fewer, some pages hold no gates
+/// of its own, so one count holds for every header size.
+///
+/// # Errors
+///
+/// Fails if the side's tables cannot be built or the circuit does not cut
+/// into those pages over that carry stage.
+pub(crate) fn cut<'p, C, S, K, R, const HEADER_SIZE: usize>(
+    params: &'p C::Params,
+) -> Result<WholePages<'p, C, S, K, R, HEADER_SIZE>>
+where
+    C: Cycle,
+    S: SideCircuit<C, K, R, HEADER_SIZE>,
+    K: Rank,
+    R: Rank,
+{
+    let tables = tables::<C, S, K, R, HEADER_SIZE>()?;
+    let circuit = S::circuit(tables, params);
+    match Pages::cut(circuit, S::PAGES.num_pages()) {
+        Err(Error::GateBoundExceeded { limit }) => Err(Error::Initialization(
+            alloc::format!(
+                "the decompression's {:?} leave its whole circuit too little room, in \
+                 polynomials of {limit} gates",
+                S::PAGES
+            )
+            .into(),
+        )),
+        cut => cut,
+    }
+}
+
+/// The pages of side `S`'s whole circuit, held to the circuit: what a
+/// registry build registers, each page at its extension circuit. A build
+/// cuts and checks a side once.
+///
+/// # Errors
+///
+/// Fails as [`cut`] does, or if the pages are not the circuit's.
+pub(crate) fn checked<'p, C, S, K, R, const HEADER_SIZE: usize>(
+    params: &'p C::Params,
+) -> Result<Checked<S::F, R, <S as SideCircuit<C, K, R, HEADER_SIZE>>::Circuit<'p>>>
+where
+    C: Cycle,
+    S: SideCircuit<C, K, R, HEADER_SIZE>,
+    K: Rank,
+    R: Rank,
+{
+    cut::<C, S, K, R, HEADER_SIZE>(params)?.check()
+}
+
+/// Side `S`'s whole circuit in the pages `planned` holds, which the
+/// registry build cut it into, for a prover to trace: the circuit is not
+/// cut again. Without them it is cut here.
+///
+/// # Errors
+///
+/// Fails if the side's tables cannot be built, or as [`cut`] does.
+pub(crate) fn planned<'p, C, S, K, R, const HEADER_SIZE: usize>(
+    params: &'p C::Params,
+    planned: Option<&Planned<S::F>>,
+) -> Result<WholePages<'p, C, S, K, R, HEADER_SIZE>>
+where
+    C: Cycle,
+    S: SideCircuit<C, K, R, HEADER_SIZE>,
+    K: Rank,
+    R: Rank,
+{
+    let Some(planned) = planned else {
+        return cut::<C, S, K, R, HEADER_SIZE>(params);
+    };
+    let tables = tables::<C, S, K, R, HEADER_SIZE>()?;
+    let circuit = S::circuit(tables, params);
+    Ok(Pages::planned(circuit, planned))
+}
+
+/// The statement circuit of side `S`: the circuit whose public output is
+/// the output header of the compressed proof the side verified, then the
+/// step binding ([`step`]), both read off the instance stage. The verifier
+/// binds the header to the proof it verifies, so a claim on this circuit's
+/// output is a claim on the decompressed proof's statement, which the
+/// decompression step's verifier makes through the circuit's $k(y)$ (see
+/// [`statement_ky`](crate::internal::native::stages::preamble::ProofInputs::statement_ky)).
+/// The same claim binds the decompression flag and staged transcript digest.
+pub(crate) struct StatementCircuit<C: Cycle, S, K, R, const HEADER_SIZE: usize> {
+    _marker: PhantomData<fn() -> (C, S, K, R)>,
+}
+
+impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
+    for StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    fn clone(&self) -> Self {
+        StatementCircuit {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    /// The statement circuit over the side's instance stage.
+    pub(crate) fn new() -> MultiStage<S::F, R, Self> {
+        MultiStage::new(StatementCircuit {
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
+    for StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    type Last = InstanceStage<C, S, K, R, HEADER_SIZE>;
+    /// The output header and the step binding the instance stage holds.
+    type Instance<'source> = (
+        FixedVec<S::F, ConstLen<HEADER_SIZE>>,
+        FixedVec<S::F, ConstLen<{ step::LEN }>>,
+    );
+    type Witness<'source> = &'source Prepared<C, S>;
+    type Output = Kind![S::F; (
+        FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>,
+        FixedVec<Element<'_, _>, ConstLen<{ step::LEN }>>,
+    )];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let header = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|(header, _)| header[i]))
+        })?;
+        let step = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|(_, step)| step[i]))
+        })?;
+        Ok((header, step))
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+    where
+        Self: 'dr,
+    {
+        let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, S, R>>()?;
+        let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, S, R>>()?;
+        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
+        let dr = dr.finish();
+        // The online stages come first in every circuit of the side; this
+        // one reads nothing off them.
+        online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+        online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
+        let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
+        let layout = S::layout::<K, HEADER_SIZE>().instance;
+        let read = |span: super::stages::Span| {
+            span.positions()
+                .map(|position| instance.elements[position].clone())
+                .collect::<alloc::vec::Vec<_>>()
+        };
+        let header = FixedVec::try_from(read(layout.output_header))?;
+        let step = FixedVec::try_from(read(layout.step))?;
+        Ok(WithAux::new((header, step), D::unit()))
+    }
+}
+
+/// Length type for the points side `S`'s whole circuit exposes for a
+/// proof at rank `K`: [`Side::exposed`].
+pub(crate) struct Exposed<C, S, K>(PhantomData<fn() -> (C, S, K)>);
+
+impl<C: Cycle, S: Side<C>, K: Rank> Len for Exposed<C, S, K> {
+    fn len() -> usize {
+        S::exposed::<K>()
+    }
+}
+
+/// One stage's wires as a side's verifier reads them.
+pub(crate) struct View<'a, 'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
+    pub points: &'a [Point<'dr, D, P>],
+    pub elements: &'a [Element<'dr, D>],
+}
+
+impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Clone for View<'_, 'dr, D, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Copy for View<'_, 'dr, D, P> {}
+
+/// What a side's verifier allocates beyond the stages: the challenges
+/// squeezed on the other side as their endoscalars' bits, and the other
+/// field's full-width scalars.
+#[derive(Clone)]
+pub(crate) struct Aux<G> {
+    /// Every compression challenge the side did not squeeze, by index: the
+    /// reduction it checks in its field, the fuse's $x$, $y$, $u$ and $w$,
+    /// then the reduction whose points it checks.
+    pub challenge_bits: Vec<Uendo>,
+    /// The other field's values the side scales by, by index: $v$, $c$
+    /// and $c b z$ of the reduction whose points the side checks, then
+    /// what the side's [`Prepare::foreign`](super::prover::Prepare::foreign) adds.
+    pub foreign: Vec<G>,
+    /// The other side's flags, by index: unset until the step that proves
+    /// the side sets them.
+    pub flags: Vec<bool>,
+    /// Test seam: other bits than the challenge's for what reads the
+    /// challenge at an index after the side has lifted it, as a prover
+    /// that scaled by other bits than it lifted would allocate.
+    #[cfg(test)]
+    pub read: Option<(usize, Uendo)>,
+}
+
+impl<G> Aux<G> {
+    /// The bits a read of the challenge at `id` allocates: the
+    /// challenge's.
+    pub(crate) fn read(&self, id: usize) -> Uendo {
+        #[cfg(test)]
+        if let Some((_, bits)) = self.read.filter(|(other, _)| *other == id) {
+            return bits;
+        }
+        self.challenge_bits[id]
+    }
+}
+
+/// What the prover supplies a side's verifier beside the stages: values
+/// the verifier allocates where it reads them and holds to the stages or
+/// to the claims of the step that proves it.
+#[derive(Clone)]
+pub(crate) struct Supplied<F, P> {
+    /// Circuit-field side: the commitments of the transcript's runs, by
+    /// run ([`Run`](super::stages::Run)), which the transcript absorbs and
+    /// the side exposes for the proof's consumer to hold to the run
+    /// stages. Empty on the scalar-field side, whose stages they are.
+    pub runs: Vec<P>,
+    /// The registry restriction at $(r, y)$ of each circuit a claim of the
+    /// side's reduction names, in the order the claims first name them.
+    pub restrictions: Vec<F>,
+    /// The registry restriction at the compression's $w$.
+    pub restriction_at_w: F,
+    /// The wire bindings' values, by binding and wire: the verifier reads
+    /// those the registry gives, and takes the others off the instance.
+    pub bindings: Vec<Vec<F>>,
+    /// The IPA's witness points $u_j^{-1} L_j$.
+    pub inverse_scaled: Vec<P>,
+    /// $G'$.
+    pub g_prime: P,
+    /// Scalar-field side: the two application output commitments of the
+    /// step that proves the side, bound to the wallet proof under the
+    /// decompression flag; a placeholder outside a step.
+    pub outputs: Vec<P>,
+    /// Scalar-field side: the commitment of the host IPA's $s(X)$ in that
+    /// step's native batch, likewise.
+    pub host_ipa: P,
+}
+
+/// Everything a side's verifier needs: the stages' values, the lifts and
+/// digits stages as the prover's run of the side fills them, the auxiliary
+/// witnesses and the side's tables.
+pub(crate) struct Prepared<C: Cycle, S: Side<C>> {
+    pub tables: Arc<Tables>,
+    pub instance: Values<S::F, S::P>,
+    pub messages: Values<S::F, S::P>,
+    pub lifts: Values<S::F, S::P>,
+    pub digits: Values<S::F, S::P>,
+    /// The aggregator's online input stage of the side's field, elements
+    /// alone, in the order the fuse lays the stage out. Prepared with the
+    /// proof's inputs; the step that proves the side sets the rest, the
+    /// stage its fuse committed
+    /// ([`with_online`](Self::with_online)).
+    pub online_input: Values<S::F, S::P>,
+    /// The online query stage, likewise: prepared with the evaluations the
+    /// verifier reads, as the native verifier computed them.
+    pub online_query: Values<S::F, S::P>,
+    pub aux: Aux<S::Other>,
+    pub supplied: Supplied<S::F, S::P>,
+    pub extra: Arc<S::Extra>,
+    /// Circuit-field side: the compression transcript's digest, its last
+    /// squeeze, as the prover's run of the side leaves it.
+    pub digest: Option<S::F>,
+}
+
+impl<C: Cycle, S: Side<C>> Clone for Prepared<C, S> {
+    fn clone(&self) -> Self {
+        Prepared {
+            tables: self.tables.clone(),
+            instance: self.instance.clone(),
+            messages: self.messages.clone(),
+            lifts: self.lifts.clone(),
+            digits: self.digits.clone(),
+            online_input: self.online_input.clone(),
+            online_query: self.online_query.clone(),
+            aux: self.aux.clone(),
+            supplied: self.supplied.clone(),
+            extra: self.extra.clone(),
+            digest: self.digest,
+        }
+    }
+}
 
 /// The scalings a challenge's bits are read for: a chain reads them again
 /// after that many, each read held to the challenge, so that a cut of the
@@ -391,103 +856,6 @@ fn alpha_degree<K: Rank>() -> usize {
     2 * K::n() - 1
 }
 
-/// The coefficient degrees of the native wire bindings' stage wires, in
-/// the order [`Instance::native_bindings`] lists the bindings and their
-/// wires: the preamble's children, the query stage's registry values, the
-/// eval stage's evaluations, and the points stages' coordinates.
-///
-/// [`Instance::native_bindings`]: crate::compress::instance::Instance::native_bindings
-pub(crate) fn native_binding_degrees<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>()
--> Result<[Vec<usize>; 5]> {
-    Ok([
-        degrees::<_, R, NativePreamble<C, R, HEADER_SIZE>>(|out| {
-            let mut wires = Vec::new();
-            for child in [&out.left, &out.right] {
-                wires.extend(wires_of(&child.unified.x)?);
-                wires.extend(wires_of(&child.unified.y)?);
-            }
-            Ok(wires)
-        })?,
-        degrees::<_, R, NativeQuery<C, R, HEADER_SIZE>>(|out| {
-            let mut wires = wires_of(&out.fixed_registry)?;
-            wires.extend(wires_of(&out.registry_wxy)?);
-            wires.extend(wires_of(&out.registry_xy_at_circuit_id)?);
-            for child in [&out.left, &out.right] {
-                wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
-                wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
-            }
-            Ok(wires)
-        })?,
-        degrees::<_, R, NativeEval<C, R, HEADER_SIZE>>(|out| {
-            let e = &out.evaluations;
-            let mut wires = Vec::new();
-            for element in [
-                &e.registry_wx0,
-                &e.registry_wx1,
-                &e.registry_wy,
-                &e.a_poly,
-                &e.b_poly,
-                &e.registry_xy,
-            ] {
-                wires.extend(wires_of(element)?);
-            }
-            Ok(wires)
-        })?,
-        degrees::<_, R, native::stages::points::AbStage<C::NestedCurve, C::Profile>>(|stage| {
-            let mut wires = wires_of(&stage.a)?;
-            wires.extend(wires_of(&stage.b)?);
-            Ok(wires)
-        })?,
-        degrees::<_, R, native::stages::points::FStage<C::NestedCurve, C::Profile>>(|stage| {
-            wires_of(&stage.registry_xy)
-        })?,
-    ])
-}
-
-/// The coefficient degrees of the nested wire bindings' stage wires, in
-/// the order [`Instance::nested_bindings`] lists them: the bridge
-/// preamble's children, the bridge query's registry values and the bridge
-/// eval's evaluations.
-///
-/// [`Instance::nested_bindings`]: crate::compress::instance::Instance::nested_bindings
-pub(crate) fn nested_binding_degrees<C: ProfiledCycle, R: Rank>() -> Result<[Vec<usize>; 3]> {
-    Ok([
-        degrees::<_, R, NestedPreamble<C, R>>(|out| {
-            let mut wires = Vec::new();
-            for child in [&out.left, &out.right] {
-                wires.extend(wires_of(&child.nested.x)?);
-                wires.extend(wires_of(&child.nested.y)?);
-            }
-            Ok(wires)
-        })?,
-        degrees::<_, R, NestedQuery<C, R>>(|out| {
-            let q = &out.nested;
-            let mut wires = wires_of(&q.fixed_registry)?;
-            wires.extend(wires_of(&q.registry_wxy)?);
-            for child in [&q.left, &q.right] {
-                wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
-                wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
-            }
-            Ok(wires)
-        })?,
-        degrees::<_, R, NestedEval<C, R>>(|out| {
-            let e = &out.nested;
-            let mut wires = Vec::new();
-            for element in [
-                &e.registry_wx0,
-                &e.registry_wx1,
-                &e.registry_wy,
-                &e.a_poly,
-                &e.b_poly,
-                &e.registry_xy,
-            ] {
-                wires.extend(wires_of(element)?);
-            }
-            Ok(wires)
-        })?,
-    ])
-}
-
 /// What a side's verifier is laid out by, beside the driver it runs under:
 /// a pure function of the proof system's constants and of the two ranks.
 #[derive(Clone, Debug, PartialEq)]
@@ -513,43 +881,6 @@ pub(crate) struct Tables {
     /// side's lifts stage lands on, by lift. Empty on the scalar-field
     /// side, whose lifts the other side recomputes.
     pub lifts: Vec<usize>,
-}
-
-/// The circuit-field side's tables for a proof at rank `K`, in a circuit at
-/// rank `R`.
-pub(crate) fn native_tables<
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-    const HEADER_SIZE: usize,
->() -> Result<Tables> {
-    Ok(Tables {
-        layout: Layout::native::<C::CircuitField, K, HEADER_SIZE>(),
-        claims: native_claims()?,
-        point_claims: nested_claims()?,
-        bindings: native_binding_degrees::<C, K, HEADER_SIZE>()?.to_vec(),
-        foreign: digits_degrees::<C, Nested, K, R, HEADER_SIZE>(),
-        ab_terms: ab_layout::<C, K>()?,
-        lifts: lifts_degrees::<C, Nested, K, R, HEADER_SIZE>(),
-    })
-}
-
-/// The scalar-field side's tables, as [`native_tables`].
-pub(crate) fn nested_tables<
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-    const HEADER_SIZE: usize,
->() -> Result<Tables> {
-    Ok(Tables {
-        layout: Layout::nested::<C::ScalarField, Standard, K>(),
-        claims: nested_claims()?,
-        point_claims: native_claims()?,
-        bindings: nested_binding_degrees::<C, K>()?.to_vec(),
-        foreign: digits_degrees::<C, Native, K, R, HEADER_SIZE>(),
-        ab_terms: ab_layout::<C, K>()?,
-        lifts: Vec::new(),
-    })
 }
 
 /// The key of side `S`'s tables for proofs at rank `K` in a circuit at
@@ -589,7 +920,7 @@ impl<'dr, D: Driver<'dr>> Cells<'_, 'dr, D> {
     }
 
     /// Writes `value` at `slot`: holds the stage's wire to it, or keeps it.
-    fn write(&mut self, dr: &mut D, slot: usize, value: Element<'dr, D>) -> Result<()> {
+    pub(super) fn write(&mut self, dr: &mut D, slot: usize, value: Element<'dr, D>) -> Result<()> {
         match self {
             Cells::Loaded(wires) => value.enforce_equal(dr, &wires[slot]),
             Cells::Filled(values) => {
@@ -600,7 +931,7 @@ impl<'dr, D: Driver<'dr>> Cells<'_, 'dr, D> {
     }
 
     /// The stage's value at `slot`: its wire, or what the side wrote.
-    fn read(&self, slot: usize) -> Result<Element<'dr, D>> {
+    pub(super) fn read(&self, slot: usize) -> Result<Element<'dr, D>> {
         match self {
             Cells::Loaded(wires) => Ok(wires[slot].clone()),
             Cells::Filled(values) => values[slot].clone().ok_or_else(|| {
@@ -642,7 +973,7 @@ impl<'dr, D: Driver<'dr>> Clone for Challenge<'dr, D> {
 
 impl<'dr, D: Driver<'dr>> Challenge<'dr, D> {
     /// A challenge this side squeezed as `raw`, told apart by `key`.
-    fn squeezed(key: usize, raw: &Element<'dr, D>) -> Self {
+    pub(super) fn squeezed(key: usize, raw: &Element<'dr, D>) -> Self {
         Challenge {
             key,
             raw: Some(raw.clone()),
@@ -653,14 +984,14 @@ impl<'dr, D: Driver<'dr>> Challenge<'dr, D> {
     /// other side: the side allocates its bits as witnesses and holds
     /// their lift to the lifts stage's slot `id`, which the other side's
     /// recomputation of that stage binds to the challenge it squeezed.
-    fn bits(id: usize) -> Self {
+    pub(super) fn bits(id: usize) -> Self {
         Challenge { key: id, raw: None }
     }
 }
 
 /// A point a chain reads: a wire, or a fixed point, which takes no wire
 /// until the chain reads it.
-enum Src<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
+pub(super) enum Src<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
     Wire(Point<'dr, D, P>),
     Fixed(P),
     /// Minus a fixed point.
@@ -678,7 +1009,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Clone for Src<'dr, D, P> {
 }
 
 impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Src<'dr, D, P> {
-    fn point(&self, dr: &mut D) -> Result<Point<'dr, D, P>> {
+    pub(super) fn point(&self, dr: &mut D) -> Result<Point<'dr, D, P>> {
         match self {
             Src::Wire(point) => Ok(point.clone()),
             Src::Fixed(point) => Point::constant(dr, *point),
@@ -688,7 +1019,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Src<'dr, D, P> {
 }
 
 /// A point's coordinates, $x$ then $y$.
-fn coordinates<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
+pub(super) fn coordinates<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     point: &Point<'dr, D, P>,
 ) -> Result<[Element<'dr, D>; 2]> {
@@ -700,7 +1031,7 @@ fn coordinates<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 }
 
 /// The signed digit $2 b - 1$ of a bit $b$.
-fn signed<'dr, D: Driver<'dr>>(dr: &mut D, bit: &Element<'dr, D>) -> Element<'dr, D> {
+pub(super) fn signed<'dr, D: Driver<'dr>>(dr: &mut D, bit: &Element<'dr, D>) -> Element<'dr, D> {
     bit.scale(dr, Coeff::Two)
         .add_coeff(dr, &Element::one(), Coeff::NegativeOne)
 }
@@ -790,41 +1121,41 @@ where
 
     /// The instance stage's commitment at `position` of the side's curve's
     /// commitments.
-    fn commitment(&self, position: usize) -> Point<'dr, D, S::P> {
+    pub(super) fn commitment(&self, position: usize) -> Point<'dr, D, S::P> {
         self.instance.points[self.tables.layout.instance.commitments.at(position)].clone()
     }
 
     /// The instance stage's scalar at `index` of the side's scalars.
-    fn scalar(&self, index: usize) -> Element<'dr, D> {
+    pub(super) fn scalar(&self, index: usize) -> Element<'dr, D> {
         self.instance.elements[self.tables.layout.instance.scalars.at(index)].clone()
     }
 
     /// The messages stage's point at `index` of the side's curve's point
     /// messages.
-    fn message_point(&self, index: usize) -> Point<'dr, D, S::P> {
+    pub(super) fn message_point(&self, index: usize) -> Point<'dr, D, S::P> {
         self.messages.points[self.tables.layout.messages.points_of_curve.at(index)].clone()
     }
 
     /// The scalar messages of the reduction this side checks.
-    fn message_scalars(&self) -> MessageScalars<'_, Element<'dr, D>> {
+    pub(super) fn message_scalars(&self) -> MessageScalars<'_, Element<'dr, D>> {
         let span = self.tables.layout.messages.scalars;
         MessageScalars(&self.messages.elements[span.start..span.start + span.len])
     }
 
     /// The lifts stage's value at `slot`: a challenge's lift.
-    fn lift(&self, slot: usize) -> Result<Element<'dr, D>> {
+    pub(super) fn lift(&self, slot: usize) -> Result<Element<'dr, D>> {
         self.lifts.read(slot)
     }
 
     /// The other field's value at `id` of the side's foreign scalars.
-    fn foreign(&self, id: usize) -> DriverValue<D, S::Other> {
+    pub(super) fn foreign(&self, id: usize) -> DriverValue<D, S::Other> {
         self.witness.as_ref().map(|w| w.aux.foreign[id])
     }
 
     /// The endoscalar of the challenge at `id` of the side's challenge
     /// bits, allocated from them and held to nothing: what the side lifts
     /// into the lifts stage's slot every other use holds its bits to.
-    fn bits(&self, dr: &mut D, id: usize) -> Result<Endoscalar<'dr, D>> {
+    pub(super) fn bits(&self, dr: &mut D, id: usize) -> Result<Endoscalar<'dr, D>> {
         let bits = self.witness.as_ref().map(|w| w.aux.challenge_bits[id]);
         Endoscalar::alloc(dr, bits)
     }
@@ -834,7 +1165,11 @@ where
     /// its lift, to the challenge's lifts stage slot. The bits are
     /// witnesses of the read, so every read of a challenge from bits pays
     /// for the lift that holds them.
-    fn endoscalar(&self, dr: &mut D, challenge: &Challenge<'dr, D>) -> Result<Endoscalar<'dr, D>> {
+    pub(super) fn endoscalar(
+        &self,
+        dr: &mut D,
+        challenge: &Challenge<'dr, D>,
+    ) -> Result<Endoscalar<'dr, D>> {
         Ok(match &challenge.raw {
             Some(raw) => {
                 Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), raw.clone())?)
@@ -851,7 +1186,7 @@ where
     }
 
     /// The sum of `points`.
-    fn add(
+    pub(super) fn add(
         &self,
         dr: &mut D,
         points: impl IntoIterator<Item = Point<'dr, D, S::P>>,
@@ -872,7 +1207,7 @@ where
     /// A Horner chain over `points` under `scale_by`, from the last
     /// present point back to the first; `None` entries scale alone. `None`
     /// if no point is present.
-    fn horner(
+    pub(super) fn horner(
         &self,
         dr: &mut D,
         points: &[Option<Src<'dr, D, S::P>>],
@@ -908,7 +1243,7 @@ where
 
     /// One stretch of a sum of scaled terms onto `acc`, each challenge's
     /// endoscalar read once.
-    fn add_scaled(
+    pub(super) fn add_scaled(
         &self,
         dr: &mut D,
         acc: Point<'dr, D, S::P>,
@@ -943,7 +1278,7 @@ where
     /// The sum of `terms`, each scaled by its challenge or added alone,
     /// from `init`, in stretches of [`SCALINGS`] scalings by [`READS`]
     /// challenges.
-    fn sum(
+    pub(super) fn sum(
         &self,
         dr: &mut D,
         init: Point<'dr, D, S::P>,
@@ -979,7 +1314,7 @@ where
 
     /// Adds the fixed `point` scaled by `endoscalar`, a challenge's the
     /// side has at hand, onto the running sum `sum`, or starts it.
-    fn add_term(
+    pub(super) fn add_term(
         &self,
         dr: &mut D,
         sum: &mut Option<Point<'dr, D, S::P>>,
@@ -998,7 +1333,7 @@ where
     /// The claims' points. A circuit claim's point is the sum of its one
     /// group's components. A mask claim's groups hold one component each,
     /// Horner-folded under `z`.
-    fn claims(
+    pub(super) fn claims(
         &self,
         dr: &mut D,
         claims: &[ClaimPlan],
@@ -1031,7 +1366,7 @@ where
     /// The fold of one derived commitment: each group's Horner chain
     /// under `inner` over the claims `pick` keeps, then the groups' under
     /// `outer`.
-    fn fold(
+    pub(super) fn fold(
         &self,
         dr: &mut D,
         claims: &[ClaimPlan],
@@ -1057,7 +1392,7 @@ where
     /// The part of the other side's digits stage commitment over `digits`:
     /// each digit's generator, `generators` names them, added or
     /// subtracted by its bit, onto `init` or from nothing.
-    fn bind_sum(
+    pub(super) fn bind_sum(
         &self,
         dr: &mut D,
         digits: &Digits<'dr, D>,
@@ -1096,7 +1431,7 @@ where
     /// # Panics
     ///
     /// Panics if the scalar was scaled by before.
-    fn scale(
+    pub(super) fn scale(
         &mut self,
         dr: &mut D,
         point: &Point<'dr, D, S::P>,
@@ -1163,7 +1498,7 @@ where
     /// # Panics
     ///
     /// Panics if the flag was taken before.
-    fn equal_if(
+    pub(super) fn equal_if(
         &mut self,
         dr: &mut D,
         flag: usize,
@@ -1195,7 +1530,7 @@ where
     /// The other side's digits stage commitment: the sum of every foreign
     /// scalar's part, each scaling having left one, and of every foreign
     /// flag's.
-    fn digits_sum(&self, dr: &mut D) -> Result<Point<'dr, D, S::P>> {
+    pub(super) fn digits_sum(&self, dr: &mut D) -> Result<Point<'dr, D, S::P>> {
         let parts = self
             .bound
             .iter()
@@ -1216,7 +1551,7 @@ where
     /// scalars, which it scales by their digits. Then each of `flags`, an
     /// element the side holds to zero or one, as the signed digit
     /// $2 f - 1$.
-    fn write_digits(
+    pub(super) fn write_digits(
         &mut self,
         dr: &mut D,
         scalars: &[Element<'dr, D>],
@@ -1250,7 +1585,7 @@ where
     }
 
     /// The reduction's challenges from this side's lifts.
-    fn revdot_challenges(&self) -> Result<revdot::Challenges<'dr, D>> {
+    pub(super) fn revdot_challenges(&self) -> Result<revdot::Challenges<'dr, D>> {
         Ok(revdot::Challenges {
             z: self.lift(squeezed::Z)?,
             weights: Weights {
@@ -1264,7 +1599,7 @@ where
         })
     }
 
-    fn revdot_messages(&self) -> revdot::Messages<'dr, D> {
+    pub(super) fn revdot_messages(&self) -> revdot::Messages<'dr, D> {
         let m = self.message_scalars();
         revdot::Messages {
             inner_epsilon: m.inner_epsilon().clone(),
@@ -1281,7 +1616,7 @@ where
     /// $c b z$. `digest` is the compression transcript's last squeeze on
     /// the side whose instance carries a step binding.
     #[allow(clippy::too_many_arguments)]
-    fn batch_ipa<K: Rank>(
+    pub(super) fn batch_ipa<K: Rank>(
         &self,
         dr: &mut D,
         challenges: &revdot::Challenges<'dr, D>,
@@ -1373,7 +1708,7 @@ where
     /// commitment `batched`: the left-hand side's sum with each round's
     /// check, the three scalings by the foreign scalars at `scalars` and
     /// the final equality. Returns $G'$, which the prover supplies.
-    fn ipa(
+    pub(super) fn ipa(
         &mut self,
         dr: &mut D,
         batched: Point<'dr, D, S::P>,
@@ -1445,7 +1780,7 @@ where
 /// [`foreign`](Self::foreign) marks that such values were absorbed, and
 /// the next absorption or squeeze absorbs the next run's commitment, a
 /// point the prover supplies, when they were.
-struct Replay<'w, 'dr, D, C, S>
+pub(super) struct Replay<'w, 'dr, D, C, S>
 where
     D: Driver<'dr>,
     C: Cycle,
@@ -1469,7 +1804,7 @@ where
     /// integer.
     ///
     /// [`Transcript::new`]: crate::internal::transcript::Transcript::new
-    fn new(dr: &mut D, run: &Run<'_, 'w, 'dr, D, C, S>, tag: &[u8]) -> Result<Self> {
+    pub(super) fn new(dr: &mut D, run: &Run<'_, 'w, 'dr, D, C, S>, tag: &[u8]) -> Result<Self> {
         let mut sponge = Sponge::new(dr, run.poseidon);
         let chunks = tag.chunks(16).map(|chunk| {
             let bytes: [u8; 16] = core::array::from_fn(|i| chunk.get(i).copied().unwrap_or(0));
@@ -1488,7 +1823,7 @@ where
     }
 
     /// Absorbs a point: its coordinates, $x$ then $y$.
-    fn point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
+    pub(super) fn point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
         for coordinate in &coordinates(dr, point)? {
             self.sponge.absorb(dr, coordinate)?;
         }
@@ -1496,7 +1831,7 @@ where
     }
 
     /// Absorbs the run's commitment, if a run is pending.
-    fn flush(&mut self, dr: &mut D) -> Result<()> {
+    pub(super) fn flush(&mut self, dr: &mut D) -> Result<()> {
         if self.pending {
             let next = self.runs.len();
             let value = self.witness.as_ref().map(|w| w.supplied.runs[next]);
@@ -1509,21 +1844,21 @@ where
     }
 
     /// Scalar-field values absorbed: the run's commitment covers them.
-    fn foreign(&mut self) {
+    pub(super) fn foreign(&mut self) {
         self.pending = true;
     }
 
-    fn absorb(&mut self, dr: &mut D, element: &Element<'dr, D>) -> Result<()> {
+    pub(super) fn absorb(&mut self, dr: &mut D, element: &Element<'dr, D>) -> Result<()> {
         self.flush(dr)?;
         self.sponge.absorb(dr, element)
     }
 
-    fn absorb_point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
+    pub(super) fn absorb_point(&mut self, dr: &mut D, point: &Point<'dr, D, S::P>) -> Result<()> {
         self.flush(dr)?;
         self.point(dr, point)
     }
 
-    fn squeeze(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
+    pub(super) fn squeeze(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
         self.flush(dr)?;
         self.sponge.squeeze(dr)
     }
@@ -1531,39 +1866,39 @@ where
     /// The runs' commitments the transcript absorbed. Values pending at
     /// the end precede no challenge and are not absorbed, as the verifier
     /// leaves them.
-    fn finish(self) -> Vec<Point<'dr, D, S::P>> {
+    pub(super) fn finish(self) -> Vec<Point<'dr, D, S::P>> {
         self.runs
     }
 }
 
 /// What the shared part of a side's verifier takes from the side.
-struct Body<'x, 'dr, D: Driver<'dr>> {
+pub(super) struct Body<'x, 'dr, D: Driver<'dr>> {
     /// Every claim's target of the reduction the side checks in its
     /// field, in claim order.
-    targets: Vec<Element<'dr, D>>,
+    pub(super) targets: Vec<Element<'dr, D>>,
     /// The wire bindings' expected values, by binding: a `None` is a
     /// registry value the prover supplies.
-    expected: Vec<Vec<Option<Element<'dr, D>>>>,
+    pub(super) expected: Vec<Vec<Option<Element<'dr, D>>>>,
     /// The instance's openings' point and values: the fuse's $u$ as the
     /// side holds it, $v$, $a(u)$ and $b(u)$.
-    opening: [Element<'dr, D>; 4],
+    pub(super) opening: [Element<'dr, D>; 4],
     /// Elements beyond $v$, $c$ and $c b z$ whose digits the side binds
     /// for the other.
-    extra_digits: Vec<Element<'dr, D>>,
+    pub(super) extra_digits: Vec<Element<'dr, D>>,
     /// The compression challenge at a [`squeezed`] index of the reduction
     /// whose points the side checks.
-    point_challenge: &'x dyn Fn(usize) -> Challenge<'dr, D>,
+    pub(super) point_challenge: &'x dyn Fn(usize) -> Challenge<'dr, D>,
     /// The number of that curve's listed components, after which its
     /// registry restriction's and $p$'s commitments sit.
-    components: usize,
+    pub(super) components: usize,
     /// The positions of that curve's $A$ and $B$ commitments.
-    ab: [usize; 2],
+    pub(super) ab: [usize; 2],
     /// The proof's online inputs as the side holds them, each with the
     /// input stage's wire it is held to.
-    inputs: Vec<(Element<'dr, D>, usize)>,
+    pub(super) inputs: Vec<(Element<'dr, D>, usize)>,
     /// The compression transcript's last squeeze, on the side that
     /// squeezes it.
-    digest: Option<Element<'dr, D>>,
+    pub(super) digest: Option<Element<'dr, D>>,
 }
 
 /// What both sides share: the reduction, the batch and the IPA's scalars
@@ -1571,7 +1906,7 @@ struct Body<'x, 'dr, D: Driver<'dr>> {
 /// and the IPA's points on the side's curve. Returns the elements whose
 /// digits the side holds for the other, which its verifier ends with
 /// ([`Run::write_digits`]), and its $G'$.
-fn body<'dr, D, C, S, K>(
+pub(super) fn body<'dr, D, C, S, K>(
     dr: &mut D,
     run: &mut Run<'_, '_, 'dr, D, C, S>,
     body: Body<'_, 'dr, D>,
@@ -1772,701 +2107,6 @@ where
         run.messages.points[position].enforce_consistent(dr)?;
     }
     Ok((digits, g_prime))
-}
-
-/// The claims' targets of the circuit-field side's reduction, every
-/// claim's in claim order: allocates the native unified instance, binds it
-/// to the instance stage and to the fuse's challenges the side squeezed,
-/// `fuse`, and derives the targets as the fuse does.
-fn native_targets<'dr, D, C, const HEADER_SIZE: usize>(
-    dr: &mut D,
-    run: &Run<'_, '_, 'dr, D, C, Native>,
-    fuse: &[Element<'dr, D>],
-) -> Result<Vec<Element<'dr, D>>>
-where
-    D: Driver<'dr, F = C::CircuitField>,
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-{
-    let witness = &run.witness;
-    let inputs = ProofInputs::<D, C, HEADER_SIZE>::alloc_from_parts(
-        dr,
-        witness.as_ref().map(|w| w.extra.output_header.as_slice()),
-        witness.as_ref().map(|w| w.extra.omega_j),
-        // The standard profile has no statement circuit, so its steps
-        // expose no step binding.
-        witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
-        witness.as_ref().map(|w| &w.extra.unified),
-        // Nor has it an online batch: no online commitments, sums or
-        // mesh claims.
-        witness.as_ref().map(|_| -> &[C::NestedCurve] { &[] }),
-        witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
-        witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
-    )?;
-    let layout = run.tables.layout.instance;
-    let commitment = |component| run.commitment(nested_position::<Standard>(component));
-    let bridge = |index| commitment(nested::RxComponent::Rx(index));
-    let listed = nested_components::<Standard>().count();
-    let unified = &inputs.unified;
-    {
-        use nested::RxIndex::*;
-        for (ours, theirs) in [
-            (bridge(BridgeHash), &unified.bridge_hash_commitment),
-            (bridge(BridgePreamble), &unified.bridge_preamble_commitment),
-            (bridge(BridgeSPrime), &unified.bridge_s_prime_commitment),
-            (
-                bridge(BridgeInnerError),
-                &unified.bridge_inner_error_commitment,
-            ),
-            (
-                bridge(BridgeOuterError),
-                &unified.bridge_outer_error_commitment,
-            ),
-            (bridge(BridgeAB), &unified.bridge_ab_commitment),
-            (bridge(BridgeQuery), &unified.bridge_query_commitment),
-            (bridge(BridgeF), &unified.bridge_f_commitment),
-            (bridge(BridgeEval), &unified.bridge_eval_commitment),
-            (
-                run.commitment(listed + 2),
-                &unified.nested_challenges_partial,
-            ),
-            (run.commitment(listed + 1), &unified.nested_p_commitment),
-            (
-                commitment(nested::RxComponent::AbA),
-                &unified.nested_a_commitment,
-            ),
-            (
-                commitment(nested::RxComponent::AbB),
-                &unified.nested_b_commitment,
-            ),
-            (
-                run.commitment(listed),
-                &unified.nested_registry_xy_commitment,
-            ),
-        ] {
-            ours.enforce_equal(dr, theirs)?;
-        }
-    }
-    for (ours, theirs) in fuse.iter().zip([
-        &unified.w,
-        &unified.y,
-        &unified.z,
-        &unified.mu,
-        &unified.mu_prime,
-        &unified.x,
-        &unified.alpha,
-        &unified.u,
-        &unified.pre_beta,
-    ]) {
-        ours.enforce_equal(dr, theirs)?;
-    }
-    run.scalar(native_scalars::C)
-        .enforce_equal(dr, &unified.c)?;
-    run.scalar(native_scalars::V)
-        .enforce_equal(dr, &unified.v)?;
-    run.scalar(native_scalars::OMEGA_J)
-        .enforce_equal(dr, &inputs.circuit_id)?;
-    for (position, theirs) in layout
-        .output_header
-        .positions()
-        .zip(inputs.output_header.iter())
-    {
-        run.instance.elements[position].enforce_equal(dr, theirs)?;
-    }
-    // The proof folded its own application claim, so its verifier has no
-    // application target: the `hashes_1` claim's, over the unified
-    // instance, the output header and the circuit id, and the unified
-    // one, which the standard profile's `compute_v` claim takes too,
-    // having no online batch to export for.
-    let y = run.lift(squeezed::Y)?;
-    let (unified, unified_bridge) = inputs.unified_ky_values(dr, &y)?;
-    let targets = NativeTargets {
-        c: run.scalar(native_scalars::C),
-        unified_bridge,
-        unified,
-        one: Element::one(),
-        zero: Element::zero(dr),
-    };
-    Ok(native_ky_values::<Standard, _>(&targets)
-        .take(run.tables.claims.len())
-        .collect())
-}
-
-/// The claims' targets of the scalar-field side's reduction, as
-/// [`native_targets`]: allocates the nested unified instance, binds it to
-/// the instance stage and to the lifts of the fuse's challenges, and
-/// derives the targets.
-fn nested_targets<'dr, D, C, K>(
-    dr: &mut D,
-    run: &Run<'_, '_, 'dr, D, C, Nested>,
-) -> Result<Vec<Element<'dr, D>>>
-where
-    D: Driver<'dr, F = C::ScalarField>,
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-{
-    let output = nested_unified::Output::<D, C::HostCurve>::alloc(
-        dr,
-        &mut (),
-        run.witness.as_ref().map(|w| &w.extra.unified),
-    )?;
-    // The fuse's x, y and u, in `fuse::LIFTED` order after the nested
-    // curve's compression challenges in the lifts stage.
-    let fuse_lifts = challenges_per_curve::<K>();
-    for (i, ours) in [&output.x, &output.y, &output.u].into_iter().enumerate() {
-        ours.enforce_equal(dr, &run.lift(fuse_lifts + i)?)?;
-    }
-    output.c.enforce_equal(dr, &run.scalar(nested_scalars::C))?;
-    output.v.enforce_equal(dr, &run.scalar(nested_scalars::V))?;
-    let listed = native_components::<Standard>().count();
-    let exported: [usize; nested_unified::NUM_EXPORTED] = {
-        use native::{RxComponent::*, RxIndex::*};
-        [
-            native_position::<Standard>(Rx(Preamble)),
-            native_position::<Standard>(Rx(InnerError)),
-            native_position::<Standard>(Rx(OuterError)),
-            native_position::<Standard>(Rx(Query)),
-            native_position::<Standard>(Rx(Eval)),
-            native_position::<Standard>(AbA),
-            native_position::<Standard>(AbB),
-            listed,
-            listed + 1,
-            native_position::<Standard>(Rx(PointsBinding)),
-            native_position::<Standard>(Rx(PointsPreamble)),
-            native_position::<Standard>(Rx(PointsRegistryWx)),
-            native_position::<Standard>(Rx(PointsAb)),
-            native_position::<Standard>(Rx(PointsF)),
-            listed + 2,
-            listed + 3,
-        ]
-    };
-    for (position, theirs) in exported.iter().zip(output.exported.iter()) {
-        run.commitment(*position).enforce_equal(dr, theirs)?;
-    }
-    let y = run.lift(squeezed::Y)?;
-    let targets = NestedTargets {
-        c: run.scalar(nested_scalars::C),
-        unified: output.ky(dr, &y)?,
-        one: Element::one(),
-        zero: Element::zero(dr),
-    };
-    Ok(nested_ky_values::<Standard, _>(&targets)
-        .take(run.tables.claims.len())
-        .collect())
-}
-
-/// A step of one curve's part of the compression's transcript.
-#[derive(Clone, Copy)]
-enum Message {
-    /// The curve's point message at an index of
-    /// [`message_points`](mod@stages::message_points).
-    Point(usize),
-    /// Its scalar message at an index of [`MessageScalars`].
-    Scalar(usize),
-    /// A challenge of the curve's, the next in [`squeezed`] order.
-    Squeeze,
-}
-
-/// One curve's part of the compression's transcript after the sampled
-/// challenges, as the native verifier absorbs its messages and squeezes
-/// its challenges from [`squeezed::MU`] on: each step, in order.
-fn curve_messages(rounds: usize) -> Vec<Message> {
-    use Message::{Point, Scalar, Squeeze};
-    use stages::message_points::*;
-    let mut steps = vec![
-        Point(INNER),
-        // mu, nu
-        Squeeze,
-        Squeeze,
-        Point(OUTER),
-        // mu', nu'
-        Squeeze,
-        Squeeze,
-        Scalar(0),
-        Scalar(1),
-        // rho
-        Squeeze,
-        Point(P),
-        Point(Q),
-        // r
-        Squeeze,
-    ];
-    steps.extend((2..2 + Derived::ALL.len() + 2).map(Scalar));
-    // alpha
-    steps.push(Squeeze);
-    steps.push(Point(F));
-    // u
-    steps.push(Squeeze);
-    let evaluations = 4 + Derived::ALL.len();
-    steps.extend((evaluations..evaluations + Derived::ALL.len() + 2 + OPENED).map(Scalar));
-    // beta
-    steps.push(Squeeze);
-    steps.push(Point(S_COMMITMENT));
-    // xi, z
-    steps.extend([Squeeze, Squeeze]);
-    for j in 0..rounds {
-        // u_j
-        steps.extend([Point(l(j)), Point(r(j)), Squeeze]);
-    }
-    steps.push(Scalar(MESSAGE_SCALARS - 1));
-    steps
-}
-
-/// The circuit-field side of the decompressed verifier for a proof at
-/// rank `K`, over the nested curve: returns the points the side exposes,
-/// the commitments of the transcript's runs, then its recomputations of
-/// the scalar-field side's lifts and digits stages, then the nested
-/// curve's $G'$, which the proof's consumer holds to the commitment of
-/// $s(X)$ in the step's nested batch.
-pub(crate) fn native_side<'dr, D, C, K, const HEADER_SIZE: usize>(
-    dr: &mut D,
-    run: &mut Run<'_, '_, 'dr, D, C, Native>,
-) -> Result<Vec<Point<'dr, D, C::NestedCurve>>>
-where
-    D: Driver<'dr, F = C::CircuitField>,
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-{
-    let tables = run.tables;
-    let instance = tables.layout.instance;
-    let messages = tables.layout.messages;
-    let rounds = K::RANK as usize;
-    let per_curve = challenges_per_curve::<K>();
-    let bridge = |run: &Run<'_, '_, 'dr, D, C, Native>, index| {
-        run.commitment(nested_position::<Standard>(nested::RxComponent::Rx(index)))
-    };
-
-    // What a challenge the side squeezes scales, off one read of its
-    // endoscalar, right where it is squeezed, so that a cut of the circuit
-    // carries no challenge's bits to another use: its generator of the
-    // scalar-field side's lifts stage, whose commitment the side
-    // recomputes in the stage's order, the nested curve's compression
-    // challenges, the fuse's x, y, u and w, then the host curve's; its
-    // generator of the challenge stage, for a challenge of the fuse's;
-    // and its lift into this side's lifts stage, for one of the host
-    // curve's, whose reduction this side checks.
-    let lifts_generator = |run: &Run<'_, '_, 'dr, D, C, Native>, position: usize| {
-        run.generators[run.tables.lifts[position]]
-    };
-    assert_eq!(
-        tables.lifts.len(),
-        2 * per_curve + fuse::LIFTED.len(),
-        "one lift per challenge"
-    );
-    let read = |dr: &mut D, raw: &Element<'dr, D>| -> Result<Endoscalar<'dr, D>> {
-        Ok(Endoscalar::extract(EndoscalarChallenge::from_element(
-            dr,
-            &mut (),
-            raw.clone(),
-        )?))
-    };
-    let mut lifts_sum = None;
-    let mut challenge_stage_sum = None;
-
-    // The fuse's transcript: its challenges, replayed from the bridge
-    // commitments under the fuse's tag, in
-    // [`nested::Challenges::in_order`] order. Each scales its generator of
-    // the challenge stage, pre_beta its own.
-    let fuse: Vec<Element<'dr, D>> = {
-        use nested::RxIndex::*;
-        let mut t = Replay::new(dr, run, RAGU_TAG)?;
-        let mut fuse = Vec::with_capacity(challenge_stage::NUM + 1);
-        // The bridge commitment absorbed before each challenge, if one is.
-        let absorbed = [
-            Some(BridgePreamble),
-            Some(BridgeSPrime),
-            None,
-            Some(BridgeInnerError),
-            Some(BridgeOuterError),
-            Some(BridgeAB),
-            Some(BridgeQuery),
-            Some(BridgeF),
-            Some(BridgeEval),
-        ];
-        for (i, absorbed) in absorbed.into_iter().enumerate() {
-            if let Some(index) = absorbed {
-                t.absorb_point(dr, &bridge(run, index))?;
-            }
-            let raw = t.squeeze(dr)?;
-            let endoscalar = read(dr, &raw)?;
-            let stage = match i {
-                fuse::PRE_BETA => challenge_stage::BETA_INDEX,
-                i => i,
-            };
-            let generator = run.generators[generator_index::<C, K>(stage)];
-            run.add_term(dr, &mut challenge_stage_sum, &endoscalar, generator)?;
-            if let Some(lifted) = fuse::LIFTED.iter().position(|&lifted| lifted == i) {
-                let generator = lifts_generator(run, per_curve + lifted);
-                run.add_term(dr, &mut lifts_sum, &endoscalar, generator)?;
-            }
-            fuse.push(raw);
-        }
-        fuse
-    };
-
-    // The challenge stage: each challenge's lift times its generator, the
-    // base-case sign's term, and pre_beta's.
-    {
-        // The verifier of a proof reads the base case off its circuit id:
-        // a proof that took it is one of the bootstrap step. The sign's
-        // term is the generator, negated unless it did.
-        let bootstrap = crate::step::InternalStepIndex::Bootstrap.circuit_index::<Standard>()?;
-        let bootstrap = Element::constant(dr, bootstrap.omega_j());
-        let id = run.scalar(native_scalars::OMEGA_J);
-        let base_case = id.is_equal(dr, &mut (), &bootstrap)?;
-        let negate = base_case.not(dr);
-        let sign = run.generators[generator_index::<C, K>(challenge_stage::SIGN_INDEX)];
-        let sign = Point::constant(dr, sign)?.conditional_negate(dr, &negate)?;
-        let terms = challenge_stage_sum
-            .take()
-            .ok_or_else(|| Error::InvalidWitness("the challenge stage has challenges".into()))?;
-        let stage = run.add(dr, [terms, sign])?;
-        stage.enforce_equal(dr, &bridge(run, nested::RxIndex::ChallengeStage))?;
-    }
-
-    // The compression's transcript: the statement, both curves' sampled
-    // challenges, then each curve's messages, the scalar field's values
-    // among them as the run's commitment before the next challenge. The
-    // host curve's challenges, in [`squeezed`] order, the nested curve's,
-    // and the commitment of each run of the scalar field's values, which
-    // the prover supplies and the side exposes.
-    let (own, other, runs) = {
-        let mut t = Replay::new(dr, run, IPA_TAG)?;
-        let mut own: Vec<Element<'dr, D>> = Vec::with_capacity(per_curve);
-        let mut other: Vec<Element<'dr, D>> = Vec::with_capacity(per_curve);
-        // A challenge of the host curve's: its lift, into the lifts stage
-        // in [`squeezed`] order, and its term of the scalar-field side's.
-        let mut squeeze_own = |dr: &mut D,
-                               t: &mut Replay<'_, 'dr, D, C, Native>,
-                               run: &mut Run<'_, '_, 'dr, D, C, Native>|
-         -> Result<()> {
-            let raw = t.squeeze(dr)?;
-            let endoscalar = read(dr, &raw)?;
-            let lift = endoscalar.lift(dr)?;
-            run.lifts.write(dr, own.len(), lift)?;
-            let generator = lifts_generator(run, per_curve + fuse::LIFTED.len() + own.len());
-            run.add_term(dr, &mut lifts_sum, &endoscalar, generator)?;
-            own.push(raw);
-            Ok(())
-        };
-        t.absorb(dr, &run.scalar(native_scalars::OMEGA_J))?;
-        // The host commitments.
-        t.foreign();
-        for i in native_scalars::C..=native_scalars::B_AT_U {
-            t.absorb(dr, &run.scalar(i))?;
-        }
-        for position in instance.commitments.positions() {
-            t.absorb_point(dr, &run.instance.points[position])?;
-        }
-        // The scalar field's instance values.
-        t.foreign();
-        for position in instance.output_header.positions() {
-            t.absorb(dr, &run.instance.elements[position])?;
-        }
-        for _ in 0..4 {
-            squeeze_own(dr, &mut t, run)?;
-        }
-        // The host curve's: its points are the scalar field's, its scalars
-        // this field's.
-        let mut deferred = Vec::with_capacity(4);
-        for _ in 0..4 {
-            deferred.push(t.squeeze(dr)?);
-        }
-        for step in curve_messages(rounds) {
-            match step {
-                Message::Point(_) => t.foreign(),
-                Message::Scalar(i) => {
-                    t.absorb(dr, &run.messages.elements[messages.scalars.at(i)])?;
-                }
-                Message::Squeeze => squeeze_own(dr, &mut t, run)?,
-            }
-        }
-        // The nested curve's: its points this field's, its scalars the
-        // scalar field's. A challenge of its scales its term of the
-        // scalar-field side's lifts stage.
-        let mut squeezed_other = |dr: &mut D,
-                                  run: &mut Run<'_, '_, 'dr, D, C, Native>,
-                                  raw: Element<'dr, D>|
-         -> Result<()> {
-            let endoscalar = read(dr, &raw)?;
-            let generator = lifts_generator(run, other.len());
-            run.add_term(dr, &mut lifts_sum, &endoscalar, generator)?;
-            other.push(raw);
-            Ok(())
-        };
-        for raw in deferred {
-            squeezed_other(dr, run, raw)?;
-        }
-        for step in curve_messages(rounds) {
-            match step {
-                Message::Point(i) => t.absorb_point(dr, &run.message_point(i))?,
-                Message::Scalar(_) => t.foreign(),
-                Message::Squeeze => {
-                    let raw = t.squeeze(dr)?;
-                    squeezed_other(dr, run, raw)?;
-                }
-            }
-        }
-        (own, other, t.finish())
-    };
-    assert_eq!(own.len(), per_curve, "the host curve's challenges");
-    assert_eq!(other.len(), per_curve, "the nested curve's challenges");
-    assert_eq!(runs.len(), num_runs::<K>(), "every run is absorbed");
-    let lifts_sum =
-        lifts_sum.ok_or_else(|| Error::InvalidWitness("the lifts stage has lifts".into()))?;
-    // The transcript's last squeeze, after which it absorbs only the
-    // nested IPA's final scalar: the digest of everything both IPAs' round
-    // challenges are squeezed from.
-    let digest = other[squeezed::ROUNDS + rounds - 1].clone();
-    run.digest = Some(digest.clone());
-    let other_challenge = |i: usize| Challenge::squeezed(i, &other[i]);
-
-    // The wire bindings: the preamble's children from the instance, the
-    // query's values from the registry, the eval's from the registry
-    // around a(u) and b(u), and the points stages' from the nested
-    // commitments' coordinates.
-    let ab = [
-        nested_position::<Standard>(nested::RxComponent::AbA),
-        nested_position::<Standard>(nested::RxComponent::AbB),
-    ];
-    let components = nested_components::<Standard>().count();
-    let expected = {
-        let [ax, ay] = coordinates(dr, &run.commitment(ab[0]))?;
-        let [bx, by] = coordinates(dr, &run.commitment(ab[1]))?;
-        let [gx, gy] = coordinates(dr, &run.commitment(components))?;
-        vec![
-            (native_scalars::LEFT_X..=native_scalars::RIGHT_Y)
-                .map(|i| Some(run.scalar(i)))
-                .collect(),
-            vec![None; tables.bindings[1].len()],
-            vec![
-                None,
-                None,
-                None,
-                Some(run.scalar(native_scalars::A_AT_U)),
-                Some(run.scalar(native_scalars::B_AT_U)),
-                None,
-            ],
-            vec![Some(ax), Some(ay), Some(bx), Some(by)],
-            vec![Some(gx), Some(gy)],
-        ]
-    };
-    // The compression's challenges as the transcript lifts them, the
-    // fuse's as it squeezes them, the children's values and the proof's
-    // own circuit's domain point as the instance holds them.
-    let inputs = vec![
-        (run.lift(squeezed::R)?, input::R),
-        (run.lift(squeezed::Y)?, input::Y_C),
-        (fuse[fuse::X].clone(), input::X),
-        (fuse[fuse::Y].clone(), input::Y),
-        (run.scalar(native_scalars::LEFT_X), input::LEFT_X),
-        (run.scalar(native_scalars::LEFT_Y), input::LEFT_Y),
-        (run.scalar(native_scalars::RIGHT_X), input::RIGHT_X),
-        (run.scalar(native_scalars::RIGHT_Y), input::RIGHT_Y),
-        (fuse[fuse::U].clone(), input::U),
-        (fuse[fuse::W].clone(), input::W),
-        (run.lift(squeezed::W)?, input::W_C),
-        (run.scalar(native_scalars::OMEGA_J), input::CIRCUIT),
-    ];
-    let targets = native_targets::<_, C, HEADER_SIZE>(dr, run, &fuse)?;
-    let opening = [
-        fuse[fuse::U].clone(),
-        run.scalar(native_scalars::V),
-        run.scalar(native_scalars::A_AT_U),
-        run.scalar(native_scalars::B_AT_U),
-    ];
-    let (digits, g_prime) = body::<_, C, Native, K>(
-        dr,
-        run,
-        Body {
-            targets,
-            expected,
-            opening,
-            extra_digits: Vec::new(),
-            point_challenge: &other_challenge,
-            components,
-            ab,
-            inputs,
-            digest: Some(digest),
-        },
-    )?;
-
-    // The ab bridge: its coefficients' digits times their generators.
-    {
-        let mut scaled = Vec::with_capacity(tables.ab_terms.len());
-        for (k, &(index, which)) in tables.ab_terms.iter().enumerate() {
-            let base = Point::constant(dr, run.generators[index])?;
-            scaled.push(run.scale(dr, &base, 3 + k, run.u, which != AbValue::Alpha)?);
-        }
-        let mut terms: Vec<_> = scaled[1..]
-            .iter()
-            .map(|point| (Src::Wire(point.clone()), None))
-            .collect();
-        // The alpha term may be zero. Its scale retains the fixed offset
-        // rather than leaving the identity.
-        let width = derive::digit_width::<C::ScalarField>();
-        terms.push((Src::Negated(derive::scale_offset(run.u, width)), None));
-        let ab_bridge = run.sum(dr, scaled[0].clone(), &terms)?;
-        ab_bridge.enforce_equal(dr, &bridge(run, nested::RxIndex::BridgeAB))?;
-    }
-
-    // The scalar-field side's digits stage, from the scalings' parts, and
-    // this side's digits for it, last of all, so that only what follows
-    // them reads the digits stage. The decompression flag crosses to the
-    // scalar-field side as a digit.
-    let digits_sum = run.digits_sum(dr)?;
-    let exposed: Vec<_> = runs
-        .into_iter()
-        .chain([lifts_sum, digits_sum, g_prime])
-        .collect();
-    let flag = run.instance.elements[instance.step.at(stages::step::FLAG)].clone();
-    run.write_digits(dr, &digits, &[flag])?;
-    Ok(exposed)
-}
-
-/// The scalar-field side of the decompressed verifier for a proof at rank
-/// `K`, over the host curve: returns the points the side exposes, its
-/// recomputation of the circuit-field side's digits stage, then the two
-/// application output commitments and the commitment of the host IPA's
-/// $s(X)$ in the native batch of the step that proves the side.
-pub(crate) fn nested_side<'dr, D, C, K>(
-    dr: &mut D,
-    run: &mut Run<'_, '_, 'dr, D, C, Nested>,
-) -> Result<Vec<Point<'dr, D, C::HostCurve>>>
-where
-    D: Driver<'dr, F = C::ScalarField>,
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-{
-    let tables = run.tables;
-    let instance = tables.layout.instance;
-    let per_curve = challenges_per_curve::<K>();
-    let lifted = fuse::LIFTED.len();
-
-    // The lifts: the nested curve's compression challenges, the fuse's x,
-    // y, u and w and the host curve's compression challenges, all squeezed
-    // on the other side, from their bits, into the lifts stage in that
-    // order, which the other side recomputes. Each fills the slot every
-    // other use of the challenge holds its bits' lift to, so it allocates
-    // the bits alone and lets the write hold them.
-    for id in 0..2 * per_curve + lifted {
-        let lift = run.bits(dr, id)?.lift(dr)?;
-        run.lifts.write(dr, id, lift)?;
-    }
-    let fuse_lift = |run: &Run<'_, '_, 'dr, D, C, Nested>, i: usize| run.lift(per_curve + i);
-
-    // The wire bindings on the nested side.
-    let expected = vec![
-        (nested_scalars::LEFT_X..=nested_scalars::RIGHT_Y)
-            .map(|i| Some(run.scalar(i)))
-            .collect(),
-        vec![None; tables.bindings[1].len()],
-        vec![
-            None,
-            None,
-            None,
-            Some(run.scalar(nested_scalars::A_AT_U)),
-            Some(run.scalar(nested_scalars::B_AT_U)),
-            None,
-        ],
-    ];
-
-    // The ab bridge's values, whose digits the other side scales by: the
-    // coordinates of the host curve's A, B and points-ab commitments and
-    // the stage's alpha, bridge_alpha squared.
-    let ab = [
-        native_position::<Standard>(native::RxComponent::AbA),
-        native_position::<Standard>(native::RxComponent::AbB),
-    ];
-    let extra_digits = {
-        let a = coordinates(dr, &run.commitment(ab[0]))?;
-        let b = coordinates(dr, &run.commitment(ab[1]))?;
-        let points_ab =
-            native_position::<Standard>(native::RxComponent::Rx(native::RxIndex::PointsAb));
-        let points_ab = coordinates(dr, &run.commitment(points_ab))?;
-        let mut digits = Vec::with_capacity(tables.ab_terms.len());
-        for &(_, which) in &tables.ab_terms {
-            digits.push(match which {
-                AbValue::A(i) => a[i].clone(),
-                AbValue::B(i) => b[i].clone(),
-                AbValue::PointsAb(i) => points_ab[i].clone(),
-                AbValue::Alpha => run.scalar(nested_scalars::BRIDGE_ALPHA).square(dr)?,
-            });
-        }
-        digits
-    };
-
-    // The lifts the lifts stage holds, in `fuse::LIFTED` order for the
-    // fuse's, and the children's values as the instance holds them.
-    let inputs = vec![
-        (run.lift(squeezed::R)?, input::R),
-        (run.lift(squeezed::Y)?, input::Y_C),
-        (fuse_lift(run, 0)?, input::X),
-        (fuse_lift(run, 1)?, input::Y),
-        (run.scalar(nested_scalars::LEFT_X), input::LEFT_X),
-        (run.scalar(nested_scalars::LEFT_Y), input::LEFT_Y),
-        (run.scalar(nested_scalars::RIGHT_X), input::RIGHT_X),
-        (run.scalar(nested_scalars::RIGHT_Y), input::RIGHT_Y),
-        (fuse_lift(run, 2)?, input::U),
-        (fuse_lift(run, 3)?, input::W),
-        (run.lift(squeezed::W)?, input::W_C),
-    ];
-    let targets = nested_targets::<_, C, K>(dr, run)?;
-    let opening = [
-        fuse_lift(run, 2)?,
-        run.scalar(nested_scalars::V),
-        run.scalar(nested_scalars::A_AT_U),
-        run.scalar(nested_scalars::B_AT_U),
-    ];
-    let (digits, g_prime) = body::<_, C, Nested, K>(
-        dr,
-        run,
-        Body {
-            targets,
-            expected,
-            opening,
-            extra_digits,
-            point_challenge: &|i| Challenge::bits(per_curve + lifted + i),
-            components: native_components::<Standard>().count(),
-            ab,
-            inputs,
-            digest: None,
-        },
-    )?;
-
-    // The binding claim ties these commitments to the aggregator's PCS.
-    // Under the decompression flag, its application slots carry the wallet
-    // proof's own commitments, and the native batch's s(X) commits to G'.
-    let mut outputs = Vec::with_capacity(crate::header::NUM_ONLINE_FP_POLYS);
-    for i in 0..crate::header::NUM_ONLINE_FP_POLYS {
-        let value = run.witness.as_ref().map(|w| w.supplied.outputs[i]);
-        outputs.push(Point::alloc(dr, value)?);
-    }
-    let host_ipa = Point::alloc(dr, run.witness.as_ref().map(|w| w.supplied.host_ipa))?;
-    let wallet_start = instance
-        .commitments
-        .at(instance.commitments.len - outputs.len());
-    let pairs: Vec<[Point<'dr, D, C::HostCurve>; 2]> = outputs
-        .iter()
-        .enumerate()
-        .map(|(i, output)| {
-            [
-                output.clone(),
-                run.instance.points[wallet_start + i].clone(),
-            ]
-        })
-        .chain([[host_ipa.clone(), g_prime]])
-        .collect();
-    run.equal_if(dr, 0, &pairs)?;
-
-    let digits_sum = run.digits_sum(dr)?;
-    let exposed: Vec<_> = once(digits_sum).chain(outputs).chain([host_ipa]).collect();
-    assert_eq!(
-        digits.len(),
-        3 + AB_TERMS,
-        "the ab bridge's terms are pinned"
-    );
-    run.write_digits(dr, &digits, &[])?;
-    Ok(exposed)
 }
 
 /// The values a side's tables are the pure function of their types for,

@@ -62,11 +62,14 @@
 //!   ([`ipa::s_at`](gadgets::ipa::s_at)), which the step binding checks
 //!   an opening against; and the signed-digit chains that scale the other
 //!   curve's points by full-width scalars.
-//! - [`side`], [`verifier`], [`stages`], [`circuits`] and [`whole`]: each
-//!   side's verifier as straight-line code, reading the compressed proof's
-//!   data from stages and deriving the commitments, $\[H\]$ and the IPA's
-//!   final check as endoscalar chains over the other curve's points, and
-//!   the side's whole circuit, which runs it. The circuit takes two ranks,
+//! - [`native`] and [`nested`]: each side's circuit, its verifier as
+//!   straight-line code, reading the compressed proof's data from stages
+//!   and deriving the commitments, $\[H\]$ and the IPA's final check as
+//!   endoscalar chains over the other curve's points. [`common`] holds
+//!   what the two share: the [`Side`](common::Side) interface, the whole
+//!   circuit that runs a side's verifier, the statement circuit, the
+//!   prepared witness and the verifier's part from the reduction on;
+//!   [`stages`] holds the stages they read. The circuit takes two ranks,
 //!   the compressed proof's and its own, an aggregator's being
 //!   [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank), and
 //!   has many times the gates of a polynomial at its own, so the pager
@@ -88,28 +91,27 @@
 //!   ([`decompress`](crate::step::internal::decompress)): the one step
 //!   whose output header is the decompressed proof's, with the native
 //!   extension's statement circuit
-//!   ([`StatementCircuit`](circuits::StatementCircuit)) exposing the
+//!   ([`StatementCircuit`](common::StatementCircuit)) exposing the
 //!   header the native side verified and its claim's $k(y)$ holding the
 //!   step's output header to it.
 //!
 //! # Integration
 //!
-//! The whole circuits ([`whole`]) check the verifier's equations on both
-//! sides over the stages of [`stages`]. [`aggregator`] lays their pages and
-//! their stages out as a profile's extension (see [`profile`](crate::profile)),
-//! and a registry build registers them beside the fuse's circuits, on both
-//! registries; [`prover`] fills their polynomials for
-//! every proof from a compressed proof's prepared sides. The aggregator
-//! profile declares it, at the aggregator rank: both circuits then run in
-//! every proof of that profile, over the canonical compressed proof the
-//! application's [`Decompression`](crate::profile::Decompression) holds,
-//! so each child carries the extension's polynomials, which
-//! [`Shape`](crate::profile::Shape) counts, for the fuse to hash, evaluate
-//! and fold, which the fuse's circuits do in pages at that rank, the
-//! wallet's (see [`paging`](crate::profile::paging)). The decompression
-//! step runs them over the wallet's proof it is given and outputs that
-//! proof's header, which the statement circuit's claim holds to the header
-//! the native side verified.
+//! The whole circuits ([`native::Circuit`] and [`nested::Circuit`]) check the
+//! verifier's equations on both sides over the stages of [`stages`].
+//! [`aggregator`] lays their pages and their stages out as a profile's
+//! extension (see [`profile`](crate::profile)), and a registry build registers
+//! them beside the fuse's circuits, on both registries; [`prover`] fills their
+//! polynomials for every proof from a compressed proof's prepared sides. The
+//! aggregator profile declares it, at the aggregator rank: both circuits then
+//! run in every proof of that profile, over the canonical compressed proof the
+//! application's [`Decompression`](crate::profile::Decompression) holds, so
+//! each child carries the extension's polynomials, which
+//! [`Shape`](crate::profile::Shape) counts, for the fuse to hash, evaluate and
+//! fold, which the fuse's circuits do in pages at that rank, the wallet's (see
+//! [`paging`](crate::profile::paging)). The decompression step runs them over
+//! the wallet's proof it is given and outputs that proof's header, which the
+//! statement circuit's claim holds to the header the native side verified.
 //!
 //! # What binds the two sides
 //!
@@ -130,7 +132,7 @@
 //! run. Its whole circuit exposes the point, as its public output, for the
 //! proof's consumer to hold to the stage's actual commitment through the
 //! claim of the circuit's last page, the side's binding circuit (see
-//! [`stages`] for the stages, [`whole`] for the circuit and
+//! [`stages`] for the stages, [`common`] for the circuit and
 //! [`Binding`](crate::profile::Binding) for the consumer's check).
 //!
 //! Each run commitment binds the checked values before the transcript
@@ -210,7 +212,7 @@
 //! the instance's opening point, and at the proof's and its children's
 //! points for the values the wire bindings expect. Each side takes these
 //! evaluations as witnesses the prover supplies
-//! ([`Supplied`](circuits::Supplied)) and holds every one of them to the
+//! ([`Supplied`](common::Supplied)) and holds every one of them to the
 //! aggregator's online batch of its field, which [`online`] declares:
 //!
 //! - Each evaluation is a value of one of nine restrictions $m(W, a, b)$
@@ -265,14 +267,13 @@
 //! recursion over decompressed proofs.
 
 pub(crate) mod aggregator;
-pub(crate) mod circuits;
+pub(crate) mod common;
 pub(crate) mod gadgets;
+pub(crate) mod native;
+pub(crate) mod nested;
 pub(crate) mod online;
 pub(crate) mod prover;
-pub(crate) mod side;
 pub(crate) mod stages;
-pub(crate) mod verifier;
-pub(crate) mod whole;
 
 #[cfg(test)]
 #[path = "../../tests/decompression.rs"]

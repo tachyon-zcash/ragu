@@ -51,14 +51,16 @@ use udon::{
 };
 
 use super::{
-    circuits::{self, Aux, Prepared, Supplied, View},
+    common::{
+        self, AbValue, Aux, Cells, Prepared, Run, Side, SideCircuit, Supplied, Tables, View,
+        challenges_per_curve, squeezed,
+    },
+    native::{Native, NativeExtra},
+    nested::{Nested, NestedExtra},
     online::{self, input},
-    side::{Native, NativeExtra, Nested, NestedExtra, Side},
     stages::{
         self, DigitsStage, Front, LiftsStage, Values, message_points_of, message_scalars, num_runs,
     },
-    verifier::{self, AbValue, Cells, Run, Tables, challenges_per_curve, squeezed},
-    whole,
 };
 use crate::{
     Application, CompressedPcd, CompressedProof, Pcd, SelectableBackend,
@@ -343,7 +345,7 @@ where
             planned, prepared, params, registry, index, rng,
         )?;
         // The statement circuit, after the pages.
-        let statement = circuits::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new()
+        let statement = common::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new()
             .trace(prepared)?
             .into_parts()
             .0;
@@ -429,11 +431,11 @@ fn whole_rxs<C, S, R, const HEADER_SIZE: usize, B>(
 )>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Front<C, WalletRank, R, HEADER_SIZE>,
+    S: SideCircuit<C, WalletRank, R, HEADER_SIZE>,
     R: Rank,
     B: SelectableBackend,
 {
-    let paged = whole::planned::<C, S, WalletRank, R, HEADER_SIZE>(params, planned)?;
+    let paged = common::planned::<C, S, WalletRank, R, HEADER_SIZE>(params, planned)?;
     if paged.num_pages() != S::PAGES.num_pages() {
         return Err(Error::Initialization(
             "the decompression's whole circuit is in other pages than its side pins".into(),
@@ -1383,7 +1385,7 @@ impl<C: Cycle, S: Prepare<C>> Prepared<C, S> {
         witness: &Witness<C>,
     ) -> Result<Self> {
         let instance = &witness.proof.instance;
-        let tables = verifier::tables::<C, S, K, R, HEADER_SIZE>()?;
+        let tables = common::tables::<C, S, K, R, HEADER_SIZE>()?;
         let layout = tables.layout;
         let placeholder = S::generators(params)[0];
         let (own, other) = (S::own(witness), S::other(witness));

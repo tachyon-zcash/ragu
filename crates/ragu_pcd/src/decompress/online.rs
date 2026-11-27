@@ -624,7 +624,7 @@ mod tests {
     use super::*;
     use crate::{
         decompress::{
-            side,
+            native, nested,
             stages::{OnlineInputStage, OnlineQueryStage},
         },
         profile::{
@@ -656,38 +656,38 @@ mod tests {
         }
         same!(
             Fp,
-            OnlineInputStage<Pasta, side::Native, R>,
+            OnlineInputStage<Pasta, native::Native, R>,
             InputStage<P, Native>,
             Values::NATIVE.input_stage()
         );
         same!(
             Fp,
-            OnlineQueryStage<Pasta, side::Native, R>,
+            OnlineQueryStage<Pasta, native::Native, R>,
             QueryStage<P, Native>,
             Values::NATIVE.query_stage()
         );
         same!(
             Fq,
-            OnlineInputStage<Pasta, side::Nested, R>,
+            OnlineInputStage<Pasta, nested::Nested, R>,
             InputStage<P, Nested>,
             Values::NESTED.input_stage()
         );
         same!(
             Fq,
-            OnlineQueryStage<Pasta, side::Nested, R>,
+            OnlineQueryStage<Pasta, nested::Nested, R>,
             QueryStage<P, Nested>,
             Values::NESTED.query_stage()
         );
         for (values, query_end) in [
             (
                 Values::NATIVE,
-                <OnlineQueryStage<Pasta, side::Native, R> as Stage<Fp, R>>::skip_gates()
-                    + <OnlineQueryStage<Pasta, side::Native, R> as StageExt<Fp, R>>::num_gates(),
+                <OnlineQueryStage<Pasta, native::Native, R> as Stage<Fp, R>>::skip_gates()
+                    + <OnlineQueryStage<Pasta, native::Native, R> as StageExt<Fp, R>>::num_gates(),
             ),
             (
                 Values::NESTED,
-                <OnlineQueryStage<Pasta, side::Nested, R> as Stage<Fq, R>>::skip_gates()
-                    + <OnlineQueryStage<Pasta, side::Nested, R> as StageExt<Fq, R>>::num_gates(),
+                <OnlineQueryStage<Pasta, nested::Nested, R> as Stage<Fq, R>>::skip_gates()
+                    + <OnlineQueryStage<Pasta, nested::Nested, R> as StageExt<Fq, R>>::num_gates(),
             ),
         ] {
             // After the SYSTEM gate.

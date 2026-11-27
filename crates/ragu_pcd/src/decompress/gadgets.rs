@@ -4,7 +4,7 @@
 //! [`batch`] and [`ipa`] its field identities over [`Element`]s, and
 //! [`derive`](mod@derive) the signed-digit chains that scale the other
 //! curve's points by full-width scalars. Each side's verifier runs them
-//! over the stages its circuit loads ([`verifier`](super::verifier)).
+//! over the stages its circuit loads ([`common`](super::common)).
 
 use alloc::vec::Vec;
 
@@ -620,7 +620,7 @@ pub(crate) mod derive {
     //! The commitments the compressed verifier derives, the fold's $\[A\]$,
     //! dilated and raw polynomials, the batch's $\[H\]$ and the IPA's final
     //! check, are sums over the other curve's points, which a side's
-    //! verifier forms ([`verifier`](crate::decompress::verifier)). Every
+    //! verifier forms ([`common`](crate::decompress::common)). Every
     //! challenge that multiplies a point there is one the compression
     //! squeezed as an endoscalar, so each weighted sum is a Horner chain of
     //! [`group_scale`](ragu_primitives::Endoscalar::group_scale) steps, as the fuse's
