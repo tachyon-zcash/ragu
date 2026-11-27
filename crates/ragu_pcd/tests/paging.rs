@@ -233,23 +233,27 @@ fn census_aggregator_wide() -> Result<()> {
 
 #[path = "support/paging_census.rs"]
 mod census_support;
-use census_support::header_pages_fit;
+use census_support::{Most, header_pages_fit};
 
 macro_rules! check_headers {
-    ($($header:literal),+ $(,)?) => {
-        $(header_pages_fit::<$header>()?;)+
+    ($most:ident; $($header:literal),+ $(,)?) => {
+        $(header_pages_fit::<$header>(&mut $most)?;)+
     };
 }
 
 /// Check both sides of the aggregator's header-dependent schedule changes
 /// in ordinary CI. The dedicated paging census checks every supported
-/// header size in smaller build batches.
+/// header size in smaller build batches. Prints the most values each paged
+/// circuit's pages carry over these sizes, beside what its carry stage
+/// holds (`--nocapture`).
 #[test]
 fn aggregator_pages_fit_at_header_boundaries() -> Result<()> {
+    let mut most = Most::default();
     check_headers!(
-        1, 2, 9, 10, 33, 34, 41, 42, 57, 58, 65, 66, 97, 98, 129, 130, 153, 154, 161, 162, 185,
-        186, 193, 194, 195,
+        most; 1, 2, 9, 10, 33, 34, 41, 42, 57, 58, 65, 66, 97, 98, 129, 130, 153, 154, 161, 162,
+        185, 186, 193, 194, 195,
     );
+    most.print();
     Ok(())
 }
 
@@ -301,15 +305,21 @@ macro_rules! fewest {
 /// fewest the solver found with the current profile's shape.
 type Found = Vec<(&'static str, usize, usize)>;
 
-/// Asserts the declared cuts fit at sampled headers, then prints the
-/// fewest pages the solver finds. These are a sizing diagnostic:
-/// changing the profile's page counts also changes its proof shape and can
-/// change which smaller cuts fit.
+/// Asserts the declared cuts fit at sampled headers, and that each is the
+/// fewest pages its circuit cuts into at one of them, printing the fewest
+/// the solver finds at each. A count above that leaves pages with no gates
+/// of their own, each still a polynomial of every proof, which nothing
+/// else catches: the counts are set by hand and every other test only
+/// holds a circuit to fit them. Changing a count changes the profile's
+/// proof shape, which can change which smaller cuts fit, so the counts are
+/// lowered until this passes. The heavy-tests workflow runs it with the
+/// other ignored tests.
 #[test]
-#[ignore = "prints the fewest pages the aggregator profile's layouts cut in"]
+#[ignore = "cuts every paged circuit of the aggregator into fewer pages at sampled headers"]
 fn fewest_aggregator() -> Result<()> {
     use ragu_pcd::profile::Aggregator;
 
+    // The decompression's native circuit takes its most pages at 189.
     let sizes: Vec<(usize, Found)> = vec![
         fewest!(Aggregator<1>, 1),
         fewest!(Aggregator<4>, 4),
@@ -317,9 +327,11 @@ fn fewest_aggregator() -> Result<()> {
         fewest!(Aggregator<100>, 100),
         fewest!(Aggregator<154>, 154),
         fewest!(Aggregator<162>, 162),
+        fewest!(Aggregator<189>, 189),
         fewest!(Aggregator<195>, 195),
     ];
     let headers: Vec<usize> = sizes.iter().map(|(header, _)| *header).collect();
+    let mut above = Vec::new();
     for circuit in 0..sizes[0].1.len() {
         let (name, stated, _) = sizes[0].1[circuit];
         // The most pages any header size takes.
@@ -331,15 +343,18 @@ fn fewest_aggregator() -> Result<()> {
             each.push(format!("{header}: {fewest}"));
         }
         println!(
-            "FEWEST headers {headers:?} {name}: states {stated:?}, takes {most:?}{} ({})",
-            if most == stated {
-                ""
-            } else {
-                " (above local minima)"
-            },
+            "FEWEST headers {headers:?} {name}: states {stated:?}, takes {most:?} ({})",
             each.join("; "),
         );
+        if most != stated {
+            above.push(format!("{name}: states {stated}, takes {most}"));
+        }
     }
+    assert!(
+        above.is_empty(),
+        "a count the aggregator states is above the fewest pages its circuit cuts into at \
+         headers {headers:?}: lower it, or sample the header size that takes it: {above:#?}"
+    );
     Ok(())
 }
 
@@ -391,52 +406,31 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         4,
         &[
-            ("native.compute_v", "82285d7760ab05ea"),
-            ("native.bind_challenges_0", "42cb464241e5ae03"),
-            ("native.bind_challenges_1", "038bc5ddc2b84b65"),
-            ("native.bind_challenges_2", "09ea5369353265ea"),
-            ("native.bind_challenges_3", "0867064aecb52c70"),
-            ("native.bind_endoscalar", "2339ef71157d8430"),
-            ("native.endoscaling_step", "e6d57a71f2acdd76"),
-            ("nested.collapse", "ca8f285e2e3febd1"),
-            ("nested.compute_v", "098859b72467b26d"),
-            ("nested.endoscaling_step", "135e9b6e82f88cdc"),
-            ("decompression.native", "d3a98153d672607d"),
-            ("decompression.nested", "aa1098dffe1e2d54"),
+            ("native.compute_v", "cb0d8e64b1096734"),
+            ("native.endoscaling_step", "f60e1cfecd8bebc0"),
+            ("nested.endoscaling_step", "7de5ced70c6ca566"),
+            ("decompression.native", "1261e6c87e407aa0"),
+            ("decompression.nested", "73d53a0dd8a080cd"),
         ],
     ),
     (
         9,
         &[
-            ("native.compute_v", "f0655e9a4cb89250"),
-            ("native.bind_challenges_0", "84c077343dd3fb1c"),
-            ("native.bind_challenges_1", "47d75f76fa782142"),
-            ("native.bind_challenges_2", "0ad63eb91bd3a1c3"),
-            ("native.bind_challenges_3", "b0682a1ae3438dca"),
-            ("native.bind_endoscalar", "2339ef71157d8430"),
-            ("native.endoscaling_step", "e6d57a71f2acdd76"),
-            ("nested.collapse", "ca8f285e2e3febd1"),
-            ("nested.compute_v", "098859b72467b26d"),
-            ("nested.endoscaling_step", "135e9b6e82f88cdc"),
-            ("decompression.native", "9f5fbc84adfa42df"),
-            ("decompression.nested", "3caa794a0a935da2"),
+            ("native.compute_v", "33676a1e8e60332e"),
+            ("native.endoscaling_step", "f60e1cfecd8bebc0"),
+            ("nested.endoscaling_step", "7de5ced70c6ca566"),
+            ("decompression.native", "6d0db27a9f131e4c"),
+            ("decompression.nested", "73e46c6b92843f4b"),
         ],
     ),
     (
         195,
         &[
-            ("native.compute_v", "4bb2bacabadc8910"),
-            ("native.bind_challenges_0", "cace810098ab2ab4"),
-            ("native.bind_challenges_1", "7a6ceff652f15d2b"),
-            ("native.bind_challenges_2", "2f85a53baa297e6c"),
-            ("native.bind_challenges_3", "f788eb53066d3347"),
-            ("native.bind_endoscalar", "2339ef71157d8430"),
-            ("native.endoscaling_step", "e6d57a71f2acdd76"),
-            ("nested.collapse", "ca8f285e2e3febd1"),
-            ("nested.compute_v", "098859b72467b26d"),
-            ("nested.endoscaling_step", "135e9b6e82f88cdc"),
-            ("decompression.native", "9b3f50f2c5717a37"),
-            ("decompression.nested", "1e1efa85d15dda94"),
+            ("native.compute_v", "1e2656b4a101d8a3"),
+            ("native.endoscaling_step", "f60e1cfecd8bebc0"),
+            ("nested.endoscaling_step", "7de5ced70c6ca566"),
+            ("decompression.native", "bf4e7e6f40708b03"),
+            ("decompression.nested", "229002a8f45bc0d0"),
         ],
     ),
 ];
@@ -516,8 +510,8 @@ fn walk_cuts<const H: usize>() -> Result<(usize, String, String)> {
 }
 
 const WALK_CUTS: [(usize, &str, &str); 2] = [
-    (4, "360ed4991041e872", "e7883e24eccea6c9"),
-    (195, "360ed4991041e872", "e7883e24eccea6c9"),
+    (4, "95cc1b669217c914", "90b9d0ee2c04669e"),
+    (195, "95cc1b669217c914", "90b9d0ee2c04669e"),
 ];
 
 #[test]

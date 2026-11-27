@@ -50,9 +50,11 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: paging-census
+      # The test prints the most values each paged circuit's pages carry
+      # over the batch's header sizes, beside what its carry stage holds.
       - name: Check aggregator page layouts
         env:
           RAGU_PCD_PAGING_CENSUS_BATCH: ${{ matrix.batch }}
         run: >-
           cargo test --profile fast-test --locked -p ragu_pcd --test paging_census
-          all_aggregator_headers_fit_in_batch -- --exact
+          all_aggregator_headers_fit_in_batch -- --exact --nocapture

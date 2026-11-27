@@ -68,6 +68,9 @@ use crate::{
     },
 };
 
+// TODO(#1039): these pins, and the fuse's (`PAGE_COUNTS` below), hold for
+// every header size from 1 through 195, so each is the most any size
+// takes. Once the header size Tachyon uses is fixed, pin them for that size.
 /// What the aggregator profile pins for the decompression's native side:
 /// the pages its whole circuit is cut into, and the values its carry stage
 /// holds. They hold for every header size from 1 through 195: the circuit
@@ -77,13 +80,20 @@ use crate::{
 ///
 /// Changing the carry capacity changes how many gates of its own each
 /// page can hold, so the census measures page count and capacity together
-/// at every supported header size. These pins fit on the pager's first
-/// pass: its retry, which counts each export once, is headroom that lets
-/// a smaller capacity fit, and no pin relies on it.
-pub(crate) const NATIVE_PAGES: PageCount = PageCount::new(75).carrying(1200);
+/// at every supported header size. Every page loads the whole carry stage,
+/// so a value it has room for costs half a gate on each page, whether or
+/// not a page reads it: the stage is sized to what the pages carry, with
+/// a margin the census prints, and not above it.
+///
+/// Both numbers are set by hand from that census, as the fuse's are
+/// ([`Profile::PAGE_COUNTS`]), and the prover and the verifier each build
+/// the side's pages from them. At these numbers the native circuit does
+/// not cut into 67 pages at header size 189, and the nested one into 42
+/// at any size.
+pub(crate) const NATIVE_PAGES: PageCount = PageCount::new(68).carrying(608);
 
 /// What the profile pins for the decompression's nested side, likewise.
-pub(crate) const NESTED_PAGES: PageCount = PageCount::new(44).carrying(320);
+pub(crate) const NESTED_PAGES: PageCount = PageCount::new(43).carrying(192);
 
 /// The aggregator profile: the fuse plus the circuits that verify a
 /// [`Standard`] compressed proof in circuit, for wallet proofs over
@@ -312,21 +322,27 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // stage of its circuit, so each page's stage claim matches the unpaged
     // circuit's. The page counts and the carry stages' sizes are fixed
     // across header sizes, and a circuit that does not cut with them at its
-    // size is refused where it is registered. Each carry stage holds more
-    // than the census finds its circuit to carry, 14 to 41 values at header
-    // sizes 4 and 195.
+    // size is refused where it is registered.
+    //
+    // Each count is the fewest pages the census finds its circuit cut into
+    // at the header sizes it samples (`fewest_aggregator` in
+    // `tests/paging.rs`), and a circuit that fits one polynomial is whole:
+    // a count above that leaves pages with no gates of their own, each
+    // still a polynomial of every proof. Each carry stage holds more than
+    // its circuit carries at the header sizes the boundary test checks,
+    // which it prints.
     const PAGE_COUNTS: PageCounts = {
         PageCounts {
             hashes_1: PageCount::WHOLE,
             hashes_2: PageCount::WHOLE,
             collapse: PageCount::WHOLE,
-            compute_v: PageCount::new(3).carrying(64),
-            bind_challenges: PageCount::new(2).carrying(48),
+            compute_v: PageCount::new(2).carrying(64),
+            bind_challenges: PageCount::WHOLE,
             bind_beta: PageCount::WHOLE,
-            bind_endoscalar: PageCount::new(2).carrying(48),
+            bind_endoscalar: PageCount::WHOLE,
             endoscaling_step: PageCount::new(Self::NATIVE_STEP_PAGES).carrying(32),
-            nested_collapse: PageCount::new(5).carrying(48),
-            nested_compute_v: PageCount::new(4).carrying(48),
+            nested_collapse: PageCount::WHOLE,
+            nested_compute_v: PageCount::WHOLE,
             nested_endoscaling_step: PageCount::new(Self::NESTED_STEP_PAGES).carrying(32),
         }
     };

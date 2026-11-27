@@ -341,6 +341,16 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The pages the profile cuts each of the fuse's internal circuits
     /// into (see [`PageCounts`]). The default leaves every circuit whole.
+    ///
+    /// The counts are set by hand from the paging census, which cuts each
+    /// circuit and reports the fewest pages it fits in; nothing derives
+    /// them where the circuits are registered. The pager is given them and
+    /// chooses only where the cuts fall. The prover and the verifier each
+    /// build their registry and the proof's shape from them, so no proof
+    /// changes them, and changing one changes the registered circuits:
+    /// proofs made before it no longer verify. A count above what its
+    /// circuit takes leaves pages with no gates of their own, each still a
+    /// polynomial of every proof.
     const PAGE_COUNTS: PageCounts = PageCounts::WHOLE;
 
     /// What the profile's prover holds across proofs beyond the proof
