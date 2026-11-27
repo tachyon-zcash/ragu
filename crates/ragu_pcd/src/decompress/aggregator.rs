@@ -1,46 +1,44 @@
-//! The aggregator profile: the fuse plus the chunk circuits that verify a
+//! The aggregator profile: the fuse plus the circuits that verify a
 //! wallet's compressed proof, declared as its extension, with the layout
 //! the profile declares to carry them and the hooks that register them.
 //! The public types are re-exported through [`profile`](crate::profile).
 //!
-//! On the native side the extension is the circuit-field side's chunk
-//! circuits, one per group of chunks of its schedule, over its six stages:
-//! the instance, messages, lifts and work stages every chunk loads, the
-//! transcript stage the transcript chunks load after them, and the digits
-//! stage the digits chunks load after the work stage instead. Three final
-//! masks bind the chunks by their last stage. After the chunks come the
+//! Each side of the verification is one circuit, the side's verifier
+//! ([`WholeCircuit`](super::whole::WholeCircuit)), cut into
+//! pages: a side's extension is its pages, each a circuit over the side's
+//! stages and the circuit's carry stage. On the native side the stages are
+//! the instance, messages, lifts and digits stages every page loads, and
+//! the carry stage, which every page loads last. After the pages comes the
 //! statement circuit, which loads the instance stage alone and exposes the
-//! output header the chunks verified, then the step binding, as its public
-//! output, under a fourth final mask (see
-//! [`StatementCircuit`](super::circuits::StatementCircuit)), and the binding
-//! circuit, which loads the instance, messages, lifts and work stages and
-//! exposes the commitments of the scalar-field side's run stages the
-//! transcript absorbed, the side's recomputations of that side's lifts and
-//! digits stages and the nested IPA's $G'$, under the work stage's final
-//! mask (see [`BindingCircuit`](super::circuits::BindingCircuit)). On the
-//! nested side it is the scalar-field side's chunks over its stages, one
-//! per run of the compression's transcript, then the trailing, lifts, work
-//! and digits stages (see [`Front`]), the digits chunks last, under two
-//! final masks, and its binding circuit, which exposes its recomputation
-//! of the circuit-field side's digits stage, both output commitments of
-//! the step that proves the chunks and the commitment of the host IPA's
-//! $s(X)$ in that step's native batch; that side's transcript stage is
-//! empty and stays out.
+//! output header the pages verified, then the step binding as its public
+//! output, under a final mask (see [`StatementCircuit`](super::circuits::StatementCircuit)).
+//! On the nested side the stages are one per run of the compression's
+//! transcript, then the trailing and lifts stages (see [`Front`]), the
+//! digits stage and the carry stage. A side's last page carries its whole
+//! circuit's public output, so it is the side's binding circuit: on the
+//! native side it exposes the commitments of the scalar-field side's run
+//! stages the transcript absorbed, the side's recomputations of that
+//! side's lifts and digits stages and the nested IPA's $G'$; on the nested
+//! side its recomputation of the circuit-field side's digits stage, both
+//! output commitments of the step that proves the pages and the commitment
+//! of the host IPA's $s(X)$ in that step's native batch. A page's own
+//! polynomial is under the mask of its own gates, which the pages that
+//! load the same stages share.
 //!
 //! Every circuit of either side loads the aggregator's two online stages
 //! of the side's field, which the fuse commits, before the extension's
 //! (see [`OnlineInputStage`](super::stages::OnlineInputStage)).
 //!
-//! The chunk circuits verify a standard-profile compressed proof at rank
-//! `K` as circuits at the profile's rank `R`, so the hooks take the base
-//! cycle the profile extends and build the circuits over it. A profile's
+//! The pages verify a standard-profile compressed proof at rank `K` as
+//! circuits at the profile's rank `R`, so the hooks take the base cycle
+//! the profile extends and build the circuits over it. A profile's
 //! declaration is a constant, so [`Aggregator`] declares the layout from
-//! pinned circuit counts ([`native_layout`] and [`nested_layout`]) rather
-//! than from the schedule, and the hooks check the pins against the
-//! schedule they register.
+//! pinned page counts ([`native_layout`] and [`nested_layout`]), and the
+//! hooks cut each side's circuit into the pages pinned, check the pages
+//! against the circuit and refuse a circuit that does not cut.
 
-use alloc::{collections::BTreeMap, sync::Arc, vec, vec::Vec};
-use core::{any::TypeId, iter::repeat_n};
+use alloc::{collections::BTreeMap, vec, vec::Vec};
+use core::any::TypeId;
 
 use ragu_circuits::{
     paging::Planned,
@@ -51,14 +49,11 @@ use ragu_core::{Error, Result};
 use rand::CryptoRng;
 
 use super::{
-    circuits::{self, last},
-    online,
-    program::Last,
+    circuits, online,
     prover::{Decompressed, Decompression},
-    side::{Native, Nested, Side},
-    stages::{
-        DigitsStage, Front, InstanceStage, LiftsStage, Runs, TranscriptStage, WorkStage, num_runs,
-    },
+    side::{Native, Nested},
+    stages::{DigitsStage, Front, InstanceStage, LiftsStage, Runs, num_runs},
+    whole,
 };
 use crate::{
     SelectableBackend,
@@ -68,16 +63,39 @@ use crate::{
         AGGREGATOR_NAME, Binding, BuiltIn, CircuitSlot, Extension, ExtensionRxs, MaskSlot,
         PageCount, PageCounts, Profile, ProfiledCycle, Registered, Standard,
         online::{Layout, SourceRegistry, circuit::Witness, mesh::Mesh, stages as online_stages},
+        paging::ExtensionPages,
     },
 };
+
+/// What the aggregator profile pins for the decompression's native side:
+/// the pages its whole circuit is cut into, and the values its carry stage
+/// holds. They hold for every header size from 1 through 195: the circuit
+/// grows with the header, from 69 pages to 75, and where it cuts into
+/// fewer some pages hold no gates of its own. Its pages carry 657 values
+/// at the most.
+///
+/// Where the pager places the cuts depends on the room a page has past
+/// the stages and the carry stage, so the two numbers are found together:
+/// the census is run over a range of carry sizes, at every header size,
+/// and a size is taken at which every header size cuts with room to
+/// spare. At this rank the circuit cuts at every header size with a carry
+/// stage of 1,000 to 1,400 values, and at some does not with 900.
+pub(crate) const NATIVE_PAGES: PageCount = PageCount::new(75).carrying(1200);
+
+/// What the profile pins for the decompression's nested side, likewise.
+/// The nested circuit has the same gates at every header size: it cuts
+/// into 44 pages that carry 227 values, with a carry stage of 240 to 420
+/// values.
+pub(crate) const NESTED_PAGES: PageCount = PageCount::new(44).carrying(320);
 
 /// The aggregator profile: the fuse plus the circuits that verify a
 /// [`Standard`] compressed proof in circuit, for wallet proofs over
 /// [`Pasta`](ragu_core::pasta::Pasta) at the wallet rank with `HEADER_SIZE`-element headers.
 ///
-/// The circuits are the decompression module's chunk circuits, laid out as
-/// its extension, which an aggregator proves at [`AggregatorRank`], the
-/// wallet's: each polynomial a profile adds is one more commitment the
+/// The circuits are the pages of the decompression module's two whole
+/// circuits, one for each side, laid out as its extension, which an
+/// aggregator proves at [`AggregatorRank`], the wallet's: each polynomial a
+/// profile adds is one more commitment the
 /// fuse's hashing circuits absorb, one more evaluation its compute-v
 /// circuit takes, two more claims its collapse circuits fold and a longer
 /// walk whose every step loads the longer points stage, and at that rank
@@ -89,11 +107,12 @@ use crate::{
 /// Applications can choose a header size from 1 through 195 field
 /// elements. Decompression uses the same width on both sides, so
 /// the wallet application must also fit at [`WalletRank`].
-/// The profile declares its circuit counts at compile time and checks
-/// them against the schedule when registering the circuits.
+/// The profile declares its page counts at compile time, and a side's
+/// circuit that does not cut into them is refused when its pages are
+/// registered.
 ///
-/// Every proof of the profile carries the chunk circuits' polynomials, so
-/// every fuse runs the chunks over a compressed proof, a step that
+/// Every proof of the profile carries the pages' polynomials, so
+/// every fuse runs both circuits over a compressed proof, a step that
 /// decompresses nothing included (see the decompression module's *What
 /// remains*). The application
 /// holds a [`Decompression`] of the wallet application it aggregates, taken
@@ -102,7 +121,7 @@ use crate::{
 /// decompression step: it decompresses the wallet proof it is given
 /// ([`decompress`](crate::Application::decompress)) and outputs that
 /// proof's header. The extension's statement circuit exposes the header
-/// the chunks verified, and its claim's $k(y)$ holds a proof of the
+/// the native side verified, and its claim's $k(y)$ holds a proof of the
 /// decompression step to it; each side's binding circuit exposes the other
 /// side's stage commitments it absorbed or recomputed, and its claim's
 /// $k(y)$ holds the two sides to one compressed proof.
@@ -116,9 +135,9 @@ use crate::{
 ///
 /// The decompression step's public statement includes the wallet's output
 /// header and both online polynomial commitments.
-/// The compressed proof's fields are witnesses for the chunk circuits. The
+/// The compressed proof's fields are witnesses for the pages. The
 /// consumer binds each run commitment the transcript absorbs to the stage
-/// holding the values the chunks check. Honest proofs use the same run
+/// holding the values the nested side checks. Honest proofs use the same run
 /// commitments as native verification. The mask allows nonzero values in
 /// unused slots, which can change the challenges for the same proof fields.
 ///
@@ -157,47 +176,81 @@ use crate::{
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
-    /// The native chunk circuits of the decompression for
-    /// `header_size`-element headers, and how many of them run transcript
-    /// chunks, first among them, and digits chunks, last. The
-    /// compression's transcript absorbs the output header, so the
-    /// transcript ones grow with the header size.
+    /// What the profile pins for the decompression's native side: the
+    /// pages its whole circuit is cut into and the values its carry stage
+    /// holds, the same for every header size. Every page loads all of the
+    /// circuit's stages. A census pass finds both numbers
+    /// (`decompression_census`, with the crate's `test-utils` feature).
+    pub const NATIVE_PAGES: PageCount = NATIVE_PAGES;
+
+    /// What the profile pins for the decompression's nested side, as
+    /// [`NATIVE_PAGES`](Self::NATIVE_PAGES) for the native side.
+    pub const NESTED_PAGES: PageCount = NESTED_PAGES;
+
+    /// The census pass over the decompression's two whole circuits, the
+    /// native side's and then the nested side's, as
+    /// [`native_census`](crate::profile::paging::native_census) is over
+    /// the fuse's circuits: sizes each at rank `R`, cuts it as the profile
+    /// pins ([`NATIVE_PAGES`](Self::NATIVE_PAGES) and
+    /// [`NESTED_PAGES`](Self::NESTED_PAGES)), holds the pages to the
+    /// circuit, and with `fewest` finds the fewest pages each cuts in over
+    /// the carry stage pinned.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from walking a circuit. A circuit that does not
+    /// cut is reported in its
+    /// [`Sizing::pages`](crate::profile::paging::Sizing::pages).
+    #[cfg(feature = "test-utils")]
+    pub fn decompression_census<Base, R>(
+        params: &Base::Params,
+        fewest: bool,
+    ) -> Result<Vec<crate::profile::paging::Sizing>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+    {
+        use super::{verifier::tables, whole::WholeCircuit};
+        type Whole<'p, Base, S, R, const H: usize> = WholeCircuit<'p, Base, S, WalletRank, R, H>;
+        Ok(vec![
+            crate::profile::paging::sized(
+                "decompression.native",
+                NATIVE_PAGES,
+                (&[], fewest),
+                Whole::<Base, Native, R, HEADER_SIZE>::new(
+                    tables::<Base, Native, WalletRank, R, HEADER_SIZE>()?,
+                    params,
+                ),
+            )?,
+            crate::profile::paging::sized(
+                "decompression.nested",
+                NESTED_PAGES,
+                (&[], fewest),
+                Whole::<Base, Nested, R, HEADER_SIZE>::new(
+                    tables::<Base, Nested, WalletRank, R, HEADER_SIZE>()?,
+                    params,
+                ),
+            )?,
+        ])
+    }
+
+    /// The profile's header size, held to the sizes it takes.
     ///
     /// # Panics
     ///
     /// A header size outside 1 through 195 panics. This fails at compile
     /// time when evaluating the profile's associated constants.
-    pub const fn native_circuits(header_size: usize) -> Counts {
-        // At the wallet rank the schedule packs 52 work circuits, 53 from
-        // 42 header elements on, and one digits circuit across this range.
-        // The transcript circuits grow by one with every thirty-two
-        // elements the transcript absorbs. Registration checks these
-        // counts against the actual schedule for the chosen width.
+    const HEADER_SIZE: usize = {
         assert!(
-            1 <= header_size && header_size <= 195,
+            1 <= HEADER_SIZE && HEADER_SIZE <= 195,
             "the aggregator header size must be between 1 and 195"
         );
-        let transcript = 9 + (header_size - 1).div_ceil(32);
-        let work = if header_size < 42 { 52 } else { 53 };
-        Counts {
-            circuits: work + transcript + 1,
-            transcript,
-            digits: 1,
-        }
-    }
-
-    /// The nested chunk circuits of the decompression, the same for every
-    /// header size: none run transcript chunks, and the digits chunks come
-    /// last.
-    pub const NESTED_CIRCUITS: Counts = Counts {
-        circuits: 34,
-        transcript: 0,
-        digits: 2,
+        HEADER_SIZE
     };
 
     /// The endoscalings a step of either walk performs, in the pages the
     /// profile cuts a step into: they fill the pages between the stages
-    /// each page loads and the step's carry stage.
+    /// every page loads and the step's carry stage.
     pub const ENDOSCALINGS_PER_STEP: usize = 60;
 
     /// The pages of a native step, each loading all of its stages.
@@ -205,29 +258,6 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
 
     /// The pages of a nested step, each loading all of its stages.
     const NESTED_STEP_PAGES: usize = 8;
-
-    /// The chunk circuit counts of the schedules that verify a wallet's
-    /// compressed proof over `Base` in chunk circuits at rank `R`, the
-    /// native side's then the nested side's: what
-    /// [`native_circuits`](Self::native_circuits) and
-    /// [`NESTED_CIRCUITS`](Self::NESTED_CIRCUITS) pin for the aggregator
-    /// rank.
-    ///
-    /// # Errors
-    ///
-    /// Fails if a schedule cannot be built or its circuits are not in
-    /// transcript, work, digits order.
-    #[cfg(feature = "test-utils")]
-    pub fn scheduled<Base, R>() -> Result<(Counts, Counts)>
-    where
-        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
-        R: Rank,
-    {
-        Ok((
-            counts::<Base, Native, WalletRank, R, HEADER_SIZE>()?,
-            counts::<Base, Nested, WalletRank, R, HEADER_SIZE>()?,
-        ))
-    }
 
     /// Checks that the hooks register at the aggregator rank for the
     /// profile's header size. The hooks are generic over the rank and the
@@ -251,14 +281,17 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
 impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NAME: &'static str = AGGREGATOR_NAME;
     const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(TypeId::of::<Self>));
-    // The chunk circuits, the statement and binding circuits and the
-    // stages on the native side; the chunk circuits, the binding circuit
-    // and the stages on the nested side.
-    const NATIVE_EXTENSION: usize = Self::native_circuits(HEADER_SIZE).circuits + 2 + NATIVE_STAGES;
+    // The pages, the statement circuit and the stages on the native side;
+    // the pages and the stages on the nested side. A side's last page is
+    // its binding circuit.
+    const NATIVE_EXTENSION: usize = {
+        let _ = Self::HEADER_SIZE;
+        NATIVE_PAGES.num_pages() + 1 + NATIVE_STAGES
+    };
     const NESTED_EXTENSION: usize =
-        Self::NESTED_CIRCUITS.circuits + 1 + nested_stages(num_runs::<WalletRank>());
+        NESTED_PAGES.num_pages() + nested_stages(num_runs::<WalletRank>());
 
-    // The wallet registry's evaluations the chunks read, as openings of
+    // The wallet registry's evaluations the two sides read, as openings of
     // its restrictions, which the meshes hold to the registry, and each
     // IPA's s(X) in the batch of its field.
     const NATIVE_ONLINE: Layout = online::NATIVE;
@@ -270,12 +303,10 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // registry's domain, as the native verifier holds the circuit id.
     const NATIVE_DOMAIN_INPUTS: &'static [usize] = &[online::input::CIRCUIT];
     // Every circuit of either extension loads its field's online stages
-    // first: the chunks, which read them, and the statement and binding
-    // circuits, which share the chunks' stages after them.
-    const NATIVE_ONLINE_CONSUMERS: &'static [u32] =
-        online::consumers(Self::native_circuits(HEADER_SIZE).circuits + 2);
-    const NESTED_ONLINE_CONSUMERS: &'static [u32] =
-        online::consumers(Self::NESTED_CIRCUITS.circuits + 1);
+    // first: the pages, which read them, and the statement circuit,
+    // which shares the pages' stages after them.
+    const NATIVE_ONLINE_CONSUMERS: &'static [u32] = online::consumers(NATIVE_PAGES.num_pages() + 1);
+    const NESTED_ONLINE_CONSUMERS: &'static [u32] = online::consumers(NESTED_PAGES.num_pages());
 
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
@@ -311,7 +342,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         R: Rank,
         B: SelectableBackend;
 
-    /// The chunk circuits are registered over the parameters the
+    /// The pages are registered over the parameters the
     /// application finalizes over, and their traces built over the wallet
     /// application's, so the two must be the same parameters. A
     /// decompressed statement is the wallet's output header, which this
@@ -331,7 +362,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         if !core::ptr::eq(params, context.wallet().params) {
             return Err(Error::Initialization(
-                "the aggregator finalizes over other parameters than its wallet application: the chunk circuits registered over the aggregator's must match the traces built over the wallet's"
+                "the aggregator finalizes over other parameters than its wallet application: the pages registered over the aggregator's must match the traces built over the wallet's"
                     .into(),
             ));
         }
@@ -365,7 +396,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     }
 
     /// The wallet application's registries, which the context holds: the
-    /// meshes certify the evaluations the chunks read as theirs.
+    /// meshes certify the evaluations the two sides read as theirs.
     fn source_registries<'a, 'params: 'a, Base, R, B>(
         context: &'a Self::Context<'params, Base, R, B>,
     ) -> (
@@ -453,28 +484,49 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     }
 
     fn native_extension() -> Extension {
-        native_layout(Self::native_circuits(HEADER_SIZE), num_runs::<WalletRank>())
+        native_layout(NATIVE_PAGES.num_pages(), num_runs::<WalletRank>())
     }
 
     fn nested_extension() -> Extension {
-        nested_layout(Self::NESTED_CIRCUITS, num_runs::<WalletRank>())
+        nested_layout(NESTED_PAGES.num_pages(), num_runs::<WalletRank>())
     }
 
+    /// The native side's whole circuit, cut into the pages pinned and held
+    /// to the circuit, once for a registry build.
+    fn native_extension_pages<'params, Base, R: Rank, const H: usize>(
+        params: &'params Base::Params,
+    ) -> Result<Vec<ExtensionPages<'params, Base::CircuitField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        Self::accepts::<R>(H)?;
+        let checked = whole::checked::<Base, Native, WalletRank, R, H>(params)?;
+        Ok(vec![ExtensionPages::new(0, NATIVE_PAGES, &checked)?])
+    }
+
+    /// The nested side's, likewise.
+    fn nested_extension_pages<'params, Base, R: Rank>(
+        params: &'params Base::Params,
+    ) -> Result<Vec<ExtensionPages<'params, Base::ScalarField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        Self::accepts::<R>(HEADER_SIZE)?;
+        let checked = whole::checked::<Base, Nested, WalletRank, R, HEADER_SIZE>(params)?;
+        Ok(vec![ExtensionPages::new(0, NESTED_PAGES, &checked)?])
+    }
+
+    /// The statement circuit: the one native circuit that is not a page.
     fn register_native_circuit<'params, Base, R: Rank, const H: usize>(
         circuit: usize,
         slot: CircuitSlot<'params, Base::CircuitField, R>,
-        params: &'params Base::Params,
+        _: &'params Base::Params,
     ) -> Result<Registered<'params, Base::CircuitField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(H)?;
-        register_native_circuit::<Base, WalletRank, R, H>(
-            circuit,
-            Self::native_circuits(HEADER_SIZE),
-            slot,
-            params,
-        )
+        register_native_circuit::<Base, WalletRank, R, H>(circuit, slot)
     }
 
     fn register_native_mask<'params, Base, R: Rank, const H: usize>(
@@ -489,6 +541,8 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         register_native_mask::<Base, WalletRank, R, H>(mask, slot)
     }
 
+    /// Every nested circuit is a page, which the registry build registers
+    /// ([`nested_extension_pages`](Self::nested_extension_pages)).
     fn register_nested_circuit<'params, Base, R: Rank>(
         circuit: usize,
         slot: CircuitSlot<'params, Base::ScalarField, R>,
@@ -497,13 +551,8 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        Self::accepts::<R>(HEADER_SIZE)?;
-        register_nested_circuit::<Base, WalletRank, R, HEADER_SIZE>(
-            circuit,
-            Self::NESTED_CIRCUITS,
-            slot,
-            params,
-        )
+        let _ = (circuit, slot, params);
+        Err(Error::Initialization("no such circuit".into()))
     }
 
     fn register_nested_mask<'params, Base, R: Rank>(
@@ -541,7 +590,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         online_openings: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, R>,
         online: Option<&Witness<'_, Base::CircuitField, Self, online_stages::Native>>,
-        _: &[Planned<Base::CircuitField>],
+        pages: &[Planned<Base::CircuitField>],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
     where
@@ -553,6 +602,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Self::accepts::<R>(H)?;
         let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
         context.native_rxs::<Self>(
+            pages.first(),
             source,
             online_openings,
             registry,
@@ -585,7 +635,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         registry: &Registry<'params, Base::ScalarField, R>,
         online: Option<&Witness<'_, Base::ScalarField, Self, online_stages::Nested>>,
         native_online_commitments: &[Base::HostCurve],
-        _: &[Planned<Base::ScalarField>],
+        pages: &[Planned<Base::ScalarField>],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
     where
@@ -597,6 +647,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Self::accepts::<R>(H)?;
         let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
         context.nested_rxs::<Self>(
+            pages.first(),
             source,
             *output_commitments,
             native_online_commitments[online::slot::IPA],
@@ -607,41 +658,39 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     }
 }
 
-/// The chunk circuits load the online stages the step's fuse committed, so
-/// their traces are built with them.
-const NO_ONLINE_STAGES: &str =
-    "the aggregator's chunk circuits are traced over the step's online stages";
+/// The pages load the online stages the step's fuse committed, so their
+/// traces are built with them.
+const NO_ONLINE_STAGES: &str = "the aggregator's pages are traced over the step's online stages";
 
 /// A side's stage indices among its extension's stages: its front's
-/// first, `front` of them, then the lifts and work stages, and after the
-/// work stage the transcript stage, on the side with one, and the digits
-/// stage. The final masks follow the stages: the work stage's, the
-/// transcript stage's on the side with one, the digits stage's, and on
-/// that side the instance stage's, the statement circuit's.
+/// first, `front` of them, then the lifts stage, the digits stage and the
+/// carry stage of the side's whole circuit. The final masks follow the
+/// stages: one mask over every page's own gates, and on the native side
+/// the statement circuit's final mask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Indices {
     /// The front stages.
     pub front: usize,
-    /// Whether the side has a transcript stage.
-    pub with_transcript: bool,
+    /// Whether the side has a statement circuit.
+    pub with_statement: bool,
 }
 
 impl Indices {
-    /// The native side's: the instance and messages stages in front, a
-    /// transcript stage after the work stage.
+    /// The native side's: the instance and messages stages in front, and a
+    /// statement circuit.
     pub(crate) const fn native() -> Self {
         Indices {
             front: 2,
-            with_transcript: true,
+            with_statement: true,
         }
     }
 
     /// The nested side's for a proof of `runs` runs: a stage per run and
-    /// the trailing stage in front, no transcript stage.
+    /// the trailing stage in front, no statement circuit.
     pub(crate) const fn nested(runs: usize) -> Self {
         Indices {
             front: runs + 1,
-            with_transcript: false,
+            with_statement: false,
         }
     }
 
@@ -649,120 +698,67 @@ impl Indices {
         self.front as u32
     }
 
-    pub(crate) const fn work(self) -> u32 {
+    pub(crate) const fn digits(self) -> u32 {
         self.front as u32 + 1
     }
 
-    /// The transcript stage's index, on the side with one.
-    pub(crate) const fn transcript(self) -> u32 {
+    /// The carry stage of the side's whole circuit.
+    pub(crate) const fn carry(self) -> u32 {
         self.front as u32 + 2
-    }
-
-    pub(crate) const fn digits(self) -> u32 {
-        self.front as u32 + 2 + self.with_transcript as u32
     }
 
     /// The stages.
     pub(crate) const fn stages(self) -> usize {
-        self.front + 3 + self.with_transcript as usize
+        self.front + 3
     }
 
-    /// The stages every chunk circuit loads: the front, lifts and work
-    /// stages.
-    fn common(self) -> Vec<u32> {
-        (0..=self.work()).collect()
+    /// The stages every page loads, including the carry stage.
+    fn pages(self, pages: usize) -> Vec<Vec<u32>> {
+        (0..pages)
+            .map(|_| (0..self.stages() as u32).collect())
+            .collect()
     }
 }
 
-/// The native extension's stages: the instance, messages, lifts, work,
-/// transcript and digits stages.
+/// The native extension's stages: the instance, messages, lifts and digits
+/// stages and the carry stage.
 pub(crate) const NATIVE_STAGES: usize = Indices::native().stages();
 
 /// The nested extension's stages for a proof of `runs` runs: a stage per
-/// run, the trailing, lifts, work and digits stages.
+/// run, the trailing, lifts and digits stages and the carry stage.
 pub(crate) const fn nested_stages(runs: usize) -> usize {
     Indices::nested(runs).stages()
 }
 
-/// A side's chunk circuit counts: its chunk circuits and, among them, how
-/// many run transcript chunks, first, and how many digits chunks, last.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Counts {
-    /// The chunk circuits.
-    pub circuits: usize,
-    /// How many of them, first, run transcript chunks.
-    pub transcript: usize,
-    /// How many of them, last, run digits chunks.
-    pub digits: usize,
-}
-
-impl Counts {
-    /// The chunk circuits that load no stage past the work stage.
-    const fn work(self) -> usize {
-        self.circuits - self.transcript - self.digits
-    }
-}
-
-/// The native layout of the chunk circuits `counts` describes, for proofs
-/// of `runs` runs, as the schedule orders them, and the statement and
-/// binding circuits after them: every chunk circuit loads the instance,
-/// messages, lifts and work stages, a transcript one the transcript stage
-/// after them and a digits one the digits stage, the statement circuit
-/// the instance stage alone and the binding circuit the first four. A
-/// final mask binds each kind by its last stage: the work stage's, the
-/// transcript stage's, the digits stage's, then the instance stage's. The
-/// binding circuit exposes the nested extension's run stages, which the
-/// transcript absorbed, its recomputations of that extension's lifts and
-/// digits stages, and the nested IPA's $G'$, which the proof's consumer
-/// holds to the commitment of $s(X)$ in the step's nested batch, in that
-/// order.
+/// The native layout of a whole circuit cut as `pages` tells, for proofs
+/// of `runs` runs, and the statement circuit after its pages: every page
+/// loads the instance, messages, lifts and digits stages, then the carry
+/// stage. The statement circuit loads the instance stage alone. A mask
+/// binds every page to its own gates, and a final mask binds the statement
+/// circuit by its last stage. The last page is the binding circuit: it
+/// exposes the nested extension's run
+/// stages, which the transcript absorbed, its recomputations of that
+/// extension's lifts and digits stages, and the nested IPA's $G'$, which
+/// the proof's consumer holds to the commitment of $s(X)$ in the step's
+/// nested batch, in that order.
 ///
 /// # Panics
 ///
-/// Panics if the transcript and digits counts exceed the chunk circuits.
-pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
-    assert!(
-        counts.transcript + counts.digits <= counts.circuits,
-        "the transcript and digits circuits are among the chunk circuits"
-    );
+/// Panics if no page is declared.
+pub(crate) fn native_layout(pages: usize, runs: usize) -> Extension {
+    assert!(pages > 0, "the decompression's native side takes a page");
     let indices = Indices::native();
     let nested = Indices::nested(runs);
-    let statement = counts.circuits as u32;
-    let binding = statement + 1;
-    let mut circuits = Vec::with_capacity(counts.circuits + 2);
-    circuits.extend(repeat_n(
-        indices
-            .common()
-            .into_iter()
-            .chain([indices.transcript()])
-            .collect::<Vec<_>>(),
-        counts.transcript,
-    ));
-    circuits.extend(repeat_n(indices.common(), counts.work()));
-    circuits.extend(repeat_n(
-        indices
-            .common()
-            .into_iter()
-            .chain([indices.digits()])
-            .collect::<Vec<_>>(),
-        counts.digits,
-    ));
+    let statement = pages as u32;
+    let mut circuits = indices.pages(pages);
     circuits.push(vec![0]);
-    circuits.push(indices.common());
-    let transcript = counts.transcript as u32;
-    let work = (counts.transcript + counts.work()) as u32;
     Extension {
         circuits,
         stages: indices.stages(),
-        final_masks: vec![
-            (transcript..work).chain([binding]).collect(),
-            (0..transcript).collect(),
-            (work..statement).collect(),
-            vec![statement],
-        ],
+        final_masks: vec![(0..statement).collect(), vec![statement]],
         statement: Some(statement),
         binding: Some(Binding {
-            circuit: binding,
+            circuit: statement - 1,
             stages: (0..runs as u32)
                 .chain([nested.lifts(), nested.digits()])
                 .collect(),
@@ -774,50 +770,25 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
     }
 }
 
-/// The nested layout of the chunk circuits `counts` describes, for proofs
-/// of `runs` runs, which runs no transcript chunks, and the binding
-/// circuit after them: every chunk circuit loads the run stages, the
-/// trailing stage and the lifts and work stages, a digits one the digits
-/// stage after them, and the binding circuit the same stages as the rest,
-/// under the work stage's final mask then the digits stage's. The binding
-/// circuit recomputes the native extension's digits stage and exposes, after
-/// it, both application commitments and the commitment of the host IPA's
-/// $s(X)$ in the step's native batch.
+/// The nested layout of a whole circuit cut as `pages` tells, for proofs
+/// of `runs` runs: every page loads the run, trailing, lifts and digits
+/// stages, then the carry stage. One mask covers their own gates. The last
+/// page is the binding circuit: it recomputes the native extension's digits
+/// stage and exposes,
+/// after it, both application commitments and the commitment of the host
+/// IPA's $s(X)$ in the step's native batch.
 ///
 /// # Panics
 ///
-/// Panics if `counts` has transcript circuits or more digits circuits
-/// than chunk circuits.
-pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
-    assert_eq!(
-        counts.transcript, 0,
-        "the scalar-field side runs no transcript chunks"
-    );
-    assert!(
-        counts.digits <= counts.circuits,
-        "the digits circuits are among the chunk circuits"
-    );
+/// Panics if no page is declared.
+pub(crate) fn nested_layout(pages: usize, runs: usize) -> Extension {
+    assert!(pages > 0, "the decompression's nested side takes a page");
     let indices = Indices::nested(runs);
-    let binding = counts.circuits as u32;
-    let work = counts.work() as u32;
-    let mut circuits = Vec::with_capacity(counts.circuits + 1);
-    circuits.extend(repeat_n(indices.common(), counts.work()));
-    circuits.extend(repeat_n(
-        indices
-            .common()
-            .into_iter()
-            .chain([indices.digits()])
-            .collect::<Vec<_>>(),
-        counts.digits,
-    ));
-    circuits.push(indices.common());
+    let binding = pages as u32 - 1;
     Extension {
-        circuits,
+        circuits: indices.pages(pages),
         stages: indices.stages(),
-        final_masks: vec![
-            (0..work).chain([binding]).collect(),
-            (work..binding).collect(),
-        ],
+        final_masks: vec![(0..=binding).collect()],
         statement: None,
         binding: Some(Binding {
             circuit: binding,
@@ -829,172 +800,15 @@ pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
     }
 }
 
-/// The circuit counts of side `S`'s schedule: its chunk circuits and,
-/// among them, the transcript ones first and the digits ones last.
+/// Registers mask `mask` of side `S`, by `indices`: the stages' masks in
+/// stage order, the carry stage's last among them, then the carry stage's
+/// final mask, which holds every page's own polynomial off the stages, and
+/// on the native side the statement circuit's final mask, whose last stage
+/// is the instance stage.
 ///
-/// # Errors
-///
-/// Fails if the circuits are not in that order, which the layouts do not
-/// represent.
-fn counts<C, S, K, R, const HEADER_SIZE: usize>() -> Result<Counts>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Side<C>,
-    K: Rank,
-    R: Rank,
-{
-    let schedule = super::program::schedule::<C, S, K, R, HEADER_SIZE>()?;
-    let circuits = schedule.circuits.len();
-    let kind = |index: usize| last(&schedule, index);
-    let transcript = (0..circuits)
-        .take_while(|&index| kind(index) == Last::Transcript)
-        .count();
-    let digits = (0..circuits)
-        .rev()
-        .take_while(|&index| kind(index) == Last::Digits)
-        .count();
-    if (transcript..circuits - digits).any(|index| kind(index) != Last::Work) {
-        return Err(Error::Initialization(
-            "the circuits are not in transcript, work, digits order".into(),
-        ));
-    }
-    Ok(Counts {
-        circuits,
-        transcript,
-        digits,
-    })
-}
-
-/// The native circuit counts for proofs over `C` at rank `K` with
-/// `HEADER_SIZE` headers, as chunk circuits at rank `R`.
-#[cfg(test)]
-pub(crate) fn native_counts<C, K, R, const HEADER_SIZE: usize>() -> Result<Counts>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-{
-    counts::<C, Native, K, R, HEADER_SIZE>()
-}
-
-/// The nested circuit counts, as [`native_counts`].
-///
-/// # Errors
-///
-/// Fails if the nested schedule has a transcript circuit, which its side
-/// has no stage for.
-#[cfg(test)]
-pub(crate) fn nested_counts<C, K, R, const HEADER_SIZE: usize>() -> Result<Counts>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-{
-    let counts = counts::<C, Nested, K, R, HEADER_SIZE>()?;
-    if counts.transcript > 0 {
-        return Err(Error::Initialization(
-            "a transcript circuit on a side without a transcript stage".into(),
-        ));
-    }
-    Ok(counts)
-}
-
-/// The native extension: the circuit-field side's chunks over its six
-/// stages, for proofs over `C` at rank `K` with `HEADER_SIZE` headers, as
-/// chunk circuits at rank `R`, with its statement and binding circuits.
-#[cfg(test)]
-pub(crate) fn native<C, K, R, const HEADER_SIZE: usize>() -> Result<Extension>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-{
-    Ok(native_layout(
-        native_counts::<C, K, R, HEADER_SIZE>()?,
-        num_runs::<K>(),
-    ))
-}
-
-/// The nested extension: the scalar-field side's chunks over its five
-/// stages, with its binding circuit.
-#[cfg(test)]
-pub(crate) fn nested<C, K, R, const HEADER_SIZE: usize>() -> Result<Extension>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-{
-    Ok(nested_layout(
-        nested_counts::<C, K, R, HEADER_SIZE>()?,
-        num_runs::<K>(),
-    ))
-}
-
-/// The schedule of side `S`, checked against the counts the profile
-/// declared the side's chunk circuits at: the declaration and the circuits
-/// are the same list, or the proof carries circuits that never run.
-fn pinned_schedule<C, S, K, R, const HEADER_SIZE: usize>(
-    pinned: Counts,
-) -> Result<Arc<super::program::Schedule>>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Side<C>,
-    K: Rank,
-    R: Rank,
-{
-    let scheduled = counts::<C, S, K, R, HEADER_SIZE>()?;
-    if scheduled != pinned {
-        return Err(Error::Initialization(
-            alloc::format!(
-                "the schedule's circuits, {scheduled:?}, are not the declared ones, {pinned:?}"
-            )
-            .into(),
-        ));
-    }
-    super::program::schedule::<C, S, K, R, HEADER_SIZE>()
-}
-
-/// Registers chunk circuit `circuit` of side `S` into `slot`, by the kind
-/// of chunks it runs: a
-/// [`circuits::TranscriptCircuit`], a [`circuits::DigitsCircuit`] or a
-/// [`circuits::Circuit`].
-fn register_circuit<'params, C, S, K, R, const HEADER_SIZE: usize>(
-    circuit: usize,
-    pinned: Counts,
-    slot: CircuitSlot<'params, S::F, R>,
-    params: &'params C::Params,
-) -> Result<Registered<'params, S::F, R>>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Front<C, K, R, HEADER_SIZE>,
-    K: Rank,
-    R: Rank,
-{
-    let schedule = pinned_schedule::<C, S, K, R, HEADER_SIZE>(pinned)?;
-    if circuit >= schedule.circuits.len() {
-        return Err(Error::Initialization("no such circuit".into()));
-    }
-    match last(&schedule, circuit) {
-        Last::Transcript => {
-            slot.register_staged(circuits::TranscriptCircuit::<C, S, K, R, HEADER_SIZE>::new(
-                circuit, schedule, params,
-            ))
-        }
-        Last::Digits => slot.register_staged(
-            circuits::DigitsCircuit::<C, S, K, R, HEADER_SIZE>::new(circuit, schedule, params),
-        ),
-        Last::Work => slot.register_staged(circuits::Circuit::<C, S, K, R, HEADER_SIZE>::new(
-            circuit, schedule, params,
-        )),
-    }
-}
-
-/// Registers mask `mask` of side `S`, by `indices`: the stages'
-/// masks in stage order, then the final mask of the chunks whose last
-/// stage is the work stage, on a side with a transcript stage of those
-/// whose last is the transcript stage, of those whose last is the digits
-/// stage, and on a side with a transcript stage of the statement circuit,
-/// whose last is the instance stage.
+/// The carry stage is a stage as the others are
+/// ([`WholeCarry`](whole::WholeCarry)), of the size the side pins, so its
+/// masks are its type's: no cut of the circuit is asked for here.
 fn register_mask<'params, C, S, K, R, const HEADER_SIZE: usize>(
     mask: usize,
     slot: MaskSlot<'params, S::F, R>,
@@ -1008,70 +822,46 @@ where
 {
     type Instance<C, S, K, R, const H: usize> = InstanceStage<C, S, K, R, H>;
     type Lifts<C, S, K, R, const H: usize> = LiftsStage<C, S, K, R, H>;
-    type Work<C, S, K, R, const H: usize> = WorkStage<C, S, K, R, H>;
-    type Transcript<C, S, K, R, const H: usize> = TranscriptStage<C, S, K, R, H>;
     type Digits<C, S, K, R, const H: usize> = DigitsStage<C, S, K, R, H>;
+    type Carry<C, S, K, R, const H: usize> = whole::WholeCarry<C, S, K, R, H>;
     if mask < indices.front {
         return S::register_stage_mask(mask, slot);
     }
-    let with_transcript = indices.with_transcript;
     let stages = indices.stages() as u32;
-    let digits_final = stages + 1 + with_transcript as u32;
     match mask as u32 {
         index if index == indices.lifts() => {
             slot.register_stage_mask::<Lifts<C, S, K, R, HEADER_SIZE>>()
         }
-        index if index == indices.work() => {
-            slot.register_stage_mask::<Work<C, S, K, R, HEADER_SIZE>>()
-        }
-        index if with_transcript && index == indices.transcript() => {
-            slot.register_stage_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
-        }
         index if index == indices.digits() => {
             slot.register_stage_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
         }
-        index if index == stages => slot.register_final_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
-        index if with_transcript && index == stages + 1 => {
-            slot.register_final_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
+        index if index == indices.carry() => {
+            slot.register_stage_mask::<Carry<C, S, K, R, HEADER_SIZE>>()
         }
-        index if index == digits_final => {
-            slot.register_final_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
-        }
-        index if with_transcript && index == digits_final + 1 => {
+        index if index == stages => slot.register_final_mask::<Carry<C, S, K, R, HEADER_SIZE>>(),
+        index if indices.with_statement && index == stages + 1 => {
             slot.register_final_mask::<Instance<C, S, K, R, HEADER_SIZE>>()
         }
         _ => Err(Error::Initialization("no such mask".into())),
     }
 }
 
-/// Registers native circuit `circuit` of a side declared at `pinned`
-/// chunk circuits: a chunk circuit, at the index past them the statement
-/// circuit, and at the next the binding circuit; see [`native_layout`]
-/// for the layout.
+/// Registers native circuit `circuit` that is not a page: the statement
+/// circuit, at the index past the pages; see [`native_layout`] for the
+/// layout.
 pub(crate) fn register_native_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
-    pinned: Counts,
     slot: CircuitSlot<'params, C::CircuitField, R>,
-    params: &'params C::Params,
 ) -> Result<Registered<'params, C::CircuitField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
     R: Rank,
 {
-    if circuit == pinned.circuits {
-        let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
-        return slot.register_staged(
-            circuits::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new(schedule),
-        );
+    if circuit != NATIVE_PAGES.num_pages() {
+        return Err(Error::Initialization("no such circuit".into()));
     }
-    if circuit == pinned.circuits + 1 {
-        let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
-        return slot.register_staged(
-            circuits::BindingCircuit::<C, Native, K, R, HEADER_SIZE>::new(schedule),
-        );
-    }
-    register_circuit::<C, Native, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
+    slot.register_staged(circuits::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new())
 }
 
 /// Registers native mask `mask`; see [`native_layout`] for the layout.
@@ -1087,29 +877,6 @@ where
     register_mask::<C, Native, K, R, HEADER_SIZE>(mask, slot, Indices::native())
 }
 
-/// Registers nested circuit `circuit` of a side declared at `pinned`
-/// chunk circuits: a chunk circuit, or at the index past them the binding
-/// circuit; see [`nested_layout`] for the layout.
-pub(crate) fn register_nested_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
-    circuit: usize,
-    pinned: Counts,
-    slot: CircuitSlot<'params, C::ScalarField, R>,
-    params: &'params C::Params,
-) -> Result<Registered<'params, C::ScalarField, R>>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Runs,
-    R: Rank,
-{
-    if circuit == pinned.circuits {
-        let schedule = pinned_schedule::<C, Nested, K, R, HEADER_SIZE>(pinned)?;
-        return slot.register_staged(
-            circuits::BindingCircuit::<C, Nested, K, R, HEADER_SIZE>::new(schedule),
-        );
-    }
-    register_circuit::<C, Nested, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
-}
-
 /// Registers nested mask `mask`; see [`nested_layout`] for the layout.
 pub(crate) fn register_nested_mask<'params, C, K, R, const HEADER_SIZE: usize>(
     mask: usize,
@@ -1122,7 +889,3 @@ where
 {
     register_mask::<C, Nested, K, R, HEADER_SIZE>(mask, slot, Indices::nested(num_runs::<K>()))
 }
-
-#[cfg(test)]
-#[path = "../../tests/decompression/aggregator.rs"]
-mod tests;

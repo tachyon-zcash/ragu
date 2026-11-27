@@ -596,7 +596,9 @@ where
             );
             // Its first slot: the mask says nothing of it, and the pages
             // that name it are the one that holds it to its wires and
-            // those that read it.
+            // those that read it. A circuit whose pages pass nothing, as a
+            // walk's short last step may be, leaves the slot a padding
+            // zero that no page names.
             let slot_moved = moved(polynomial, gates.start, Wire::A)?;
             assert!(
                 !slot_moved[own],
@@ -607,9 +609,9 @@ where
                 .filter(|&page| slot_moved[claim(Claim::Circuit((side.circuit)(placement, page)))])
                 .count();
             assert!(
-                named >= 2,
-                "{name} {which:?}: a value on a slot of the carry stage moved the claims of \
-                 {named} pages, where one holds the slot and another reads it"
+                named != 1,
+                "{name} {which:?}: a value on a slot of the carry stage moved the claim of one \
+                 page, where one page holds a slot and another reads it, or none names it"
             );
             carries += 1;
         }

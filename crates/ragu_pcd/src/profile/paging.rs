@@ -59,7 +59,8 @@
 //! them whole.
 //!
 //! A profile may also prove a circuit of its own extension in pages
-//! ([`ExtensionPages`]). Nothing is appended for it: the profile's [`Extension`]
+//! ([`ExtensionPages`]), as the aggregator does each side of its
+//! decompression. Nothing is appended for it: the profile's [`Extension`]
 //! declares the pages, the circuit's stages and its carry stage among its
 //! own entries, each page loading every stage and then the carry stage, so
 //! the claims and the masks are the extension's as it declares them. The

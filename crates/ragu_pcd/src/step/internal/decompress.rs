@@ -14,7 +14,7 @@
 //! [`Dummy`] and from zero.
 //!
 //! The native statement claim binds the output header and the transcript
-//! digest to the wallet proof that the chunks verify. The bootstrap's
+//! digest to the wallet proof that the extension verifies. The bootstrap's
 //! first slot is opened at the staged digest to expose it to that claim.
 //! The nested binding claim holds each output commitment to the wallet
 //! proof's corresponding commitment. The IPA helper lives in the profile's
@@ -26,7 +26,7 @@
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its
-//! witnessed header would bind to nothing. `tests/decompression/statement.rs`
+//! witnessed header would bind to nothing. `tests/decompress_statement.rs`
 //! proves the step under a stand-in statement circuit and checks the
 //! binding both ways.
 //!
@@ -124,7 +124,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         let output = Encoded::new_uniform(dr, allocator, data.clone())?;
         // The staged digest, made public as the point of an opening: the
         // left input's first slot, the bootstrap proof's padding, opened
-        // there and its value left unread. The native extension's chunks
+        // there and its value left unread. The native extension's pages
         // hold the digest to their transcript's last squeeze, through the
         // statement circuit's claim, so the round challenges they squeeze
         // were fixed when the stage was committed, before the challenge.

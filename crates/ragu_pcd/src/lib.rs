@@ -109,7 +109,7 @@ mod online_batch_tests;
 mod source_mesh_tests;
 
 #[cfg(test)]
-#[path = "../tests/decompression/statement.rs"]
+#[path = "../tests/decompress_statement.rs"]
 mod decompress_statement_tests;
 
 #[cfg(test)]

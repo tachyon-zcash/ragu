@@ -1,7 +1,7 @@
 //! The compressed proof's data as stages of the decompression proof: what
-//! every chunk of a side reads, allocated once per stage polynomial and
-//! loaded by each chunk unenforced, the stage's mask binding the layout as
-//! it binds the fuse's stages.
+//! a side's verifier reads, allocated once per stage polynomial and
+//! loaded unenforced by the side's circuit, the stage's mask binding the
+//! layout as it binds the fuse's stages.
 //!
 //! Each side's stages form a chain of [`ValuesStage`]s, each holding
 //! points of the side's curve and elements of its field. The chain opens
@@ -12,22 +12,22 @@
 //! messages' values the run covers, then the trailing stage with the
 //! nested IPA's $c$, the one value no run covers. After the front come the
 //! lifts stage, the lifts of the challenges the side's field checks use,
-//! the work stage, what passes between chunks, the transcript stage, what
-//! only the transcript chunks need, the sponge's saved states, and the
-//! digits stage, the signed digits of the full-width scalars the other
-//! side scales by. A chunk loads the stages up to the last it needs, the
-//! digits chunks skipping the transcript stage, so the transcript and
-//! digits stages' cost falls on the chunks that fill them. A [`Layout`]
+//! and the digits stage, the signed digits of the full-width scalars the
+//! other side scales by. The side's whole circuit
+//! ([`WholeCircuit`](super::whole::WholeCircuit)) loads the chain after
+//! the aggregator's two online stages, and every page it is cut into
+//! loads every stage in the chain. A [`Layout`]
 //! names where in the instance and messages each part
 //! of the proof sits, the same positions whichever stages hold them, and
-//! how many lifts and digits the side holds; the
-//! [`Schedule`](super::program::Schedule) assigns the work stage's slots
-//! and the sponge states'.
+//! how many lifts and digits the side holds. What the verifier computes
+//! between reading the stages and writing them is in no stage: it is
+//! wires of the circuit's own, which its pages pass each other on its
+//! carry stage.
 //!
 //! The circuit-field side holds the nested curve's points as points and
 //! the circuit field's values as elements; the scalar-field side holds the
 //! host curve's points as points and the scalar field's values as
-//! elements, and its transcript stage is empty.
+//! elements.
 //!
 //! # What binds the sides
 //!
@@ -38,9 +38,10 @@
 //! aggregator rank ([`run_degrees`](crate::compress::runs::run_degrees); see
 //! [`CycleTranscript`](crate::ipa::CycleTranscript)). The circuit-field
 //! side takes each commitment as a witness point its transcript absorbs
-//! and its binding circuit exposes, which the proof's consumer holds to the
-//! run stage's actual commitment: the values the scalar-field side's
-//! chunks read are then the ones each challenge was squeezed over. Two
+//! and its binding circuit, the last page of its whole circuit, exposes,
+//! which the proof's consumer holds to the
+//! run stage's actual commitment: the values the scalar-field side
+//! reads are then the ones each challenge was squeezed over. Two
 //! further kinds of stage are committed with a zero alpha so that the other
 //! side can recompute their commitments from the values it holds, which its
 //! binding circuit exposes the same way (see
@@ -56,14 +57,11 @@
 //!   recomputes it as the signed sum of the digits' generators while it
 //!   scales by them ([`digits_degrees`]).
 //!
-//! The digits stage comes after the work stage, where the circuit-field
-//! side's transcript stage also starts, so its generators depend on the
-//! sizes the side's schedule sets, and the other side's schedule names
-//! those generators: the stages' lengths
-//! therefore take each side's schedule built for its sizes alone
-//! ([`Side::sizes`]), which no other side's schedule enters, and the
-//! full schedules build on them (see the [`program`](super::program)
-//! module). The generators are computed from the stages' shapes alone
+//! The digits stage comes right after the lifts stage, so its generators,
+//! which the other side's verifier is laid out by, follow from the side's
+//! [`Layout`] alone: neither side's layout waits on the other's (see
+//! [`Tables`](super::verifier::Tables)). The generators are computed from
+//! the stages' shapes alone
 //! ([`shape_degrees`]), as [`StageExt::rx`] lays a stage out, so that the
 //! compression, which commits the runs for a profile's decompression
 //! whether or not one exists, needs no stage type of it.
@@ -92,8 +90,8 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 use super::{
     circuits::{Prepared, View},
     gadgets::derive::digit_width,
-    program::challenges_per_curve,
     side::{Native, Nested, Side},
+    verifier::challenges_per_curve,
 };
 pub(crate) use crate::compress::runs::{
     NESTED_SCALARS, Run, StageShape, native_points_of, num_runs, runs, shape_degrees,
@@ -118,7 +116,7 @@ pub(crate) const MESSAGE_SCALARS: usize =
 /// The scalar field's values beyond $v$, $c$ and $c b z$ whose digits the
 /// circuit-field side scales generators by: the `ab` bridge stage's
 /// coefficients, the coordinates of three host-curve commitments and the
-/// alpha (see [`ab_layout`](super::program::ab_layout)).
+/// alpha (see [`ab_layout`](super::verifier::ab_layout)).
 pub(crate) const AB_TERMS: usize = 7;
 
 /// Positions within the circuit-field side's step binding, the instance
@@ -378,15 +376,15 @@ pub(crate) struct MessagesLayout {
 
 /// One side's stage layout: the instance's and the messages' positions,
 /// which on the scalar-field side the run stages and the trailing stage
-/// hold between them ([`Run::source`]). The transcript stage holds no
-/// points and the sponge states the schedule assigns.
+/// hold between them ([`Run::source`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Layout {
     pub instance: InstanceLayout,
     pub messages: MessagesLayout,
     /// The lifts stage's elements: the lifts of the challenges the side's
-    /// field checks use, in the schedule's
-    /// [`Regions::lifts`](super::program::Regions::lifts) order.
+    /// field checks use, in [`squeezed`](super::verifier::squeezed) order,
+    /// and on the scalar-field side those of the fuse's challenges and of
+    /// the other curve's after them.
     pub lifts: usize,
     /// The digits stage's elements: the signed digits of the full-width
     /// scalars of this field the other side scales by, [`digit_width`]
@@ -441,7 +439,7 @@ impl Layout {
         Layout {
             instance,
             messages: Self::messages::<K>(),
-            lifts: 2 * challenges_per_curve::<K>() + super::program::fuse::LIFTED.len(),
+            lifts: 2 * challenges_per_curve::<K>() + super::verifier::fuse::LIFTED.len(),
             digits: (3 + AB_TERMS) * digit_width::<F>(),
             flags: 0,
         }
@@ -538,7 +536,7 @@ impl<T> MessageScalars<'_, T> {
 }
 
 /// One side's stage data: points of the side's curve and elements of its
-/// field, at the positions a [`Layout`] or a schedule assigns.
+/// field, at the positions a [`Layout`] assigns.
 #[derive(Clone, Debug)]
 pub(crate) struct Values<F, P> {
     pub points: Vec<P>,
@@ -614,35 +612,8 @@ where
     }
 }
 
-/// The sizes the schedule fixes: the work stage's points and elements and
-/// the transcript stage's elements, the sponge states. The same for every
-/// application circuit, so computed for a placeholder, and from the
-/// schedule built for its sizes alone ([`Side::sizes`]), which the digits
-/// stage's layout needs before the other side's schedule exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Sizes {
-    pub work_points: usize,
-    pub work_elements: usize,
-    pub states: usize,
-}
-
-impl Sizes {
-    /// Side `S`'s, built once ([`program::sizes`](super::program::sizes)).
-    pub(crate) fn of<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Self {
-        super::program::sizes::<C, S, K, R, HEADER_SIZE>()
-    }
-
-    /// The work stage's shape.
-    pub(crate) fn work_shape(&self) -> StageShape {
-        StageShape {
-            points: self.work_points,
-            elements: self.work_elements,
-        }
-    }
-}
-
 macro_rules! len {
-    ($(#[$doc:meta])* $name:ident, |$layout:ident, $sizes:ident| $len:expr) => {
+    ($(#[$doc:meta])* $name:ident, |$layout:ident| $len:expr) => {
         $(#[$doc])*
         pub(crate) struct $name<C, S, K, R, const HEADER_SIZE: usize>(
             PhantomData<fn() -> (C, S, K, R)>,
@@ -652,10 +623,7 @@ macro_rules! len {
             for $name<C, S, K, R, HEADER_SIZE>
         {
             fn len() -> usize {
-                #[allow(unused_variables)]
                 let $layout = S::layout::<K, HEADER_SIZE>();
-                #[allow(unused_variables)]
-                let $sizes = || Sizes::of::<C, S, K, R, HEADER_SIZE>();
                 $len
             }
         }
@@ -664,44 +632,31 @@ macro_rules! len {
 
 len!(
     /// The instance stage's point count of side `S`.
-    InstancePoints, |layout, sizes| layout.instance.points
+    InstancePoints, |layout| layout.instance.points
 );
 len!(
     /// The instance stage's element count of side `S`.
-    InstanceElements, |layout, sizes| layout.instance.elements
+    InstanceElements, |layout| layout.instance.elements
 );
 len!(
     /// The messages stage's point count of side `S`.
-    MessagePoints, |layout, sizes| layout.messages.points
+    MessagePoints, |layout| layout.messages.points
 );
 len!(
     /// The messages stage's element count of side `S`.
-    MessageElements, |layout, sizes| layout.messages.elements
+    MessageElements, |layout| layout.messages.elements
 );
 len!(
     /// The lifts stage's element count of side `S`: the layout's lifts.
-    LiftsElements, |layout, sizes| layout.lifts
-);
-len!(
-    /// The work stage's point count of side `S`: the schedule's.
-    WorkPoints, |layout, sizes| sizes().work_points
-);
-len!(
-    /// The work stage's element count of side `S`: the schedule's.
-    WorkElements, |layout, sizes| sizes().work_elements
-);
-len!(
-    /// The transcript stage's element count of side `S`: the sponge states
-    /// the schedule saves.
-    TranscriptElements, |layout, sizes| sizes().states
+    LiftsElements, |layout| layout.lifts
 );
 len!(
     /// The digits stage's element count of side `S`: the layout's digits.
-    DigitsElements, |layout, sizes| layout.digits
+    DigitsElements, |layout| layout.digits
 );
 
 /// A stage of side `S` holding `LP` points and `LE` elements after
-/// `Parent`, as a stage of chunk circuits at rank `R`.
+/// `Parent`, as a stage of circuits at rank `R`.
 type SideStage<C, S, R, Parent, LP, LE> =
     ValuesStage<<S as Side<C>>::F, <S as Side<C>>::P, R, Parent, LP, LE>;
 
@@ -725,7 +680,7 @@ impl<C: Cycle, S: Side<C>> Len for OnlineQueryLen<C, S> {
 }
 
 /// The aggregator's online input stage of side `S`'s field, as the
-/// side's chunk circuits load it: the first stage of every circuit of the
+/// side's circuits load it: the first stage of every circuit of the
 /// side. The fuse commits the stage, before its challenge, and its batch
 /// helper loads it too
 /// ([`InputStage`](crate::profile::online::stages::InputStage)); this is
@@ -740,7 +695,7 @@ pub(crate) type OnlineInputStage<C, S, R> =
 /// input stage, likewise
 /// ([`QueryStage`](crate::profile::online::stages::QueryStage)): the
 /// step's challenges, then the claimed values, among them the wallet
-/// registry's evaluations the chunks read
+/// registry's evaluations the side reads
 /// ([`online::Values`](super::online::Values)), which the step's fuse
 /// proves are its restrictions' values.
 pub(crate) type OnlineQueryStage<C, S, R> =
@@ -781,35 +736,15 @@ pub(crate) type LiftsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     LiftsElements<C, S, K, R, HEADER_SIZE>,
 >;
 
-/// The work stage of side `S`, after the lifts stage.
-pub(crate) type WorkStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
-    C,
-    S,
-    R,
-    LiftsStage<C, S, K, R, HEADER_SIZE>,
-    WorkPoints<C, S, K, R, HEADER_SIZE>,
-    WorkElements<C, S, K, R, HEADER_SIZE>,
->;
-
-/// The transcript stage of side `S`, after the work stage: the sponge
-/// states, elements only, loaded by the transcript chunks alone.
-pub(crate) type TranscriptStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
-    C,
-    S,
-    R,
-    WorkStage<C, S, K, R, HEADER_SIZE>,
-    ConstLen<0>,
-    TranscriptElements<C, S, K, R, HEADER_SIZE>,
->;
-
-/// The digits stage of side `S`, after the work stage: elements only,
-/// committed with a zero alpha, loaded by the digits chunks alone and
-/// recomputed by the other side.
+/// The digits stage of side `S`, after the lifts stage and the last of
+/// the side's stages: elements only, committed with a zero alpha, loaded
+/// by the last pages of the side's whole circuit alone, where the side
+/// writes its digits, and recomputed by the other side.
 pub(crate) type DigitsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
     R,
-    WorkStage<C, S, K, R, HEADER_SIZE>,
+    LiftsStage<C, S, K, R, HEADER_SIZE>,
     ConstLen<0>,
     DigitsElements<C, S, K, R, HEADER_SIZE>,
 >;
@@ -825,8 +760,8 @@ fn lifts_skip<C: Cycle, S: Side<C>, K: Rank, const HEADER_SIZE: usize>() -> usiz
 }
 
 /// The generator of side `S`'s curve each lift of its lifts stage lands
-/// on at rank `R`, by lift: what the other side's circuits endoscale by
-/// the challenge's bits to recompute the stage's commitment.
+/// on at rank `R`, by lift: what the other side endoscales by the
+/// challenge's bits to recompute the stage's commitment.
 pub(crate) fn lifts_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>()
 -> Vec<usize> {
     let layout = S::layout::<K, HEADER_SIZE>();
@@ -838,9 +773,9 @@ pub(crate) fn lifts_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER
 }
 
 /// The generator of side `S`'s curve each digit of its digits stage lands
-/// on at rank `R`, by digit: what the other side's circuits add or
-/// subtract, by the digit's sign, to recompute the stage's commitment as
-/// they scale by the digits.
+/// on at rank `R`, by digit: what the other side adds or subtracts, by
+/// the digit's sign, to recompute the stage's commitment as it scales by
+/// the digits.
 pub(crate) fn digits_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>()
 -> Vec<usize> {
     let layout = S::layout::<K, HEADER_SIZE>();
@@ -848,8 +783,7 @@ pub(crate) fn digits_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADE
         points: 0,
         elements: layout.lifts,
     };
-    let work = Sizes::of::<C, S, K, R, HEADER_SIZE>().work_shape();
-    let skip = lifts_skip::<C, S, K, HEADER_SIZE>() + lifts.gates() + work.gates();
+    let skip = lifts_skip::<C, S, K, HEADER_SIZE>() + lifts.gates();
     let shape = StageShape {
         points: 0,
         elements: layout.digits,
@@ -857,7 +791,7 @@ pub(crate) fn digits_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADE
     shape_degrees::<R>(skip, shape).1
 }
 
-/// The scalar-field side's front stages' values as its chunks view them,
+/// The scalar-field side's front stages' values as its verifier reads them,
 /// the instance's and the messages', filled stage by stage at the
 /// positions each stage's values take ([`RunSource`]).
 pub(crate) struct FrontSlots<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
@@ -956,7 +890,7 @@ pub(crate) struct FrontLoaded<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
 }
 
 impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> FrontLoaded<'dr, D, P> {
-    /// The instance as a chunk views it.
+    /// The instance as the side's verifier reads it.
     pub(crate) fn instance(&self) -> View<'_, 'dr, D, P> {
         View {
             points: &self.instance_points,
@@ -964,7 +898,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> FrontLoaded<'dr, D, P> {
         }
     }
 
-    /// The messages as a chunk views it.
+    /// The messages as the side's verifier reads it.
     pub(crate) fn messages(&self) -> View<'_, 'dr, D, P> {
         View {
             points: &self.messages_points,
@@ -973,9 +907,9 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> FrontLoaded<'dr, D, P> {
     }
 }
 
-/// A side's stages before the lifts stage, as the chain the chunk
-/// circuits load first: the instance and messages stages on the
-/// circuit-field side; on the scalar-field side one stage per run of the
+/// A side's stages before the lifts stage, as the chain the side's whole
+/// circuit loads after the online stages: the instance and messages stages
+/// on the circuit-field side; on the scalar-field side one stage per run of the
 /// compression's transcript ([`RunStage`]), committed with a zero alpha for the
 /// circuit-field side's transcript to absorb, then the trailing stage
 /// ([`TrailingStage`]). The hooks and the prover reach each stage by its
@@ -1007,7 +941,8 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
         D: Driver<'dr, F = Self::F>,
         T: Stage<Self::F, R>;
 
-    /// Loads the chain's stages unenforced, as the chunks view them.
+    /// Loads the chain's stages unenforced, as the side's verifier reads
+    /// them.
     ///
     /// # Errors
     ///
@@ -1261,7 +1196,7 @@ impl<C: Cycle, K: Rank, N: RunIndex> Len for RunElements<C, K, N> {
 }
 
 /// The stage of the scalar-field side holding run `N`'s values of a
-/// proof at rank `K`, as a stage of chunk circuits at rank `R`, after the
+/// proof at rank `K`, as a stage of circuits at rank `R`, after the
 /// run before it: the points' coordinates first, then the elements, each
 /// at one wire, read off the instance's and the messages' positions the
 /// run covers. The honest prover commits the stage with a zero alpha to
@@ -1467,34 +1402,6 @@ pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,
         R: Rank;
-
-    /// The generators run `index`'s stage lands its wires on, read off the
-    /// stage type, for `index` at most this run's.
-    #[cfg(test)]
-    fn wire_degrees<C, K, R>(index: usize) -> Result<Vec<usize>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-}
-
-/// The generators a run stage lands its wires on at rank `R`, read off the
-/// stage type as [`stage_wire_indices`] lays it out.
-#[cfg(test)]
-fn typed_degrees<C, K, R, N>() -> Result<Vec<usize>>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-    N: RunIndex,
-{
-    use ragu_circuits::staging::{stage_wire_indices, wire_degree, wires_of};
-    let wires = stage_wire_indices::<C::ScalarField, R, RunStage<C, K, R, N>>(|out| {
-        let mut wires = wires_of(&out.points)?;
-        wires.extend(wires_of(&out.elements)?);
-        Ok(wires)
-    })?;
-    Ok(wires.into_iter().map(wire_degree::<R>).collect())
 }
 
 /// Loads run `N`'s stage from its guard into `into`.
@@ -1609,20 +1516,6 @@ impl RunIndex for Z {
             no_such_stage()
         }
     }
-
-    #[cfg(test)]
-    fn wire_degrees<C, K, R>(index: usize) -> Result<Vec<usize>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == 0 {
-            typed_degrees::<C, K, R, Z>()
-        } else {
-            no_such_stage()
-        }
-    }
 }
 
 impl<N: RunIndex> RunIndex for Succ<N> {
@@ -1725,25 +1618,11 @@ impl<N: RunIndex> RunIndex for Succ<N> {
             N::rx::<C, K, R>(index, prepared)
         }
     }
-
-    #[cfg(test)]
-    fn wire_degrees<C, K, R>(index: usize) -> Result<Vec<usize>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == Self::INDEX {
-            typed_degrees::<C, K, R, Succ<N>>()
-        } else {
-            N::wire_degrees::<C, K, R>(index)
-        }
-    }
 }
 
 /// A rank whose proofs' runs the scalar-field side's stage chain covers:
 /// the chain's length is a type, [`Last`](Self::Last), the last run's
-/// index, so the ranks the chunk circuits decompress proofs of are the
+/// index, so the ranks the whole circuits decompress proofs of are the
 /// ones named here. The wallet rank's, the wallets'.
 pub(crate) trait Runs: Rank {
     /// The last run's index.
@@ -1768,7 +1647,3 @@ const _: () = {
         "the wallet rank's chain covers its runs"
     );
 };
-
-#[cfg(test)]
-#[path = "../../tests/decompression/stages.rs"]
-mod tests;

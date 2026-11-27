@@ -122,6 +122,9 @@ macro_rules! census {
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, $rank, $header>(pasta, 3, cuts, false)?;
         census.extend(nested_census::<C, $rank>(cuts, false)?);
+        // The decompression's two whole circuits, which the profile pages
+        // as it does the fuse's.
+        census.extend(<$profile>::decompression_census::<Pasta, $rank>(pasta, false)?);
         for sizing in &census {
             let sizes: Vec<usize> = sizing.stages.iter().map(|range| range.len()).collect();
             println!(
@@ -200,8 +203,8 @@ macro_rules! census {
     }};
 }
 
-/// How each fuse circuit of the aggregator profile cuts into polynomials
-/// at the aggregator rank, with the decompression extension's size.
+/// How each fuse circuit of the aggregator profile, and each side of the
+/// decompression, cuts into polynomials at the aggregator rank.
 #[test]
 #[ignore = "prints the aggregator profile's census"]
 fn census_aggregator() -> Result<()> {
@@ -250,8 +253,9 @@ fn aggregator_pages_fit_at_header_boundaries() -> Result<()> {
     Ok(())
 }
 
-/// The pages each fuse circuit's cut states under a profile, whether the
-/// circuit cuts in them, and the fewest it cuts in.
+/// The pages the aggregator profile states for each fuse circuit and each
+/// side of the decompression, whether the circuit cuts in them, and the
+/// fewest it cuts in.
 macro_rules! fewest {
     ($profile:ty, $header:expr) => {{
         use ragu_pcd::profile::paging::{native_census, nested_census};
@@ -264,6 +268,9 @@ macro_rules! fewest {
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, AggregatorRank, $header>(pasta, 3, &[], true)?;
         census.extend(nested_census::<C, AggregatorRank>(&[], true)?);
+        census.extend(<$profile>::decompression_census::<Pasta, AggregatorRank>(
+            pasta, true,
+        )?);
         let found: Found = census
             .into_iter()
             .map(|sizing| {
@@ -347,6 +354,9 @@ macro_rules! cuts {
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, AggregatorRank, $header>(pasta, 3, &[], false)?;
         census.extend(nested_census::<C, AggregatorRank>(&[], false)?);
+        census.extend(<$profile>::decompression_census::<Pasta, AggregatorRank>(
+            pasta, false,
+        )?);
         let cuts: Vec<(&'static str, String)> = census
             .into_iter()
             .filter(|sizing| sizing.count.num_pages() > 1)
@@ -367,7 +377,8 @@ macro_rules! cuts {
 
 /// The aggregator's cuts at small and maximum header sizes: for each
 /// circuit its profile pages, the first step of each walk standing for the
-/// walk, a digest of its pages.
+/// walk and each side of the decompression among them, a digest of its
+/// pages.
 ///
 /// The pager places a circuit's cuts where the circuit is registered, and
 /// a circuit of the aggregator changes with the header size, so each size
@@ -380,46 +391,52 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         4,
         &[
-            ("native.compute_v", "2f57329f0139eb3b"),
-            ("native.bind_challenges_0", "b915080a1f26a0ed"),
-            ("native.bind_challenges_1", "04d1ba39bae1f42a"),
-            ("native.bind_challenges_2", "754f6dd13663d2d5"),
-            ("native.bind_challenges_3", "44850573f56d8b03"),
-            ("native.bind_endoscalar", "694522fc7c1da8b6"),
-            ("native.endoscaling_step", "39b10a7513167ace"),
-            ("nested.collapse", "aa54fefedb49832a"),
-            ("nested.compute_v", "a44f3913c6174b77"),
-            ("nested.endoscaling_step", "9065a01c4731bf03"),
+            ("native.compute_v", "82285d7760ab05ea"),
+            ("native.bind_challenges_0", "42cb464241e5ae03"),
+            ("native.bind_challenges_1", "038bc5ddc2b84b65"),
+            ("native.bind_challenges_2", "09ea5369353265ea"),
+            ("native.bind_challenges_3", "0867064aecb52c70"),
+            ("native.bind_endoscalar", "2339ef71157d8430"),
+            ("native.endoscaling_step", "e6d57a71f2acdd76"),
+            ("nested.collapse", "ca8f285e2e3febd1"),
+            ("nested.compute_v", "098859b72467b26d"),
+            ("nested.endoscaling_step", "135e9b6e82f88cdc"),
+            ("decompression.native", "d3a98153d672607d"),
+            ("decompression.nested", "aa1098dffe1e2d54"),
         ],
     ),
     (
         9,
         &[
-            ("native.compute_v", "0f661a93670e2378"),
-            ("native.bind_challenges_0", "fe9df88edc2c9427"),
-            ("native.bind_challenges_1", "ac403889c67cd80c"),
-            ("native.bind_challenges_2", "b726d640413d9ac7"),
-            ("native.bind_challenges_3", "d8a982e0da9ad62b"),
-            ("native.bind_endoscalar", "694522fc7c1da8b6"),
-            ("native.endoscaling_step", "39b10a7513167ace"),
-            ("nested.collapse", "aa54fefedb49832a"),
-            ("nested.compute_v", "a44f3913c6174b77"),
-            ("nested.endoscaling_step", "9065a01c4731bf03"),
+            ("native.compute_v", "f0655e9a4cb89250"),
+            ("native.bind_challenges_0", "84c077343dd3fb1c"),
+            ("native.bind_challenges_1", "47d75f76fa782142"),
+            ("native.bind_challenges_2", "0ad63eb91bd3a1c3"),
+            ("native.bind_challenges_3", "b0682a1ae3438dca"),
+            ("native.bind_endoscalar", "2339ef71157d8430"),
+            ("native.endoscaling_step", "e6d57a71f2acdd76"),
+            ("nested.collapse", "ca8f285e2e3febd1"),
+            ("nested.compute_v", "098859b72467b26d"),
+            ("nested.endoscaling_step", "135e9b6e82f88cdc"),
+            ("decompression.native", "9f5fbc84adfa42df"),
+            ("decompression.nested", "3caa794a0a935da2"),
         ],
     ),
     (
         195,
         &[
-            ("native.compute_v", "d6c88219a925e044"),
-            ("native.bind_challenges_0", "11336ec491b5ccc1"),
-            ("native.bind_challenges_1", "111f56a2140de5a2"),
-            ("native.bind_challenges_2", "0f2c45332cdb26de"),
-            ("native.bind_challenges_3", "b12d391c5e60927e"),
-            ("native.bind_endoscalar", "694522fc7c1da8b6"),
-            ("native.endoscaling_step", "39b10a7513167ace"),
-            ("nested.collapse", "87106c0aae25d3ad"),
-            ("nested.compute_v", "ddf7a1f5a075b169"),
-            ("nested.endoscaling_step", "729586c9e79b1cbd"),
+            ("native.compute_v", "4bb2bacabadc8910"),
+            ("native.bind_challenges_0", "cace810098ab2ab4"),
+            ("native.bind_challenges_1", "7a6ceff652f15d2b"),
+            ("native.bind_challenges_2", "2f85a53baa297e6c"),
+            ("native.bind_challenges_3", "f788eb53066d3347"),
+            ("native.bind_endoscalar", "2339ef71157d8430"),
+            ("native.endoscaling_step", "e6d57a71f2acdd76"),
+            ("nested.collapse", "ca8f285e2e3febd1"),
+            ("nested.compute_v", "098859b72467b26d"),
+            ("nested.endoscaling_step", "135e9b6e82f88cdc"),
+            ("decompression.native", "9b3f50f2c5717a37"),
+            ("decompression.nested", "1e1efa85d15dda94"),
         ],
     ),
 ];
@@ -499,8 +516,8 @@ fn walk_cuts<const H: usize>() -> Result<(usize, String, String)> {
 }
 
 const WALK_CUTS: [(usize, &str, &str); 2] = [
-    (4, "04241d632e7e07dd", "7e95de79b937b5be"),
-    (195, "04241d632e7e07dd", "9cbe9b48ebf3d61e"),
+    (4, "360ed4991041e872", "e7883e24eccea6c9"),
+    (195, "360ed4991041e872", "e7883e24eccea6c9"),
 ];
 
 #[test]
@@ -514,26 +531,6 @@ fn every_aggregator_walk_step_cut_is_pinned() -> Result<()> {
         found, WALK_CUTS,
         "the cuts of the aggregator's walk steps changed: if the change is intended, pin what \
          was found"
-    );
-    Ok(())
-}
-
-/// Prints the chunk circuit counts the aggregator profile pins: those of
-/// the schedules that verify a wallet's compressed proof in chunk circuits
-/// at the aggregator rank.
-#[test]
-#[ignore = "prints the decompression's circuit counts at the aggregator rank"]
-fn census_aggregator_counts() -> Result<()> {
-    use ragu_circuits::polynomials::AggregatorRank;
-    use ragu_pcd::profile::Aggregator;
-
-    println!(
-        "COUNTS header 4: {:?}",
-        Aggregator::<4>::scheduled::<Pasta, AggregatorRank>()?
-    );
-    println!(
-        "COUNTS header 195: {:?}",
-        Aggregator::<195>::scheduled::<Pasta, AggregatorRank>()?
     );
     Ok(())
 }

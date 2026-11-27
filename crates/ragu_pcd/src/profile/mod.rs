@@ -44,8 +44,8 @@
 //! fuse's ([`paging::ExtensionPages`]): the extension declares each page as
 //! a circuit, and a registry build asks the profile for the pages once,
 //! cut and held to the unpaged circuit, and registers each at its circuit.
-//! `Aggregator` declares the decompression circuits, at the rank with
-//! the room for them.
+//! `Aggregator` declares the decompression's circuits: the pages of each
+//! side's whole circuit, and the statement circuit.
 //!
 //! Profile authors must review and test agreement between their
 //! declarations, registered stages and masks, and the intended circuit relation.
@@ -85,7 +85,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 pub use crate::decompress::{
-    aggregator::{Aggregator, Counts},
+    aggregator::Aggregator,
     prover::{Decompressed, Decompression},
 };
 use crate::{

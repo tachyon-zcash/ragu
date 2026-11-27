@@ -127,8 +127,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the wallet rank, where it proved at `R<15>`: the fuse's internal circuits
   that outgrow a rank-14 polynomial are cut into pages
   (`ragu_circuits::paging`), declared by the profile's
-  `Profile::PAGE_COUNTS`, and the decompression's chunk circuits are fitted
-  to rank-14 polynomials.
+  `Profile::PAGE_COUNTS`, and each side of the decompression is one circuit,
+  cut into the pages `Aggregator::NATIVE_PAGES` and
+  `Aggregator::NESTED_PAGES` pin.
   Every page loads every stage of its circuit.
 - Proofs from earlier versions do not verify under either profile,
   compressed or not: both ranks changed, and with them the circuits and the
