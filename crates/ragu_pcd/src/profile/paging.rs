@@ -76,10 +76,13 @@ use ragu_circuits::{
     paging::{Carry, Checked, Pageable, Pages, Planned},
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryBuilder},
-    staging::{MultiStage, Stage},
+    staging::{MultiStage, MultiStageCircuit, Stage},
 };
-use ragu_core::{Error, Result};
-use ragu_primitives::vec::Len;
+use ragu_core::{
+    Error, Result,
+    gadgets::{GadgetKind, Kind},
+};
+use ragu_primitives::{WithSuffix, vec::Len};
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -613,6 +616,14 @@ impl<F: Field> Plans<F> {
 /// then registers each page once and refuses to finish with a page left
 /// (`Registrar::finish`), so every page's claim is one of the proof's.
 ///
+/// Each page is registered as the check held it, and no slot wraps one. A
+/// page before the last ends its output with a zero of its own. The last
+/// carries the unpaged circuit's output, so the circuit ends that output
+/// with the constant zero every extension circuit's ends with (see
+/// [`CircuitSlot::register`](super::CircuitSlot::register)), as the fuse's
+/// circuits end theirs, and the check holds the last page to it with the
+/// rest of the output.
+///
 /// The profile's [`Extension`] declares the rest, as it does for any
 /// circuit of its own: each page a circuit that loads the unpaged
 /// circuit's stages and then its carry stage, and the carry stage's final
@@ -629,25 +640,24 @@ pub struct ExtensionPages<'params, F: Field, R: Rank> {
     planned: Planned<F>,
 }
 
-/// The registered last extension page, including its public zero suffix.
-fn extension_last<F: Field, R: Rank, S: Pageable<F, R>>(
-    checked: &Checked<F, R, S>,
-) -> impl ragu_circuits::Circuit<F> + use<F, R, S> {
-    super::Suffixed(checked.last())
-}
-
 impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
     /// The pages of `checked`, at the extension circuits from `first` on,
     /// the last page's last.
+    ///
+    /// The unpaged circuit's public output is `O` and then a suffix, which
+    /// the circuit must write as the constant zero: the last page is
+    /// registered with the output the check held it to, and nothing here
+    /// appends to it.
     ///
     /// # Errors
     ///
     /// Fails if the pages are not as many as `count` pins, or if their
     /// carry stage differs from the size it pins, or if their circuit indices
     /// overflow.
-    pub fn new<S>(first: u32, count: PageCount, checked: &Checked<F, R, S>) -> Result<Self>
+    pub fn new<S, O>(first: u32, count: PageCount, checked: &Checked<F, R, S>) -> Result<Self>
     where
-        S: Pageable<F, R>,
+        S: Pageable<F, R> + MultiStageCircuit<F, R, Output = Kind![F; @WithSuffix<'_, _, O>]>,
+        O: GadgetKind<F>,
         MultiStage<F, R, S>: 'params,
     {
         let paged = checked.pages();
@@ -670,14 +680,15 @@ impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
         let last = pages - 1;
         let registers = (0..pages)
             .map(|page| {
-                // A page before the last ends its output with a zero of
-                // its own; the last carries the circuit's output, which
-                // takes the zero every extension circuit's ends with.
+                // Each page is registered as it was checked. A page before
+                // the last ends its output with a zero of its own; the last
+                // carries the circuit's output, which the circuit ends with
+                // the zero every extension circuit's ends with.
                 let register: Register<'params, F, R> = if page < last {
                     let page = checked.page(page);
                     Box::new(move |registry| registry.register_internal_circuit(page))
                 } else {
-                    let page = extension_last(checked);
+                    let page = checked.last();
                     Box::new(move |registry| registry.register_internal_circuit(page))
                 };
                 Some(register)
@@ -1142,8 +1153,9 @@ pub struct Sizing {
         ),
         String,
     >,
-    /// The digest of the underlying cut ([`Pages::digest`]), before any
-    /// extension suffix. Present only if the registered pages fit the rank.
+    /// A digest of its pages as a registry holds them
+    /// ([`Pages::digest`]), where it cuts: what tells one cut of the
+    /// circuit from another.
     pub digest: Option<[u8; 32]>,
     /// For a circuit that does not cut: how it would spread over the same
     /// pages in polynomials of [`SLACK`] more gates, if it then cuts, which
@@ -1185,20 +1197,10 @@ fn fewest(mut pages: usize, mut fits: bool, cuts: impl Fn(usize) -> bool) -> Opt
 #[cfg(feature = "test-utils")]
 pub const SLACK: usize = 600;
 
-/// Sizes `circuit`, an unpaged circuit named `name`, and cuts it as `count`
-/// pins, or as `counts` says if they name it; with `solve` finds the
-/// fewest pages it cuts in ([`Sizing::fewest`]).
-#[cfg(feature = "test-utils")]
-fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
-    name: &'static str,
-    count: PageCount,
-    counts: (&[(&'static str, PageCount)], bool),
-    circuit: MultiStage<F, R, S>,
-) -> Result<Sizing> {
-    sized_with(name, count, counts, circuit, |_| Ok(()))
-}
-
-/// Sizes an extension's pages with the same last page its registrar takes.
+/// Sizes one of a profile's extension circuits in pages, as [`sized`] does
+/// one of the fuse's. Its pages are registered as they are checked
+/// ([`ExtensionPages`]), the last with the zero the circuit ends its output
+/// with, so what is sized is what a registry takes.
 #[cfg(feature = "test-utils")]
 pub(crate) fn sized_extension<F: Field, R: Rank, S: Pageable<F, R>>(
     name: &'static str,
@@ -1206,19 +1208,18 @@ pub(crate) fn sized_extension<F: Field, R: Rank, S: Pageable<F, R>>(
     solve: bool,
     circuit: MultiStage<F, R, S>,
 ) -> Result<Sizing> {
-    sized_with(name, count, (&[], solve), circuit, |checked| {
-        RegistryBuilder::<F, R>::new().register_internal_circuit(extension_last(checked))?;
-        Ok(())
-    })
+    sized(name, count, (&[], solve), circuit)
 }
 
+/// Sizes `circuit`, an unpaged circuit named `name`, and cuts it as `count`
+/// pins, or as `counts` says if they name it; with `solve` finds the
+/// fewest pages it cuts in ([`Sizing::fewest`]).
 #[cfg(feature = "test-utils")]
-fn sized_with<F: Field, R: Rank, S: Pageable<F, R>>(
+fn sized<F: Field, R: Rank, S: Pageable<F, R>>(
     name: &'static str,
     count: PageCount,
     (counts, solve): (&[(&'static str, PageCount)], bool),
     circuit: MultiStage<F, R, S>,
-    check_last: impl Fn(&Checked<F, R, S>) -> Result<()>,
 ) -> Result<Sizing> {
     let circuit = alloc::sync::Arc::new(circuit);
     let count = counts
@@ -1229,7 +1230,6 @@ fn sized_with<F: Field, R: Rank, S: Pageable<F, R>>(
     let stages = ragu_circuits::paging::Stages::of::<F, R, S>();
     let accepted = |pages| -> Result<_> {
         let checked = split(name, circuit.clone(), pages)?.check()?;
-        check_last(&checked)?;
         let paged = checked.pages();
         let digest = paged.digest()?;
         Ok(((paged.layout().clone(), paged.report().clone()), digest))

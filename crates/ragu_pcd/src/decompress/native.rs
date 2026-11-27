@@ -14,7 +14,8 @@
 //! stage, endoscaling its generators by the challenges it squeezed, and
 //! that side's digits stage, summing the digits' generators by sign as it
 //! scales by them. Its public output is the run commitments, the two
-//! recomputations and the nested IPA's $G'$ ([`native_side`]).
+//! recomputations and the nested IPA's $G'$ ([`native_side`]), then the
+//! zero every extension circuit's output ends with.
 //!
 //! What both sides share, the paging of the circuit among it, is
 //! [`common`](super::common).
@@ -34,7 +35,9 @@ use ragu_core::{
     gadgets::{Bound, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, EndoscalarChallenge, GadgetExt, Point, vec::FixedVec};
+use ragu_primitives::{
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt, Point, WithSuffix, vec::FixedVec,
+};
 
 use super::{
     common::{
@@ -118,8 +121,14 @@ where
     type Last = DigitsStage<C, Native, K, R, HEADER_SIZE>;
     type Instance<'source> = FixedVec<C::NestedCurve, Exposed<C, Native, K>>;
     type Witness<'source> = &'source Prepared<C, Native>;
-    type Output =
-        Kind![C::CircuitField; FixedVec<Point<'_, _, C::NestedCurve>, Exposed<C, Native, K>>];
+    type Output = Kind![
+        C::CircuitField;
+        @WithSuffix<
+            '_,
+            _,
+            Kind![C::CircuitField; FixedVec<Point<'_, _, C::NestedCurve>, Exposed<C, Native, K>>]
+        >
+    ];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -127,7 +136,9 @@ where
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        FixedVec::try_from_fn(|i| Point::alloc(dr, instance.as_ref().map(|points| points[i])))
+        let exposed =
+            FixedVec::try_from_fn(|i| Point::alloc(dr, instance.as_ref().map(|points| points[i])))?;
+        Ok(WithSuffix::new(exposed, Element::zero(dr)))
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -180,7 +191,10 @@ where
                 "the side's verifier exposes the side's points".into(),
             ));
         }
-        Ok(WithAux::new(FixedVec::try_from(exposed)?, D::unit()))
+        // The zero every extension circuit's output ends with: the circuit
+        // writes it, so the check holds the last page to it.
+        let exposed = WithSuffix::new(FixedVec::try_from(exposed)?, Element::zero(dr));
+        Ok(WithAux::new(exposed, D::unit()))
     }
 }
 

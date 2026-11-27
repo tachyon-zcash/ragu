@@ -1044,27 +1044,31 @@ fn extension_pages_share_their_stages_and_stay_inside_the_user_declaration() {
     assert!(different.declare(vec![group(0).unwrap()]).is_err());
 }
 
-#[test]
-fn extension_census_counts_the_last_output_at_the_constraint_limit() -> Result<()> {
+/// Circuits of so many empty constraints and no gates, for sizing a page's
+/// constraints against the rank's.
+mod constraints {
     use ragu_circuits::{
         WithAux,
         paging::Pageable,
         polynomials::TestRank,
-        staging::{MultiStage, MultiStageCircuit, StageBuilder},
+        staging::{MultiStageCircuit, StageBuilder},
     };
     use ragu_core::{
+        Result,
         drivers::{Driver, DriverValue},
-        gadgets::Bound,
+        gadgets::{Bound, Kind},
+        pasta::Fp,
     };
-    use ragu_primitives::vec::ConstLen;
+    use ragu_primitives::{Element, WithSuffix, vec::ConstLen};
 
-    struct Constraints(usize);
+    /// The constraints, and no public output.
+    pub(super) struct Plain(pub usize);
 
-    impl Pageable<Fp, TestRank> for Constraints {
+    impl Pageable<Fp, TestRank> for Plain {
         type Carry = ConstLen<0>;
     }
 
-    impl MultiStageCircuit<Fp, TestRank> for Constraints {
+    impl MultiStageCircuit<Fp, TestRank> for Plain {
         type Last = ();
         type Instance<'source> = ();
         type Witness<'source> = ();
@@ -1092,17 +1096,62 @@ fn extension_census_counts_the_last_output_at_the_constraint_limit() -> Result<(
         }
     }
 
+    /// The same constraints, and the zero an extension circuit ends its
+    /// public output with.
+    pub(super) struct Ended(pub usize);
+
+    impl Pageable<Fp, TestRank> for Ended {
+        type Carry = ConstLen<0>;
+    }
+
+    impl MultiStageCircuit<Fp, TestRank> for Ended {
+        type Last = ();
+        type Instance<'source> = ();
+        type Witness<'source> = ();
+        type Output = Kind![Fp; @WithSuffix<'_, _, ()>];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, ()>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Ok(WithSuffix::new((), Element::zero(dr)))
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, TestRank, (), ()>,
+            _: DriverValue<D, ()>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+            let dr = builder.finish();
+            for _ in 0..self.0 {
+                dr.enforce_zero(|lc| lc)?;
+            }
+            Ok(WithAux::new(
+                WithSuffix::new((), Element::zero(dr)),
+                D::unit(),
+            ))
+        }
+    }
+}
+
+/// A census sizes the pages a registry takes. An extension circuit ends its
+/// public output with a zero, which is one more constraint of its last
+/// page: at the rank's limit the page no longer fits.
+#[test]
+fn extension_census_counts_the_last_output_at_the_constraint_limit() -> Result<()> {
+    use ragu_circuits::{polynomials::TestRank, staging::MultiStage};
+
+    use self::constraints::{Ended, Plain};
+
     let count = PageCount::new(1);
     // The registry reserves one coefficient. Orchestration adds the ONE
-    // constraint, and the extension adds one public output.
+    // constraint, and an extension circuit writes one public output.
     let body = TestRank::num_coeffs() - 2;
-    let circuit = |n| MultiStage::new(Constraints(n));
-    assert!(
-        super::sized("plain", count, (&[], false), circuit(body))?
-            .pages
-            .is_ok()
-    );
-    let overflow = super::sized_extension("extension", count, true, circuit(body))?;
+    let plain = super::sized("plain", count, (&[], false), MultiStage::new(Plain(body)))?;
+    assert!(plain.pages.is_ok());
+    let overflow = super::sized_extension("extension", count, true, MultiStage::new(Ended(body)))?;
     assert!(
         overflow
             .pages
@@ -1111,8 +1160,35 @@ fn extension_census_counts_the_last_output_at_the_constraint_limit() -> Result<(
     );
     assert!(overflow.digest.is_none());
     assert_ne!(overflow.fewest, Some(1));
-    let fits = super::sized_extension("extension", count, true, circuit(body - 1))?;
+    let fits = super::sized_extension("extension", count, true, MultiStage::new(Ended(body - 1)))?;
     assert!(fits.pages.is_ok());
     assert_eq!(fits.fewest, Some(1));
+    Ok(())
+}
+
+/// The last page of a paged extension circuit is registered as the check
+/// held it. The circuit ends its own public output with the zero a slot
+/// appends to an unpaged extension circuit's (`CircuitSlot::register`), so
+/// the page is the polynomial that wrapping the page gave: the registry
+/// that holds it has the same tag.
+#[test]
+fn a_paged_extension_circuits_last_page_ends_with_its_own_zero() -> Result<()> {
+    use ragu_circuits::{polynomials::TestRank, staging::MultiStage};
+
+    use self::constraints::{Ended, Plain};
+
+    let tag = |registry: RegistryBuilder<'_, Fp, TestRank>| -> Result<Fp> {
+        Ok(registry.finalize()?.tag())
+    };
+    let plain = super::split("plain", MultiStage::new(Plain(5)), 1)?.check()?;
+    let ended = super::split("ended", MultiStage::new(Ended(5)), 1)?.check()?;
+    let wrapped =
+        tag(RegistryBuilder::new()
+            .register_internal_circuit(crate::profile::Suffixed(plain.last()))?)?;
+    let own = tag(RegistryBuilder::new().register_internal_circuit(ended.last())?)?;
+    assert_eq!(own, wrapped);
+    // The zero is a constraint of the page: without it the page is another.
+    let bare = tag(RegistryBuilder::new().register_internal_circuit(plain.last())?)?;
+    assert_ne!(own, bare);
     Ok(())
 }

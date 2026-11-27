@@ -1234,7 +1234,8 @@ fn whole_circuits_expose_the_other_sides_commitments() {
     assert_eq!(exposed(&sides.native), of_nested);
     assert_eq!(exposed(&sides.nested), of_native);
 
-    // Each circuit's public output is the exposed points.
+    // Each circuit's public output is the exposed points, then the zero
+    // the circuit ends it with, as every extension circuit's ends.
     fn output<S: SideCircuit<Pasta, TestR, R, HEADER_SIZE>>(
         prepared: &Prepared<Pasta, S>,
     ) -> Vec<S::F> {
@@ -1245,7 +1246,7 @@ fn whole_circuits_expose_the_other_sides_commitments() {
             .map(|&wire| captured.recorder.values[wire])
             .collect()
     }
-    fn coordinates<P: udon::curve::Affine>(points: &[P]) -> Vec<P::Base> {
+    fn written<P: udon::curve::Affine>(points: &[P]) -> Vec<P::Base> {
         points
             .iter()
             .flat_map(|point| {
@@ -1254,10 +1255,11 @@ fn whole_circuits_expose_the_other_sides_commitments() {
                     .expect("a commitment is not the identity");
                 [x, y]
             })
+            .chain([P::Base::ZERO])
             .collect()
     }
-    assert_eq!(output(&sides.native), coordinates(&of_nested));
-    assert_eq!(output(&sides.nested), coordinates(&of_native));
+    assert_eq!(output(&sides.native), written(&of_nested));
+    assert_eq!(output(&sides.nested), written(&of_native));
 
     // Another compression of the same proof: the sides prepared from it
     // expose its commitments, not this one's. The runs before the first

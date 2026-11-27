@@ -14,7 +14,8 @@
 //! sign as it scales by them. Its public output is that recomputation, the
 //! two application output commitments and the commitment of the host
 //! IPA's $s(X)$ in the native batch of the step that proves the side
-//! ([`nested_side`]).
+//! ([`nested_side`]), then the zero every extension circuit's output ends
+//! with.
 //!
 //! What both sides share, the paging of the circuit among it, is
 //! [`common`](super::common).
@@ -34,7 +35,7 @@ use ragu_core::{
     gadgets::{Bound, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, Point, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, Point, WithSuffix, vec::FixedVec};
 
 use super::{
     common::{
@@ -114,8 +115,14 @@ where
     type Last = DigitsStage<C, Nested, K, R, HEADER_SIZE>;
     type Instance<'source> = FixedVec<C::HostCurve, Exposed<C, Nested, K>>;
     type Witness<'source> = &'source Prepared<C, Nested>;
-    type Output =
-        Kind![C::ScalarField; FixedVec<Point<'_, _, C::HostCurve>, Exposed<C, Nested, K>>];
+    type Output = Kind![
+        C::ScalarField;
+        @WithSuffix<
+            '_,
+            _,
+            Kind![C::ScalarField; FixedVec<Point<'_, _, C::HostCurve>, Exposed<C, Nested, K>>]
+        >
+    ];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::ScalarField>>(
@@ -123,7 +130,9 @@ where
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        FixedVec::try_from_fn(|i| Point::alloc(dr, instance.as_ref().map(|points| points[i])))
+        let exposed =
+            FixedVec::try_from_fn(|i| Point::alloc(dr, instance.as_ref().map(|points| points[i])))?;
+        Ok(WithSuffix::new(exposed, Element::zero(dr)))
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::ScalarField>>(
@@ -171,7 +180,10 @@ where
                 "the side's verifier exposes the side's points".into(),
             ));
         }
-        Ok(WithAux::new(FixedVec::try_from(exposed)?, D::unit()))
+        // The zero every extension circuit's output ends with: the circuit
+        // writes it, so the check holds the last page to it.
+        let exposed = WithSuffix::new(FixedVec::try_from(exposed)?, Element::zero(dr));
+        Ok(WithAux::new(exposed, D::unit()))
     }
 }
 

@@ -38,7 +38,9 @@
 //! side recomputes. Its public output is the points the side exposes for
 //! the proof's consumer: the other side's stage commitments the side
 //! absorbed or recomputed and the commitments it took of the step's own
-//! online polynomials (see [`Binding`](crate::profile::Binding)).
+//! online polynomials (see [`Binding`](crate::profile::Binding)), then the
+//! zero every extension circuit's output ends with, which the circuit
+//! writes itself: its last page is registered as the check held it.
 //!
 //! The circuit is an unpaged circuit ([`Pageable`]): it has many times the
 //! gates of a polynomial at the rank it is proven at, so the pager cuts it

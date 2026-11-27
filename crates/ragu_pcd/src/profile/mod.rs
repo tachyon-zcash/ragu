@@ -510,7 +510,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [`register_native_circuit`](Self::register_native_circuit). The
     /// extension declares each page as a circuit that loads the unpaged
     /// circuit's stages and then its carry stage, and the carry stage's
-    /// final mask over the pages.
+    /// final mask over the pages. Each page is registered as it was
+    /// checked, so the unpaged circuit ends its public output with the
+    /// constant zero itself, where a slot appends it to an unpaged
+    /// circuit's ([`CircuitSlot::register`]).
     ///
     /// # Errors
     ///
