@@ -68,9 +68,9 @@ use crate::{
     },
 };
 
-// TODO(#1039): these pins, and the fuse's (`PAGE_COUNTS` below), hold for
-// every header size from 1 through 195, so each is the most any size
-// takes. Once the header size Tachyon uses is fixed, pin them for that size.
+// TODO(#1039): these pins hold for every header size from 1 through 195, so
+// each is the most any size takes. Once the header size Tachyon uses is
+// fixed, pin them for that size.
 /// What the aggregator profile pins for the decompression's native side:
 /// the pages its whole circuit is cut into, and the values its carry stage
 /// holds. They hold for every header size from 1 through 195: the circuit
@@ -105,11 +105,13 @@ pub(crate) const NESTED_PAGES: PageCount = PageCount::new(43).carrying(192);
 /// profile adds is one more commitment the
 /// fuse's hashing circuits absorb, one more evaluation its compute-v
 /// circuit takes, two more claims its collapse circuits fold and a longer
-/// walk whose every step loads the longer points stage, and at that rank
-/// two polynomials per side already push a nested endoscaling step past
-/// the budget. The profile therefore cuts the fuse's circuits into pages
-/// ([`PAGE_COUNTS`](Profile::PAGE_COUNTS)). Each page loads the stages its
-/// unpaged circuit loads, and the hooks refuse any other rank.
+/// walk whose every step loads the longer points stage. With the
+/// extension's polynomials every circuit of the fuse still fits a
+/// polynomial of that rank whole, each walk step with the Standard
+/// profile's eight endoscalings
+/// ([`ENDOSCALINGS_PER_STEP`](Self::ENDOSCALINGS_PER_STEP)), so the profile
+/// pages none of them ([`PAGE_COUNTS`](Profile::PAGE_COUNTS)). The hooks
+/// refuse any other rank.
 ///
 /// Applications can choose a header size from 1 through 195 field
 /// elements. Decompression uses the same width on both sides, so
@@ -254,16 +256,12 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
         HEADER_SIZE
     };
 
-    /// The endoscalings a step of either walk performs, in the pages the
-    /// profile cuts a step into: they fill the pages between the stages
-    /// every page loads and the step's carry stage.
-    pub const ENDOSCALINGS_PER_STEP: usize = 60;
-
-    /// The pages of a native step, each loading all of its stages.
-    const NATIVE_STEP_PAGES: usize = 8;
-
-    /// The pages of a nested step, each loading all of its stages.
-    const NESTED_STEP_PAGES: usize = 8;
+    /// The endoscalings a step of either walk performs: eight, as the
+    /// Standard profile's steps perform, so that a step fits one polynomial
+    /// whole beside the stages it loads, with little to spare. A step of
+    /// more would be cut into pages of eight each, and would add a
+    /// polynomial for each page and one for its carry stage.
+    pub const ENDOSCALINGS_PER_STEP: usize = 8;
 
     /// Checks that the hooks register at the aggregator rank for the
     /// profile's header size. The hooks are generic over the rank and the
@@ -317,35 +315,14 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
 
-    // With the extension's polynomials the larger fuse circuits do not fit
-    // a polynomial of the aggregator rank whole. Every page loads every
-    // stage of its circuit, so each page's stage claim matches the unpaged
-    // circuit's. The page counts and the carry stages' sizes are fixed
-    // across header sizes, and a circuit that does not cut with them at its
-    // size is refused where it is registered.
-    //
-    // Each count is the fewest pages the census finds its circuit cut into
-    // at the header sizes it samples (`fewest_aggregator` in
-    // `tests/paging.rs`), and a circuit that fits one polynomial is whole:
-    // a count above that leaves pages with no gates of their own, each
-    // still a polynomial of every proof. Each carry stage holds more than
-    // its circuit carries at the header sizes the boundary test checks,
-    // which it prints.
-    const PAGE_COUNTS: PageCounts = {
-        PageCounts {
-            hashes_1: PageCount::WHOLE,
-            hashes_2: PageCount::WHOLE,
-            collapse: PageCount::WHOLE,
-            compute_v: PageCount::new(2).carrying(64),
-            bind_challenges: PageCount::WHOLE,
-            bind_beta: PageCount::WHOLE,
-            bind_endoscalar: PageCount::WHOLE,
-            endoscaling_step: PageCount::new(Self::NATIVE_STEP_PAGES).carrying(32),
-            nested_collapse: PageCount::WHOLE,
-            nested_compute_v: PageCount::WHOLE,
-            nested_endoscaling_step: PageCount::new(Self::NESTED_STEP_PAGES).carrying(32),
-        }
-    };
+    // Every circuit of the fuse fits a polynomial of the aggregator rank
+    // whole, with the extension's polynomials, at every header size the
+    // census checks, so none is paged. A count is the fewest pages the
+    // census finds its circuit cut into at the header sizes it samples
+    // (`fewest_aggregator` in `tests/paging.rs`): a count above that leaves
+    // pages with no gates of their own, each still a polynomial of every
+    // proof.
+    const PAGE_COUNTS: PageCounts = PageCounts::WHOLE;
 
     type Context<'params, Base, R, B>
         = Decompression<'params, Base, R, HEADER_SIZE, B>

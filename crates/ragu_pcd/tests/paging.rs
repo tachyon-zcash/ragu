@@ -12,9 +12,7 @@ use ragu_core::{
 use ragu_pcd::{
     ApplicationBuilder, SelectableBackend,
     ipa::IpaCycle,
-    profile::{
-        Aggregator, PageCount, PageCounts, Profile, Profiled, ProfiledCycle, Shape, Standard,
-    },
+    profile::{PageCount, PageCounts, Profile, Profiled, ProfiledCycle, Shape, Standard},
 };
 use ragu_testing::pcd::nontrivial::{Hash2, Merge2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
@@ -264,10 +262,6 @@ macro_rules! fewest {
     ($profile:ty, $header:expr) => {{
         use ragu_pcd::profile::paging::{native_census, nested_census};
 
-        // The ordinary census represents each walk with step zero. The
-        // scheduled heavy run checks every step at each sampled width.
-        #[cfg(ragu_pcd_nightly_tests)]
-        let _ = walk_cuts::<$header>()?;
         type C = Profiled<Pasta, $profile>;
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, AggregatorRank, $header>(pasta, 3, &[], true)?;
@@ -391,9 +385,8 @@ macro_rules! cuts {
 }
 
 /// The aggregator's cuts at small and maximum header sizes: for each
-/// circuit its profile pages, the first step of each walk standing for the
-/// walk and each side of the decompression among them, a digest of its
-/// pages.
+/// circuit its profile pages, each side of the decompression among them, a
+/// digest of its pages.
 ///
 /// The pager places a circuit's cuts where the circuit is registered, and
 /// a circuit of the aggregator changes with the header size, so each size
@@ -406,9 +399,6 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         4,
         &[
-            ("native.compute_v", "cb0d8e64b1096734"),
-            ("native.endoscaling_step", "f60e1cfecd8bebc0"),
-            ("nested.endoscaling_step", "7de5ced70c6ca566"),
             ("decompression.native", "1261e6c87e407aa0"),
             ("decompression.nested", "73d53a0dd8a080cd"),
         ],
@@ -416,9 +406,6 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         9,
         &[
-            ("native.compute_v", "33676a1e8e60332e"),
-            ("native.endoscaling_step", "f60e1cfecd8bebc0"),
-            ("nested.endoscaling_step", "7de5ced70c6ca566"),
             ("decompression.native", "6d0db27a9f131e4c"),
             ("decompression.nested", "73e46c6b92843f4b"),
         ],
@@ -426,9 +413,6 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         195,
         &[
-            ("native.compute_v", "1e2656b4a101d8a3"),
-            ("native.endoscaling_step", "f60e1cfecd8bebc0"),
-            ("nested.endoscaling_step", "7de5ced70c6ca566"),
             ("decompression.native", "bf4e7e6f40708b03"),
             ("decompression.nested", "229002a8f45bc0d0"),
         ],
@@ -468,63 +452,6 @@ fn the_aggregators_cuts_are_pinned() -> Result<()> {
         moved.is_empty(),
         "the pages of the aggregator's circuits changed: {moved:#?}\nIf the change is intended, \
          the table is now:\n{table}"
-    );
-    Ok(())
-}
-
-/// The census above represents each walk with step zero. Hash the pages of
-/// every step, in order, so a changed valid cut in a later step also fails
-/// the compatibility fixture.
-fn walk_cuts_digest(census: Vec<ragu_pcd::profile::paging::Sizing>) -> String {
-    assert!(census.len() > 1, "the walk has later steps to check");
-    let mut state = blake2b_simd::Params::new()
-        .hash_length(32)
-        .personal(b"ragu_walk_pages_")
-        .to_state();
-    state.update(&(census.len() as u64).to_le_bytes());
-    for (step, sizing) in census.into_iter().enumerate() {
-        assert!(sizing.count.num_pages() > 1, "step {step} is not paged");
-        let digest = sizing.digest.unwrap_or_else(|| {
-            panic!(
-                "{} step {step} does not cut and check: {:?}",
-                sizing.name, sizing.pages
-            )
-        });
-        state.update(&(step as u64).to_le_bytes());
-        state.update(&digest);
-    }
-    state.finalize().as_bytes()[..8]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-fn walk_cuts<const H: usize>() -> Result<(usize, String, String)> {
-    use ragu_pcd::profile::paging::{native_walk_census, nested_walk_census};
-    type C<const H: usize> = Profiled<Pasta, Aggregator<H>>;
-    Ok((
-        H,
-        walk_cuts_digest(native_walk_census::<C<H>, AggregatorRank>()?),
-        walk_cuts_digest(nested_walk_census::<C<H>, AggregatorRank>()?),
-    ))
-}
-
-const WALK_CUTS: [(usize, &str, &str); 2] = [
-    (4, "95cc1b669217c914", "90b9d0ee2c04669e"),
-    (195, "95cc1b669217c914", "90b9d0ee2c04669e"),
-];
-
-#[test]
-fn every_aggregator_walk_step_cut_is_pinned() -> Result<()> {
-    let found = [walk_cuts::<4>()?, walk_cuts::<195>()?];
-    let found: Vec<(usize, &str, &str)> = found
-        .iter()
-        .map(|(header, native, nested)| (*header, native.as_str(), nested.as_str()))
-        .collect();
-    assert_eq!(
-        found, WALK_CUTS,
-        "the cuts of the aggregator's walk steps changed: if the change is intended, pin what \
-         was found"
     );
     Ok(())
 }

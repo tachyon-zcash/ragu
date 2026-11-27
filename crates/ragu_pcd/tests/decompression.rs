@@ -1681,10 +1681,10 @@ mod aggregator {
                 + shape.native_steps * (1 + added(P::PAGE_COUNTS.endoscaling_step))
                 - standard.native_steps
         );
-        // The walks fold more points at fewer steps per the profile's
-        // endoscalings per step.
+        // The nested walk folds more points with the Standard profile's
+        // step size, so it takes more steps.
         assert!(shape.nested_points > standard.nested_points);
-        assert!(shape.nested_steps < standard.nested_steps);
+        assert!(shape.nested_steps > standard.nested_steps);
 
         let setup = Setup::new();
         let mut rng = StdRng::seed_from_u64(5);

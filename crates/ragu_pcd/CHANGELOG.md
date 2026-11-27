@@ -131,13 +131,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Its walks take 9 native and 11 nested steps where they took 27 and 31,
   and its fold 59 native and 42 nested claims where it took 95 and 82.
 - The `Aggregator` profile proves at `AggregatorRank`, which is now `R<14>`,
-  the wallet rank, where it proved at `R<15>`: the fuse's internal circuits
-  that outgrow a rank-14 polynomial are cut into pages
-  (`ragu_circuits::paging`), declared by the profile's
-  `Profile::PAGE_COUNTS`, and each side of the decompression is one circuit,
-  cut into the pages `Aggregator::NATIVE_PAGES` and
-  `Aggregator::NESTED_PAGES` pin.
-  Every page loads every stage of its circuit.
+  the wallet rank, where it proved at `R<15>`: each side of the
+  decompression is one circuit, cut into the pages (`ragu_circuits::paging`)
+  `Aggregator::NATIVE_PAGES` and `Aggregator::NESTED_PAGES` pin, and every
+  page loads every stage of its circuit. The fuse's internal circuits fit a
+  rank-14 polynomial whole, its walk steps with eight endoscalings each, as
+  the Standard profile's; a profile may cut them into pages too
+  (`Profile::PAGE_COUNTS`).
 - Proofs from earlier versions do not verify under either profile,
   compressed or not: both ranks changed, and with them the circuits and the
   generators the compression commits its runs at.
