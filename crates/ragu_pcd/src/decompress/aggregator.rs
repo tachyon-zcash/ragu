@@ -43,6 +43,7 @@ use alloc::{collections::BTreeMap, sync::Arc, vec, vec::Vec};
 use core::{any::TypeId, iter::repeat_n};
 
 use ragu_circuits::{
+    paging::Planned,
     polynomials::{AggregatorRank, Rank, WalletRank},
     registry::Registry,
 };
@@ -540,6 +541,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         online_openings: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, R>,
         online: Option<&Witness<'_, Base::CircuitField, Self, online_stages::Native>>,
+        _: &[Planned<Base::CircuitField>],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
     where
@@ -583,6 +585,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         registry: &Registry<'params, Base::ScalarField, R>,
         online: Option<&Witness<'_, Base::ScalarField, Self, online_stages::Nested>>,
         native_online_commitments: &[Base::HostCurve],
+        _: &[Planned<Base::ScalarField>],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
     where

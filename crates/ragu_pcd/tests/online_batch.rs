@@ -72,6 +72,7 @@ impl Profile for OnlineBatch {
         registry: &Registry<'params, Base::ScalarField, Rk>,
         online: Option<&circuit::Witness<'_, Base::ScalarField, Self, Nested>>,
         _: &[Base::HostCurve],
+        _: &[ragu_circuits::paging::Planned<Base::ScalarField>],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, Rk>>
     where

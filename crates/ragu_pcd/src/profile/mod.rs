@@ -40,6 +40,10 @@
 //! statement circuit, whose claim binds an internal step's output header
 //! to what the extension verified, and a binding circuit, whose claim
 //! binds its side's view of the other side's stages to their commitments.
+//! A profile may prove a circuit of its extension in pages, as it may the
+//! fuse's ([`paging::ExtensionPages`]): the extension declares each page as
+//! a circuit, and a registry build asks the profile for the pages once,
+//! cut and held to the unpaged circuit, and registers each at its circuit.
 //! `Aggregator` declares the decompression circuits, at the rank with
 //! the room for them.
 //!
@@ -63,6 +67,7 @@ use core::{
 
 use ragu_circuits::{
     Circuit, WithAux,
+    paging::Planned,
     polynomials::{Rank, sparse},
     registry::{Registry, RegistryBuilder},
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
@@ -496,6 +501,47 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         ))
     }
 
+    /// The native extension's circuits that the profile proves in pages
+    /// (see [`ragu_circuits::paging`]): each cut into the pages the profile
+    /// pins for it and held to the unpaged circuit
+    /// ([`paging::ExtensionPages`]). A registry build asks for them once,
+    /// before it registers a circuit, and then registers each page at the
+    /// extension circuit the profile declares for it, in place of
+    /// [`register_native_circuit`](Self::register_native_circuit). The
+    /// extension declares each page as a circuit that loads the unpaged
+    /// circuit's stages and then its carry stage, and the carry stage's
+    /// final mask over the pages.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a circuit does not cut into the pages pinned, or if its
+    /// pages are not the unpaged circuit's. The default pages nothing.
+    fn native_extension_pages<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+        params: &'params Base::Params,
+    ) -> Result<Vec<paging::ExtensionPages<'params, Base::CircuitField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        let _ = params;
+        Ok(Vec::new())
+    }
+
+    /// The nested counterpart of
+    /// [`native_extension_pages`](Self::native_extension_pages).
+    ///
+    /// # Errors
+    ///
+    /// As [`native_extension_pages`](Self::native_extension_pages).
+    fn nested_extension_pages<'params, Base, R: Rank>(
+        params: &'params Base::Params,
+    ) -> Result<Vec<paging::ExtensionPages<'params, Base::ScalarField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        let _ = params;
+        Ok(Vec::new())
+    }
+
     /// The native extension's polynomials for one proof: each circuit's,
     /// assembled against `registry` at the circuit's index in the layout,
     /// then each stage's, with an alpha from `rng`, over `source`, the proof
@@ -644,6 +690,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// field's pre-w polynomial commitment coordinates. The protocol supplies
     /// the helper trace and online stage polynomials separately.
     ///
+    /// `pages` are the pages of the extension's paged circuits, as the
+    /// registry build cut them, in the order
+    /// [`native_extension_pages`](Self::native_extension_pages) gave them: a
+    /// prover that traces the pages by them cuts nothing again.
+    ///
     /// # Errors
     ///
     /// The default delegates to [`Self::native_extension_rxs`].
@@ -655,6 +706,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online: Option<
             &online::circuit::Witness<'_, Base::CircuitField, Self, online::stages::Native>,
         >,
+        pages: &[Planned<Base::CircuitField>],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
     where
@@ -663,7 +715,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = online;
+        let _ = (online, pages);
         Self::native_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(
             context,
             source,
@@ -759,6 +811,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// field's pre-w polynomial commitment coordinates. The protocol supplies
     /// the helper trace and online stage polynomials separately.
     ///
+    /// `pages` are the pages of the extension's paged circuits, as in
+    /// [`native_extension_rxs_with_online`](Self::native_extension_rxs_with_online).
+    ///
     /// # Errors
     ///
     /// The default delegates to [`Self::nested_extension_rxs`].
@@ -772,6 +827,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
             &online::circuit::Witness<'_, Base::ScalarField, Self, online::stages::Nested>,
         >,
         native_online_commitments: &[Base::HostCurve],
+        pages: &[Planned<Base::ScalarField>],
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
     where
@@ -780,7 +836,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (online, native_online_commitments);
+        let _ = (online, native_online_commitments, pages);
         Self::nested_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(
             context,
             source,

@@ -738,7 +738,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
             &Side {
                 name: "native",
                 placements: &placements,
-                plans: &plans(&app.native_plans.0),
+                plans: &plans(&app.native_plans.fuse),
                 claims: &labels.0,
                 circuit: native_circuit,
                 mask: native::InternalCircuitIndex::ExtensionMask,
@@ -777,7 +777,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
             &Side {
                 name: "nested",
                 placements: &placements,
-                plans: &plans(&app.nested_plans.0),
+                plans: &plans(&app.nested_plans.fuse),
                 claims: &labels.0,
                 circuit: nested_circuit,
                 mask: nested::InternalCircuitIndex::ExtensionMask,
@@ -860,7 +860,7 @@ fn aggregator_claims_bind_pages_and_carries<const H: usize>() -> Result<()> {
             &Side {
                 name: "aggregator native",
                 placements: &placements,
-                plans: &plans(&native_plans.0),
+                plans: &plans(&native_plans.fuse),
                 claims: &labels.0,
                 circuit: native_circuit,
                 mask: native::InternalCircuitIndex::ExtensionMask,
@@ -918,7 +918,7 @@ fn aggregator_claims_bind_pages_and_carries<const H: usize>() -> Result<()> {
             &Side {
                 name: "aggregator nested",
                 placements: &placements,
-                plans: &plans(&nested_plans.0),
+                plans: &plans(&nested_plans.fuse),
                 claims: &labels.0,
                 circuit: nested_circuit,
                 mask: nested::InternalCircuitIndex::ExtensionMask,
