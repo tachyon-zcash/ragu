@@ -93,6 +93,40 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Target: Stage<D::F, R>>
             _marker: PhantomData,
         }
     }
+
+    /// Reserves the gates of `Through` and of every stage before it, as
+    /// [`skip_stage`](Self::skip_stage) does for each in turn, and returns
+    /// the wires of those gates: the $a$ wire then the $d$ wire of each,
+    /// from the first gate after the SYSTEM gate.
+    ///
+    /// This is for a circuit that reads the stages of a chain by gate
+    /// rather than as each stage's gadget, as a [page](crate::paging) of a
+    /// circuit over that chain does. No stage is loaded, so no stage's
+    /// output contract is emitted.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from allocating the gates.
+    pub fn reserve_through<Through: Stage<D::F, R>>(
+        self,
+    ) -> Result<(Vec<D::Wire>, StageBuilder<'a, 'dr, D, R, Through, Target>)> {
+        // Every stage takes whole gates, two wires each, so one allocator
+        // over the chain's gates allocates what one per stage does.
+        let gates = Through::skip_gates() + Through::num_gates() - 1;
+        let allocator = &mut Standard::new();
+        let mut wires = Vec::with_capacity(2 * gates);
+        for _ in 0..2 * gates {
+            wires.push(allocator.alloc(self.driver, || Ok(Coeff::Zero))?);
+        }
+        Ok((
+            wires,
+            StageBuilder {
+                driver: self.driver,
+                on_finish: self.on_finish,
+                _marker: PhantomData,
+            },
+        ))
+    }
 }
 
 /// Injects pre-allocated stage wires into a gadget, without enforcing
@@ -299,5 +333,150 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Finished: Stage<D::F, R>>
     pub fn finish(self) -> &'a mut D {
         (self.on_finish)(self.driver);
         self.driver
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_core::{
+        Result,
+        drivers::{Driver, DriverValue},
+        gadgets::{Bound, Kind},
+        maybe::Maybe,
+        pasta::Fp,
+    };
+    use ragu_primitives::{
+        Element,
+        allocator::Standard,
+        vec::{ConstLen, FixedVec},
+    };
+
+    use super::StageBuilder;
+    use crate::{
+        WithAux, floor_planner, into_wiring_object,
+        polynomials::TestRank,
+        staging::{MultiStage, MultiStageCircuit, Stage},
+    };
+
+    type R = TestRank;
+
+    /// Four values: two whole gates.
+    #[derive(Default)]
+    struct First;
+
+    impl Stage<Fp, R> for First {
+        type Parent = ();
+        type Witness<'source> = [Fp; 4];
+        type OutputKind = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<4>>];
+
+        fn values() -> usize {
+            4
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, [Fp; 4]>,
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
+        where
+            Self: 'dr,
+        {
+            FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
+            })
+        }
+    }
+
+    /// Three values after [`First`]: two gates, the second half filled.
+    #[derive(Default)]
+    struct Second;
+
+    impl Stage<Fp, R> for Second {
+        type Parent = First;
+        type Witness<'source> = [Fp; 3];
+        type OutputKind = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<3>>];
+
+        fn values() -> usize {
+            3
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, [Fp; 3]>,
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
+        where
+            Self: 'dr,
+        {
+            FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
+            })
+        }
+    }
+
+    /// The product of a value of each stage, with the stages loaded as
+    /// gadgets or their gates reserved and read by wire.
+    struct Product {
+        reserved: bool,
+    }
+
+    impl MultiStageCircuit<Fp, R> for Product {
+        type Last = Second;
+        type Instance<'source> = Fp;
+        type Witness<'source> = ([Fp; 4], [Fp; 3]);
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            instance: DriverValue<D, Fp>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, &mut Standard::new(), instance)
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+            witness: DriverValue<D, ([Fp; 4], [Fp; 3])>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>>
+        where
+            Self: 'dr,
+        {
+            let first = witness.as_ref().map(|witness| witness.0);
+            let second = witness.as_ref().map(|witness| witness.1);
+            let (dr, left, right) = if self.reserved {
+                let (wires, builder) = builder.reserve_through::<Second>()?;
+                let dr = builder.finish();
+                // The second value of the first stage is the $d$ wire of
+                // gate 1, and the third of the second the $a$ wire of
+                // gate 4.
+                (
+                    dr,
+                    Element::promote(wires[1].clone(), first.map(|values| values[1])),
+                    Element::promote(wires[6].clone(), second.map(|values| values[2])),
+                )
+            } else {
+                let (first_stage, builder) = builder.add_stage::<First>()?;
+                let (second_stage, builder) = builder.add_stage::<Second>()?;
+                let dr = builder.finish();
+                let first = first_stage.unenforced(dr, first)?;
+                let second = second_stage.unenforced(dr, second)?;
+                (dr, first[1].clone(), second[2].clone())
+            };
+            let product = left.mul(dr, &right)?;
+            Ok(WithAux::new(product, D::unit()))
+        }
+    }
+
+    #[test]
+    fn reserving_a_chain_is_loading_each_of_its_stages() -> Result<()> {
+        let registered = |reserved: bool| -> Result<_> {
+            let object = into_wiring_object::<Fp, _, R>(MultiStage::new(Product { reserved }))?;
+            let plan = floor_planner::floor_plan(object.segment_records());
+            Ok(object.monomials(&plan))
+        };
+        assert_eq!(registered(true)?, registered(false)?);
+        Ok(())
     }
 }
