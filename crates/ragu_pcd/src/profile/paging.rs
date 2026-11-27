@@ -54,9 +54,12 @@
 //! A change to the pager that moves a cut is therefore a change to the
 //! registered circuits, and a proof made before it no longer verifies.
 //!
-//! A profile that pages nothing goes through this module too: the
-//! [`Registrar`] registers its circuits whole and the [`Prover`] traces
-//! them whole.
+//! A profile that pages nothing never reaches this module: the fuse calls
+//! the profile's [`register_internal`](Profile::register_internal) and
+//! [`prove_internal`](Profile::prove_internal), whose defaults register and
+//! trace a circuit whole. A profile that pages takes the pager's versions
+//! with [`paged_internal_circuits!`](crate::paged_internal_circuits), so
+//! that only such a profile compiles its circuits for the pager's drivers.
 
 use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
 use core::ops::Range;
@@ -77,6 +80,71 @@ use super::{
     Extension, ExtensionRxs, PageCount, PageCounts, Profile, Registration, Suffixed, online,
 };
 use crate::internal::{native, nested};
+
+/// What the hooks' signatures name, for
+/// [`paged_internal_circuits!`](crate::paged_internal_circuits).
+#[doc(hidden)]
+pub mod deps {
+    pub use ragu_circuits::{
+        paging::Pageable,
+        polynomials::{Rank, sparse::Polynomial},
+        registry::{CircuitIndex, Registry, RegistryBuilder},
+        staging::MultiStage,
+    };
+    pub use ragu_core::Result;
+    pub use rand::CryptoRng;
+    pub use udon::field::Field;
+}
+
+/// The pager's versions of a profile's
+/// [`register_internal`](crate::profile::Profile::register_internal) and
+/// [`prove_internal`](crate::profile::Profile::prove_internal), for the
+/// `impl` of a profile whose
+/// [`PAGE_COUNTS`](crate::profile::Profile::PAGE_COUNTS) cuts a circuit.
+#[macro_export]
+macro_rules! paged_internal_circuits {
+    () => {
+        fn register_internal<'params, F, R, S>(
+            pages: &mut $crate::profile::paging::Registrar<'params, F, R>,
+            registry: $crate::profile::paging::deps::RegistryBuilder<'params, F, R>,
+            which: $crate::profile::paging::Circuit,
+            circuit: $crate::profile::paging::deps::MultiStage<F, R, S>,
+        ) -> $crate::profile::paging::deps::Result<
+            $crate::profile::paging::deps::RegistryBuilder<'params, F, R>,
+        >
+        where
+            F: $crate::profile::paging::deps::Field,
+            R: $crate::profile::paging::deps::Rank,
+            S: $crate::profile::paging::deps::Pageable<F, R>,
+            $crate::profile::paging::deps::MultiStage<F, R, S>: 'params,
+        {
+            pages.circuit(registry, which, circuit)
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn prove_internal<'source, F, R, S, RNG>(
+            pages: &mut $crate::profile::paging::Prover<F, R>,
+            which: $crate::profile::paging::Circuit,
+            circuit: $crate::profile::paging::deps::MultiStage<F, R, S>,
+            registry: &$crate::profile::paging::deps::Registry<'_, F, R>,
+            own: $crate::profile::paging::deps::CircuitIndex,
+            extension: impl Fn(u32) -> $crate::profile::paging::deps::CircuitIndex,
+            witness: impl Fn() -> S::Witness<'source>,
+            rng: &mut RNG,
+        ) -> $crate::profile::paging::deps::Result<(
+            $crate::profile::paging::deps::Polynomial<F, R>,
+            S::Aux<'source>,
+        )>
+        where
+            F: $crate::profile::paging::deps::Field,
+            R: $crate::profile::paging::deps::Rank,
+            S: $crate::profile::paging::deps::Pageable<F, R>,
+            RNG: $crate::profile::paging::deps::CryptoRng,
+        {
+            pages.prove(which, circuit, registry, own, extension, witness, rng)
+        }
+    };
+}
 
 /// The values the carry stage of each of the fuse's internal circuits
 /// holds under profile `P`: what the circuit's [`PageCount`] states. Each
@@ -128,28 +196,14 @@ pub mod carry {
     }
 }
 
-/// One of the fuse's internal circuits, with what its profile pins for it
-/// as a constant of the circuit's type.
-///
-/// Whether a circuit is paged is then known where the circuit is compiled:
-/// a profile that does not page a circuit compiles nothing of the pager
-/// for it.
-pub trait Pinned<F: Field, R: Rank>: Pageable<F, R> {
-    /// What the circuit's profile pins for it.
-    const COUNT: PageCount;
-
-    /// Whether the profile cuts the circuit into more than one page.
-    const PAGED: bool = Self::COUNT.num_pages() > 1;
-}
-
 mod pageable {
     use ragu_circuits::{paging::Pageable, polynomials::Rank};
     use udon::curve::EndomorphismAffine as Affine;
 
-    use super::{Pinned, carry};
+    use super::carry;
     use crate::{
         internal::{native::circuits, nested, revdot},
-        profile::{PageCount, Profile, ProfiledCycle},
+        profile::{Profile, ProfiledCycle},
     };
 
     impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
@@ -159,21 +213,9 @@ mod pageable {
     }
 
     impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
-        Pinned<C::CircuitField, R> for circuits::hashes_1::Circuit<'_, C, R, HEADER_SIZE, FP>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.hashes_1;
-    }
-
-    impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
         Pageable<C::CircuitField, R> for circuits::hashes_2::Circuit<'_, C, R, HEADER_SIZE, FP>
     {
         type Carry = carry::Hashes2<C::Profile>;
-    }
-
-    impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
-        Pinned<C::CircuitField, R> for circuits::hashes_2::Circuit<'_, C, R, HEADER_SIZE, FP>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.hashes_2;
     }
 
     impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
@@ -182,22 +224,10 @@ mod pageable {
         type Carry = carry::Collapse<C::Profile>;
     }
 
-    impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: revdot::Parameters>
-        Pinned<C::CircuitField, R> for circuits::collapse::Circuit<C, R, HEADER_SIZE, FP>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.collapse;
-    }
-
     impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Pageable<C::CircuitField, R>
         for circuits::compute_v::Circuit<C, R, HEADER_SIZE>
     {
         type Carry = carry::ComputeV<C::Profile>;
-    }
-
-    impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Pinned<C::CircuitField, R>
-        for circuits::compute_v::Circuit<C, R, HEADER_SIZE>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.compute_v;
     }
 
     impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
@@ -207,23 +237,10 @@ mod pageable {
         type Carry = carry::BindChallenges<C::Profile>;
     }
 
-    impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
-        Pinned<C::CircuitField, R>
-        for circuits::bind_challenges::Circuit<'_, C, R, HEADER_SIZE, K>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.bind_challenges;
-    }
-
     impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Pageable<C::CircuitField, R>
         for circuits::bind_beta::Circuit<'_, C, R, HEADER_SIZE>
     {
         type Carry = carry::BindBeta<C::Profile>;
-    }
-
-    impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Pinned<C::CircuitField, R>
-        for circuits::bind_beta::Circuit<'_, C, R, HEADER_SIZE>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.bind_beta;
     }
 
     impl<C: ProfiledCycle, R: Rank> Pageable<C::CircuitField, R>
@@ -232,22 +249,10 @@ mod pageable {
         type Carry = carry::BindEndoscalar<C::Profile>;
     }
 
-    impl<C: ProfiledCycle, R: Rank> Pinned<C::CircuitField, R>
-        for circuits::bind_endoscalar::Circuit<C, R>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.bind_endoscalar;
-    }
-
     impl<C: ProfiledCycle, R: Rank> Pageable<C::CircuitField, R>
         for circuits::endoscaling_step::Circuit<C, R>
     {
         type Carry = carry::EndoscalingStep<C::Profile>;
-    }
-
-    impl<C: ProfiledCycle, R: Rank> Pinned<C::CircuitField, R>
-        for circuits::endoscaling_step::Circuit<C, R>
-    {
-        const COUNT: PageCount = <C::Profile as Profile>::PAGE_COUNTS.endoscaling_step;
     }
 
     impl<C: Affine, R: Rank, P: Profile> Pageable<C::Base, R>
@@ -256,30 +261,14 @@ mod pageable {
         type Carry = carry::NestedCollapse<P>;
     }
 
-    impl<C: Affine, R: Rank, P: Profile> Pinned<C::Base, R>
-        for nested::circuits::collapse::Circuit<C, R, P>
-    {
-        const COUNT: PageCount = <P as Profile>::PAGE_COUNTS.nested_collapse;
-    }
-
     impl<C: Affine, R: Rank, P: Profile> Pageable<C::Base, R>
         for nested::circuits::compute_v::Circuit<C, R, P>
     {
         type Carry = carry::NestedComputeV<P>;
     }
 
-    impl<C: Affine, R: Rank, P: Profile> Pinned<C::Base, R>
-        for nested::circuits::compute_v::Circuit<C, R, P>
-    {
-        const COUNT: PageCount = <P as Profile>::PAGE_COUNTS.nested_compute_v;
-    }
-
     impl<C: Affine, R: Rank, P: Profile> Pageable<C::Base, R> for nested::EndoscalingStep<C, R, P> {
         type Carry = carry::NestedEndoscalingStep<P>;
-    }
-
-    impl<C: Affine, R: Rank, P: Profile> Pinned<C::Base, R> for nested::EndoscalingStep<C, R, P> {
-        const COUNT: PageCount = <P as Profile>::PAGE_COUNTS.nested_endoscaling_step;
     }
 }
 
@@ -527,41 +516,6 @@ fn split_within<F: Field, R: Rank, S: Pageable<F, R>>(
     }
 }
 
-/// Cuts `circuits`, which their profile pages, at once
-/// ([`Registrar::warm`]).
-fn warm<F: Field, R: Rank, S>(circuits: Vec<(Circuit, MultiStage<F, R, S>)>)
-where
-    S: Pinned<F, R>,
-    MultiStage<F, R, S>: Send,
-{
-    use maybe_rayon::prelude::*;
-
-    if !cfg!(feature = "std") {
-        return;
-    }
-    circuits.into_par_iter().for_each(|(which, circuit)| {
-        let _ = split(which, circuit, S::COUNT);
-    });
-}
-
-/// Where paged circuit `which` is among `placements`, held to the count
-/// the type of the circuit pins.
-fn placed<F: Field, R: Rank, S: Pinned<F, R>>(
-    placements: &[Placement],
-    which: Circuit,
-) -> Result<usize> {
-    match placements
-        .iter()
-        .position(|placement| placement.circuit == which)
-    {
-        Some(position) if placements[position].count == S::COUNT => Ok(position),
-        _ => refuse(
-            which,
-            "is not the circuit its profile pins the pages of".into(),
-        ),
-    }
-}
-
 type Register<'params, F, R> = Box<
     dyn FnOnce(RegistryBuilder<'params, F, R>) -> Result<RegistryBuilder<'params, F, R>> + 'params,
 >;
@@ -640,18 +594,30 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
     /// refused where it is registered.
     pub(crate) fn warm<S>(&self, circuits: Vec<(Circuit, MultiStage<F, R, S>)>)
     where
-        S: Pinned<F, R>,
+        S: Pageable<F, R>,
         MultiStage<F, R, S>: Send,
     {
-        if const { S::PAGED } {
-            warm::<F, R, S>(circuits);
+        use maybe_rayon::prelude::*;
+
+        if !cfg!(feature = "std") {
+            return;
         }
+        let counts: Vec<_> = circuits
+            .into_iter()
+            .filter_map(|(which, circuit)| {
+                let count = self.placements[self.position(which)?].count;
+                Some((which, circuit, count))
+            })
+            .collect();
+        counts.into_par_iter().for_each(|(which, circuit, count)| {
+            let _ = split(which, circuit, count);
+        });
     }
 
-    /// Where paged circuit `which` is placed, held to the count its type
-    /// pins.
-    fn placed<S: Pinned<F, R>>(&self, which: Circuit) -> Result<usize> {
-        placed::<F, R, S>(&self.placements, which)
+    fn position(&self, which: Circuit) -> Option<usize> {
+        self.placements
+            .iter()
+            .position(|placement| placement.circuit == which)
     }
 
     /// Registers internal circuit `which`: whole, or its last page.
@@ -667,30 +633,12 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         circuit: MultiStage<F, R, S>,
     ) -> Result<RegistryBuilder<'params, F, R>>
     where
-        S: Pinned<F, R>,
+        S: Pageable<F, R>,
         MultiStage<F, R, S>: 'params,
     {
-        // The paged branch is compiled only for a circuit its profile
-        // pages.
-        if const { S::PAGED } {
-            self.paged(registry, which, circuit)
-        } else {
-            registry.register_internal_circuit(circuit)
-        }
-    }
-
-    /// Registers paged circuit `which`: its last page, and keeps the others.
-    fn paged<S>(
-        &mut self,
-        registry: RegistryBuilder<'params, F, R>,
-        which: Circuit,
-        circuit: MultiStage<F, R, S>,
-    ) -> Result<RegistryBuilder<'params, F, R>>
-    where
-        S: Pinned<F, R>,
-        MultiStage<F, R, S>: 'params,
-    {
-        let position = self.placed::<S>(which)?;
+        let Some(position) = self.position(which) else {
+            return registry.register_internal_circuit(circuit);
+        };
         let placement = &self.placements[position];
         let paged = split(which, circuit, placement.count)?;
         // The pages are held to the circuit they were cut from before any
@@ -724,7 +672,12 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         let which = self.placements[position].circuit;
         match self.pending[position].as_mut() {
             Some(pending) => Ok(pending),
-            None => refuse(which, "has a page registered before the circuit is".into()),
+            None => refuse(
+                which,
+                "declares pages the profile does not register: it takes the pager's hooks with \
+                 `paged_internal_circuits!`"
+                    .into(),
+            ),
         }
     }
 
@@ -854,37 +807,17 @@ impl<F: Field, R: Rank> Prover<F, R> {
         rng: &mut RNG,
     ) -> Result<(sparse::Polynomial<F, R>, S::Aux<'source>)>
     where
-        S: Pinned<F, R>,
+        S: Pageable<F, R>,
         RNG: CryptoRng,
     {
-        // The paged branch is compiled only for a circuit its profile
-        // pages.
-        if const { S::PAGED } {
-            self.paged(which, circuit, registry, own, extension, witness, rng)
-        } else {
+        let Some(position) = self
+            .placements
+            .iter()
+            .position(|placement| placement.circuit == which)
+        else {
             let (trace, aux) = circuit.trace(witness())?.into_parts();
-            Ok((registry.assemble(&trace, own, rng)?, aux))
-        }
-    }
-
-    /// Traces paged circuit `which`: each page, and the carry stage's
-    /// values.
-    #[allow(clippy::too_many_arguments)]
-    fn paged<'source, S, RNG>(
-        &mut self,
-        which: Circuit,
-        circuit: MultiStage<F, R, S>,
-        registry: &Registry<'_, F, R>,
-        own: CircuitIndex,
-        extension: impl Fn(u32) -> CircuitIndex,
-        witness: impl Fn() -> S::Witness<'source>,
-        rng: &mut RNG,
-    ) -> Result<(sparse::Polynomial<F, R>, S::Aux<'source>)>
-    where
-        S: Pinned<F, R>,
-        RNG: CryptoRng,
-    {
-        let position = placed::<F, R, S>(&self.placements, which)?;
+            return Ok((registry.assemble(&trace, own, &mut *rng)?, aux));
+        };
         let placement = &self.placements[position];
         let paged = match self.plans.0.get(position) {
             Some(Some(planned)) => Pages::planned(circuit, planned),

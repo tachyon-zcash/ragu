@@ -90,6 +90,8 @@ impl Profile for AllPaged {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
+
+    crate::paged_internal_circuits!();
 }
 
 /// A wire of a gate that holds a value of a stage.
