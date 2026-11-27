@@ -38,7 +38,7 @@ def workload(config, seconds=1.0):
         wallet = profile == "wallet"
         rows.append({
             "kind": "shape", "profile": profile, "label": label,
-            "rank": 13 if wallet else 15, "polynomials": 92 if wallet else 152,
+            "rank": 14, "polynomials": 92 if wallet else 152,
             "points": 157 if wallet else 225, "scalars": 69,
             "compressed_bytes": 7264 if wallet else 9440,
             "ordinary_bytes": 24120832 if wallet else 159389056,
@@ -93,6 +93,13 @@ class EvidenceTests(unittest.TestCase):
             rows = workload(self.config)
             rows[-2][key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
+                self.validate(rows)
+
+    def test_rejects_invalid_proof_ranks(self):
+        for rank in [0, 33, 14.0, True, "14"]:
+            rows = workload(self.config)
+            next(row for row in rows if row["kind"] == "shape")["rank"] = rank
+            with self.subTest(rank=rank), self.assertRaises(ValueError):
                 self.validate(rows)
 
     def test_identities_bind_proofs_shapes_and_rng_but_not_timing(self):
@@ -187,13 +194,14 @@ class CampaignTests(unittest.TestCase):
         }
         self.invocations = []
         self.change_rng = False
+        self.baseline_rank = None
         self.write_campaign_files()
 
-    def write_campaign_files(self):
+    def write_campaign_files(self, contents=lambda config: config["revision"].encode()):
         bench.write_json(self.out / "manifest.json", self.manifest)
         for config in self.cases:
             binary = self.out / "bin" / ("workflow-" + config["id"])
-            binary.write_bytes(b"synthetic executable")
+            binary.write_bytes(contents(config))
             bench.write_json(self.out / "bin" / (config["id"] + ".json"),
                              {"case": config, "sha256": bench.sha256(binary)})
 
@@ -207,6 +215,10 @@ class CampaignTests(unittest.TestCase):
         rows = workload(config, seconds)
         if self.change_rng and config["role"] == "candidate":
             next(row for row in rows if row["kind"] == "rng")["value"] += 1
+        if self.baseline_rank and config["role"] == "baseline":
+            for row in rows:
+                if row["kind"] == "shape":
+                    row["rank"] = self.baseline_rank
         raw = out / "raw"
         write_records(raw / (name + ".jsonl"), rows)
         (raw / (name + ".stderr")).write_text("")
@@ -249,8 +261,10 @@ class CampaignTests(unittest.TestCase):
         report = (self.out / "report.md").read_text()
         # One table per profile, each mode with both medians and the speedup;
         # a campaign that names no labels uses the defaults.
-        for title in bench.PROFILES.values():
+        # Each title takes its profile's rank from the proofs.
+        for title in ["Standard profile (wallet, R14)", "Aggregator profile (R14)"]:
             self.assertIn("### " + title, report)
+        self.assertIn("| Field | Standard profile (wallet, R14) | Aggregator profile (R14) |", report)
         self.assertIn("Each cell: main → optimized median time (change in time, speedup).", report)
         self.assertIn("| Operation | single | 12 workers |", report)
         self.assertIn("| Seed one leaf | 5.000 → 4.000 s (-20%, 1.25×) "
@@ -283,6 +297,65 @@ class CampaignTests(unittest.TestCase):
         self.assertNotIn("## ASM feature disabled", report)
         self.assertIn("The candidate was built without the ASM feature.", report)
         self.assertEqual(report.count("| Fuse two children | 4.500 → 3.500 s"), 2)
+
+    def test_each_revision_builds_in_its_own_target_directory(self):
+        class Built(Exception):
+            pass
+
+        (self.out / "build-logs").mkdir()
+        self.manifest.update(offline=True, jobs=2)
+        targets = {}
+        for config in self.cases[:2]:
+            (self.out / "bin" / (config["id"] + ".json")).unlink()
+            with patch.object(bench.subprocess, "run", side_effect=Built) as cargo, \
+                    redirect_stdout(io.StringIO()), self.assertRaises(Built):
+                bench.build(self.out, self.manifest, config)
+            command = cargo.call_args.args[0]
+            targets[config["revision"]] = Path(command[command.index("--target-dir") + 1])
+        self.assertEqual(targets, {"a" * 40: self.out / "build" / ("a" * 40),
+                                   "b" * 40: self.out / "build" / ("b" * 40)})
+
+    def test_revisions_sharing_an_executable_stop_before_measuring(self):
+        self.write_campaign_files(lambda config: b"one executable")
+        with self.assertRaisesRegex(ValueError, "Different revisions built the same executable"):
+            self.run_campaign()
+        self.assertEqual(self.invocations, [])
+        # A revision measured against itself shares its executables.
+        for config in self.cases:
+            config["revision"] = "a" * 40
+        self.write_campaign_files(lambda config: b"one executable")
+        self.run_campaign()
+        self.assertTrue((self.out / "report.md").exists())
+
+    def test_default_baseline_at_other_ranks_leaves_the_candidate_alone(self):
+        self.baseline_rank = 15
+        self.manifest.update(baseline_default=True, baseline_ref="merge base with origin/main")
+        self.write_campaign_files()
+        self.run_campaign()
+        manifest = bench.read_json(self.out / "manifest.json")
+        self.assertEqual([c["id"] for c in manifest["cases"]],
+                         ["candidate-asm-off-single", "candidate-asm-off-multi"])
+        # The baseline ran once, as its first warmup, to report its ranks.
+        self.assertEqual([name for name in self.invocations if "baseline" in name],
+                         ["warmup-000-baseline-asm-off-single"])
+        report = (self.out / "report.md").read_text()
+        self.assertIn("Measured alone: the default baseline (merge base with origin/main) "
+                      "proves at wallet R15, aggregator R15, the candidate at wallet R14, "
+                      "aggregator R14, so no proof can match.", report)
+        self.assertIn("| Operation | optimized single | optimized 12 workers |", report)
+        self.assertNotIn("Baseline revision", report)
+
+    def test_baseline_mismatches_stop_campaign_unless_main_proves_at_other_ranks(self):
+        # A baseline that was asked for must match, whatever its ranks; so
+        # must main at the candidate's ranks.
+        for default, rank, rng in [(False, 15, False), (True, None, True)]:
+            with self.subTest(default=default):
+                self.setUp()
+                self.baseline_rank, self.change_rng = rank, rng
+                self.manifest.update(baseline_default=default, baseline_ref="main")
+                self.write_campaign_files()
+                with self.assertRaisesRegex(ValueError, "Proof, shape, or RNG mismatch"):
+                    self.run_campaign()
 
     def test_proof_rng_mismatch_stops_campaign_without_publishing_results(self):
         self.change_rng = True
@@ -412,6 +485,10 @@ class SourceTests(unittest.TestCase):
             manifest, cases = baselines("output-main", base=None)
             self.assertEqual({revision for _, revision in cases}, {baseline})
             self.assertEqual(manifest["baseline_ref"], "merge base with main")
+            self.assertTrue(manifest["baseline_default"])
+            manifest, _ = baselines("output-explicit", base=baseline)
+            self.assertFalse(manifest["baseline_default"])
+            args.base = None
             # --no-base, or a candidate on main, measures the candidate alone.
             _, cases = baselines("output-alone", no_base=True)
             self.assertEqual(cases, [])

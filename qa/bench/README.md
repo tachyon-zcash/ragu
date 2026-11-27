@@ -1,6 +1,6 @@
 # Wallet and aggregator benchmarks
 
-This suite measures the wallet at rank 13 and the aggregator at rank 15 with
+This suite measures the wallet and the aggregator, both at rank 14, with
 AcceleratedBackend. It uses the WitnessLeaf and Hash2 test circuits, header size
 4, inputs 42 and 7, and StdRng seed 0. The workload is the one used for the
 optimized/decompression measurements.
@@ -27,7 +27,8 @@ so every option below works with either command.
 
 This measures the checkout's HEAD against main: HEAD's merge base with
 origin/main, or with a local main when there is no origin/main. Run on main
-itself, or with --no-base, it measures HEAD alone. For each revision it builds
+itself, or with --no-base, it measures HEAD alone, as it does when main proves
+at other ranks than HEAD, since no proofs can match. For each revision it builds
 two executables with the default ASM feature: a true single-thread build and a
 multicore build using 12 Rayon workers. Single-thread builds omit the
 multicore feature; they are not Rayon builds limited to one worker. ASM selects

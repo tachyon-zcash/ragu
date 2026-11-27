@@ -49,7 +49,8 @@ OPERATIONS = [
     ("Compress", "compress", None),
     ("Verify compressed", "verify_compressed", None),
 ]
-PROFILES = {"wallet": "Standard profile (wallet, R13)", "aggregator": "Aggregator profile (R15)"}
+# Table titles; each takes the rank its proofs report.
+PROFILES = {"wallet": "Standard profile (wallet, R{rank})", "aggregator": "Aggregator profile (R{rank})"}
 # Column labels for the two roles, unless a campaign names its own.
 LABELS = {"baseline": "main", "candidate": "optimized"}
 
@@ -271,8 +272,8 @@ def records(path, case=None):
     require(Counter((row["profile"], row["label"]) for row in shapes) == Counter(SHAPES),
             f"Missing or duplicate compressed proof: {path}")
     for row in shapes:
-        require(row["rank"] == (13 if row["profile"] == "wallet" else 15),
-                f"Unexpected proof rank: {path}")
+        require(type(row["rank"]) is int and 1 <= row["rank"] <= 32,
+                f"Invalid proof rank: {path}")
         require(row["compressed_bytes"] == 32 * (1 + row["points"] + row["scalars"])
                 and row["polynomials"] > 0 and row["ordinary_bytes"] > 0,
                 f"Inconsistent proof shape: {path}")
@@ -389,6 +390,7 @@ def initialize(args):
         "environment": environment(channel), "supplied_reference": reference,
         "labels": {"baseline": args.base_label, "candidate": args.label},
         "baseline_ref": baseline_ref,
+        "baseline_default": baseline is not None and args.base is None,
         "commitment_tables": args.commitment_tables,
     }
     write_json(out / "manifest.json", manifest)
@@ -405,10 +407,16 @@ def build(out, manifest, case):
                 and saved["sha256"] == sha256(executable), f"Changed build artifact: {case['id']}")
         return
     source = out / "sources" / case["revision"]
+    # Each revision builds in its own target directory. Cargo fingerprints a
+    # workspace crate by its path within the workspace, and `git archive`
+    # dates every file at its commit, so in a shared directory the revision
+    # built second finds the first one's artifacts up to date and returns its
+    # executable.
+    target = out / "build" / case["revision"]
     base = ["cargo", "+" + manifest["toolchain"]]
     locked = ["--locked"] + (["--offline"] if manifest["offline"] else [])
     command = base + ["build", "--release", "-p", "ragu_pcd", "--bench", "workflow",
-                      "--target-dir", str(out / "build"), "--jobs", str(manifest["jobs"]),
+                      "--target-dir", str(target), "--jobs", str(manifest["jobs"]),
                       "--message-format=json-render-diagnostics"] + locked + feature_flags(case)
     attempt = len(list((out / "build-logs").glob(case["id"] + "-*.log")))
     log = out / "build-logs" / f"{case['id']}-{attempt}.log"
@@ -525,6 +533,32 @@ def run_one(out, manifest, case, phase, number):
     return saved
 
 
+def skip_baseline_at_other_ranks(out, manifest):
+    """Measure the candidate alone when main, the baseline chosen by default,
+    proves at other ranks: none of its proofs can match the candidate's. Each
+    role's first warmup decides, and the campaign keeps it as that warmup."""
+    ranks = {}
+    for case in manifest["cases"]:
+        if case["role"] not in ranks:
+            run_one(out, manifest, case, "warmup", 0)
+            _, identities = records(out / "raw" / f"warmup-000-{case['id']}.jsonl", case)
+            ranks[case["role"]] = {row["profile"]: row["rank"] for key, row in identities.items()
+                                   if key.startswith("shape:")}
+    if ranks["baseline"] == ranks["candidate"]:
+        return manifest
+
+    def at(role):
+        return ", ".join(f"{profile} R{ranks[role][profile]}" for profile in PROFILES)
+
+    note = (f"Measured alone: the default baseline ({manifest['baseline_ref']}) proves at "
+            f"{at('baseline')}, the candidate at {at('candidate')}, so no proof can match.")
+    manifest = dict(manifest, cases=[c for c in manifest["cases"] if c["role"] == "candidate"],
+                    baseline_skipped=note)
+    write_json(out / "manifest.json", manifest)
+    print(note, flush=True)
+    return manifest
+
+
 def round_interrupted(metadata):
     return any(row["slept"] is True or row.get("prior_interruption") for row in metadata)
 
@@ -565,6 +599,14 @@ def run(out, manifest, build_only=False):
                     "The frozen source tree changed.")
         for case in manifest["cases"]:
             build(out, manifest, case)
+        # A comparison between two revisions that share an executable would
+        # measure one of them twice.
+        revisions = defaultdict(set)
+        for case in manifest["cases"]:
+            built = read_json(out / "bin" / (case["id"] + ".json"))["sha256"]
+            revisions[built].add(case["revision"])
+        require(all(len(shared) == 1 for shared in revisions.values()),
+                "Different revisions built the same executable.")
         for sha, saved in manifest["sources"].items():
             require(tree_digest(out / "sources" / sha) == saved["source_sha256"],
                     "The build modified the frozen source tree.")
@@ -578,6 +620,9 @@ def run(out, manifest, build_only=False):
             reference_path = out / "reference.json"
             supplied = manifest["supplied_reference"]
             golden = read_json(reference_path) if reference_path.exists() else None
+            if (golden is None and manifest.get("baseline_default")
+                    and any(c["role"] == "baseline" for c in manifest["cases"])):
+                manifest = skip_baseline_at_other_ranks(out, manifest)
             selected, rejected = [], {}
             phases = [("warmup", count) for count in range(manifest["warmups"])]
             number = 0
@@ -681,6 +726,7 @@ def summarize(out):
     modes = [mode for mode in ["single", "multi"] if any(c["mode"] == mode for c in manifest["cases"])]
     roles = {c["role"] for c in manifest["cases"]}
     labels = manifest.get("labels", LABELS)
+    titles = {profile: title.format(rank=shapes[profile]["rank"]) for profile, title in PROFILES.items()}
     revision = next(c["revision"] for c in manifest["cases"] if c["role"] == "candidate")
     text = ["# Wallet and aggregator workflow", "",
             f"Candidate revision ({labels['candidate']}): {revision}.",
@@ -695,6 +741,8 @@ def summarize(out):
     if manifest.get("commitment_tables"):
         text += ["Commitment tables were requested for every revision; one that predates them, "
                  "such as main, builds none, and their preparation counts toward finalize.", ""]
+    if manifest.get("baseline_skipped"):
+        text += [manifest["baseline_skipped"], ""]
     if "baseline" in roles:
         baseline = next(c["revision"] for c in manifest["cases"] if c["role"] == "baseline")
         found = f", the {manifest['baseline_ref']}" if manifest.get("baseline_ref") else ""
@@ -724,7 +772,7 @@ def summarize(out):
             header = [mode(m) for m in modes]
         else:
             header = [f"{labels['candidate']} {mode(m)}" for m in modes]
-        for profile, title in PROFILES.items():
+        for profile, title in titles.items():
             text += ["### " + title, "", row("Operation", header), "|---|" + "---:|" * len(header)]
             for label, step, applies in OPERATIONS:
                 if applies not in {None, profile}:
@@ -740,8 +788,8 @@ def summarize(out):
                 text.append(row(label, cells))
             text.append("")
         # Every revision proves the same shapes, so they are listed once.
-        text += ["### Proof shape", "", row("Field", list(PROFILES.values())),
-                 "|---|" + "---:|" * len(PROFILES)]
+        text += ["### Proof shape", "", row("Field", list(titles.values())),
+                 "|---|" + "---:|" * len(titles)]
         for label, value in [
             ("Polynomial coefficient capacity", lambda s: f"{1 << s['rank']:,}"),
             ("Dense coefficient size per polynomial", lambda s: size((1 << s["rank"]) * 32)),
