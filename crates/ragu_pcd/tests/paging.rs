@@ -146,8 +146,7 @@ macro_rules! census {
                     let pages: Vec<String> = report
                         .pages
                         .iter()
-                        .enumerate()
-                        .map(|(index, page)| {
+                        .map(|page| {
                             let reads: Vec<usize> = sizing
                                 .stages
                                 .iter()
@@ -164,9 +163,9 @@ macro_rules! census {
                                 .collect();
                             format!(
                                 "[from={} own={}/{} cons={} in={} out={} reads={reads:?}]",
-                                layout.firsts[index],
+                                layout.window().start,
                                 page.gates,
-                                layout.room(index),
+                                layout.room(),
                                 page.constraints,
                                 page.imported_slots,
                                 page.exported_wires,

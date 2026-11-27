@@ -516,11 +516,7 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
         let layout = paged.layout();
         // One mask holds every page's own polynomial, the last page's
         // included, off the stages and off the carry stage.
-        let window = layout.window(0);
-        if (0..=slot.last()).any(|page| layout.window(page) != window) {
-            return refuse(which, "gives its pages other own gates".into());
-        }
-        let mask = Some((paged.own_mask::<R>(0)?, window));
+        let mask = Some((paged.own_mask::<R>()?, layout.window()));
         let pages = (0..slot.last())
             .map(|page| {
                 let page = paged.page(page);

@@ -16,14 +16,15 @@
 //! A page's polynomial holds, in gate order ([`Layout`]):
 //!
 //! ```text
-//! gate 0   | the circuit's stages      | the page's own gates | carry stage
-//! SYSTEM   | up to the page's first    | up to the carry      | same gates
-//!          | own gate                  | stage                | on every page
+//! gate 0   | the circuit's stages | the page's own gates | carry stage
+//! SYSTEM   | the same gates as    | up to the carry      | same gates
+//!          | in the circuit      | stage                | on every page
 //! ```
 //!
 //! The circuit's stages are polynomials of their own, each holding its
-//! values at fixed gates ([`Stages::spans`]). Every page loads every stage,
-//! and its own gates start past them. The *carry stage* is one more such
+//! values at fixed gates, one stage after another ([`Stages::spans`]).
+//! Every page loads every one of them, where the circuit has them, and its
+//! own gates start past the last. The *carry stage* is one more such
 //! polynomial, which paging adds and every page loads, at the same gates
 //! past every page's own.
 //!
@@ -31,13 +32,13 @@
 //!
 //! A constraint is *homed* on the last page it names a wire of. What it
 //! names on an earlier page is a linear combination of that page's wires:
-//! the page holds a slot of the carry stage equal to that combination, and
+//! that page holds a slot of the carry stage equal to the combination, and
 //! the home page reads the slot in its place. Every page loads the same
-//! carry polynomial, so the two agree. A constraint that names the wires
-//! of stages alone is homed on the page the circuit's gates had reached.
-//! A plan, made by walking the
-//! circuit once on a driver that follows every wire back to its gates,
-//! fixes each constraint's home and slots.
+//! carry polynomial, so the two agree. A stage's wires are on every page
+//! and are never carried, and a constraint that names the wires of stages
+//! alone is homed on the page the circuit's gates had reached. A plan,
+//! made by walking the circuit once on a driver that follows every wire
+//! back to its gates, fixes each constraint's home and slots.
 //!
 //! # Replaying
 //!
@@ -62,12 +63,12 @@
 //! - the carry polynomial is the same one in the sum of every page, and
 //!   is zero off its own wires ([`Paged::carry_mask`]);
 //! - a page's own polynomial is zero off the gates between the stages and
-//!   its carry stage ([`Paged::own_mask`]), which are apart from
-//!   both. A page may hold fewer gates than those: the rest are gates no
+//!   the carry stage ([`Paged::own_mask`]), which are apart from both. A
+//!   page may hold fewer gates than those: the rest are gates no
 //!   constraint of its names, as a circuit's are past its last;
 //! - the stages share no gate, and are those the circuit was cut over,
-//!   which [`Paged::check`] holds the plan to and the caller lays where the
-//!   stages' polynomials hold them;
+//!   which [`Paged::check`] holds the plan to and the caller lays where
+//!   the stages' polynomials hold them;
 //! - the plan carries every combination a constraint names off its home
 //!   page, which [`Paged::check`] holds against the unpaged circuit.
 //!
@@ -75,8 +76,8 @@
 //!
 //! A circuit is cut when it is registered, in every process that builds
 //! the registry: the cuts are not stored. They are a function of the
-//! circuit, of the stages its pages are told to load, of the gates a
-//! polynomial holds and of the planner. Each page is a registered circuit,
+//! circuit, of the number of its pages, of the gates a polynomial holds
+//! and of the planner. Each page is a registered circuit,
 //! so a change to the planner that moves a cut changes the registry as a
 //! change to the circuit would, and a proof made before it no longer
 //! verifies. [`Paged::check`] does not tell the two cuts apart: the pages
@@ -136,45 +137,41 @@ fn refuse<T>(what: String) -> Result<T> {
     Err(Error::Initialization(what.into()))
 }
 
-/// A circuit's stages, as its pages see them: every page loads every one.
+/// A circuit's stages, as its pages see them, and the pages it is cut
+/// into.
+///
+/// The circuit reserves its stages one after another from the SYSTEM gate,
+/// and every page loads every one of them at the same gates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stages {
     /// Each stage's gates in a polynomial, in the order the circuit
-    /// reserves the stages, one after another.
+    /// reserves the stages: each starts where the one before it ends.
     pub spans: Vec<Range<usize>>,
-    /// The pages.
-    pages: usize,
+    /// The pages the circuit is cut into.
+    pub pages: usize,
 }
 
 impl Stages {
-    /// One span over every gate before `own_start`, loaded by one page: a
+    /// One span over every gate before `own_start`, for one page: a
     /// circuit whose stages follow one another from the SYSTEM gate.
     pub fn whole(own_start: usize) -> Self {
         let spans: Vec<_> = Some(1..own_start)
             .filter(|span| !span.is_empty())
             .into_iter()
             .collect();
-        Self::over(spans)
-    }
-
-    /// A multi-stage circuit's stages, where their polynomials hold them,
-    /// loaded by one page.
-    pub fn of<F: Field, R: Rank, S: MultiStageCircuit<F, R>>() -> Self {
-        Self::over(<S::Last as Stage<F, R>>::gate_ranges())
-    }
-
-    /// Stages at `spans`, loaded by one page.
-    fn over(spans: Vec<Range<usize>>) -> Self {
         Stages { spans, pages: 1 }
     }
 
-    /// The gates of the circuit's own a page has room for before a carry
-    /// stage that starts at gate `carry`, if the stages end before that.
-    fn room(&self, carry: usize) -> Option<usize> {
-        carry.checked_sub(self.first())
+    /// A multi-stage circuit's stages, where their polynomials hold them,
+    /// for one page.
+    pub fn of<F: Field, R: Rank, S: MultiStageCircuit<F, R>>() -> Self {
+        Stages {
+            spans: <S::Last as Stage<F, R>>::gate_ranges(),
+            pages: 1,
+        }
     }
 
-    /// The same stages, over `pages` pages.
+    /// The same stages, for `pages` pages.
     pub fn pages(mut self, pages: usize) -> Self {
         self.pages = pages;
         self
@@ -185,61 +182,36 @@ impl Stages {
         self.pages
     }
 
-    /// The first gate of the circuit's own, counted over the whole circuit.
+    /// The first gate of the circuit's own, in the circuit's polynomial
+    /// and in every page's: past the SYSTEM gate and every stage's gates.
     pub fn own_start(&self) -> usize {
         1 + self.spans.iter().map(Range::len).sum::<usize>()
     }
 
-    /// The first gate of stage `stage`, counted over the whole circuit.
-    fn start(&self, stage: usize) -> usize {
-        1 + self.spans[..stage].iter().map(Range::len).sum::<usize>()
-    }
-
-    /// The stage of a gate counted over the whole circuit, and the gate's
-    /// place in it.
+    /// The stage of a gate, and the gate's place in it.
     fn stage_of(&self, gate: usize) -> Option<(usize, usize)> {
-        let mut start = 1;
-        for (stage, span) in self.spans.iter().enumerate() {
-            if gate < start {
-                return None;
-            }
-            if gate < start + span.len() {
-                return Some((stage, gate - start));
-            }
-            start += span.len();
-        }
-        None
-    }
-
-    /// The first gate of a page's polynomial that can hold a gate of the
-    /// circuit's own: past every stage.
-    pub fn first(&self) -> usize {
         self.spans
             .iter()
-            .map(|span| span.end)
-            .max()
-            .unwrap_or(1)
-            .max(1)
+            .enumerate()
+            .find(|(_, span)| span.contains(&gate))
+            .map(|(stage, span)| (stage, gate - span.start))
     }
 
-    /// Refuses stages a page cannot load together, or no page.
+    /// Refuses a circuit without a page, and stages that do not follow one
+    /// another from the SYSTEM gate.
     fn check(&self) -> Result<()> {
         if self.pages == 0 {
             return refuse("a circuit takes a page".into());
         }
-        if self.spans.iter().any(|span| span.start == 0) {
-            return refuse("a stage holds the SYSTEM gate".into());
-        }
+        let mut next = 1;
         for (stage, span) in self.spans.iter().enumerate() {
-            for (other, earlier) in self.spans[..stage].iter().enumerate() {
-                if span.start < earlier.end
-                    && earlier.start < span.end
-                    && !span.is_empty()
-                    && !earlier.is_empty()
-                {
-                    return refuse(format!("stages {other} and {stage} share gates"));
-                }
+            if span.start != next || span.end < span.start {
+                return refuse(format!(
+                    "stage {stage} holds gates {span:?}, which do not start at gate {next}, \
+                     where the stage before it ends"
+                ));
             }
+            next = span.end;
         }
         Ok(())
     }
@@ -257,11 +229,9 @@ pub struct Layout {
     /// the gates in: the order the circuit allocates them in, or one that
     /// puts a gate allocated long before it is used beside the gates it
     /// feeds. A page ends where the next starts, and the last holds the
-    /// rest.
+    /// rest. A page's polynomial holds them from gate
+    /// [`own_start`](Self::own_start) on.
     pub starts: Vec<usize>,
-    /// For each page, the gate of its polynomial that holds that gate: past
-    /// every stage (see [`Stages::first`]).
-    pub firsts: Vec<usize>,
     /// The carry stage's gates, the same in every page's polynomial and
     /// past every page's own. It holds two values per gate.
     pub carry: Range<usize>,
@@ -273,17 +243,16 @@ impl Layout {
         self.starts.len()
     }
 
-    /// The gates of the circuit's own that page `page`'s polynomial has
-    /// room for.
-    pub fn room(&self, page: usize) -> usize {
-        self.window(page).len()
+    /// The gates of the circuit's own that a page's polynomial has room
+    /// for.
+    pub fn room(&self) -> usize {
+        self.window().len()
     }
 
-    /// The gates of its polynomial that hold page `page`'s own: from past
-    /// the stages to the carry stage.
-    pub fn window(&self, page: usize) -> Range<usize> {
-        let first = self.firsts[page];
-        first..self.carry.start.max(first)
+    /// The gates of a page's polynomial that hold the page's own: from past
+    /// the stages to the carry stage, the same on every page.
+    pub fn window(&self) -> Range<usize> {
+        self.own_start..self.carry.start.max(self.own_start)
     }
 
     /// The page of the gate at place `place` among the circuit's own, in
@@ -303,8 +272,7 @@ pub struct PageReport {
     /// The constraints homed on the page, the public output's wires
     /// included.
     pub constraints: usize,
-    /// The distinct wires of other pages and of stages it does not load
-    /// that its constraints name.
+    /// The distinct wires of other pages that its constraints name.
     pub imported_wires: usize,
     /// The distinct carry slots its constraints read.
     pub imported_slots: usize,
@@ -330,8 +298,8 @@ pub struct PagingReport {
     pub cross_constraints: usize,
     /// The distinct wires a constraint names off its home page.
     pub carried_wires: usize,
-    /// The carry slots: the distinct linear combinations of one page's or
-    /// one stage's wires a constraint homed elsewhere names, up to scaling.
+    /// The carry slots: the distinct linear combinations of one page's
+    /// wires a constraint homed elsewhere names, up to scaling.
     pub slots: usize,
     /// For each boundary between two pages, the distinct carried wires of
     /// the circuit's own that are allocated before it and named after it.
@@ -396,8 +364,8 @@ struct Program<F: Field> {
     own: Range<usize>,
     /// The linear combinations it makes, in order, each over its wires and
     /// the combinations before it: what the circuit's own combinations
-    /// have of the page's wires, or of one source's among them. A wire is
-    /// named `4 * gate + kind` with the gate counted in the page's
+    /// have of the page's wires, or of the page's own gates' among them. A
+    /// wire is named `4 * gate + kind` with the gate counted in the page's
     /// polynomial, [`ONE`], or [`DERIVED`] with a combination's index.
     sums: Vec<Vec<(u32, Coeff<F>)>>,
     /// Its constraints, over the same wires.

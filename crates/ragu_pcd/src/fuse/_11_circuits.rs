@@ -358,8 +358,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             rng,
         )?;
         // As on the native side: each circuit whole, or once for each of
-        // its pages, which may load only some of the nested stages and read
-        // the others' values off their polynomials.
+        // its pages.
         let mut pages = builder.take_nested_pages(&self.nested_plans);
         let witness = |instance| nested::circuits::common::Witness {
             instance,

@@ -257,8 +257,8 @@ fn the_pages_constraints_are_the_circuits() -> Result<()> {
         let (layout, report) = (cut.layout(), cut.report());
         assert_eq!(layout.carry.end, limit());
         assert!(2 * layout.carry.len() >= report.slots);
-        for (page, held) in report.pages.iter().enumerate() {
-            assert!(held.gates <= layout.room(page));
+        for held in &report.pages {
+            assert!(held.gates <= layout.room());
         }
         cut.check()?;
     }
@@ -486,15 +486,21 @@ fn a_plan_that_misplaces_a_gate_is_caught() -> Result<()> {
     let wrong = misplaced(&paged, |plan| plan.layout.carry.start -= 1);
     assert!(refused(&wrong, "overlaps the carry stage"));
 
-    // A page's own gates over those of a stage it loads.
+    // A page's own gates over those of the circuit's stage.
     let staged = Paged::fitted(
         MultiStage::<Fp, R, _>::new(Seeded::<90>),
         &Stages::of::<Fp, R, Seeded<90>>(),
         8,
     )?;
     staged.check()?;
-    let wrong = misplaced(&staged, |plan| plan.layout.firsts[0] -= 1);
-    assert!(refused(&wrong, "inconsistent gate layout"));
+    let wrong = misplaced(&staged, |plan| plan.layout.own_start -= 1);
+    assert!(refused(&wrong, "does not cover the circuit"));
+
+    // Stages that do not follow one another, as if the cut had been asked
+    // for them.
+    let mut wrong = misplaced(&staged, |plan| plan.stages.spans[0].start += 1);
+    wrong.stages = wrong.plan.stages.clone();
+    assert!(refused(&wrong, "do not start at gate"));
     Ok(())
 }
 
@@ -566,10 +572,6 @@ fn a_plan_out_of_shape_is_caught() -> Result<()> {
         plan.layout.carry.start = plan.layout.carry.end + 1;
     });
     assert!(refused(&wrong, "inverted gate range"));
-
-    // A page whose gates run past the last index.
-    let wrong = misplaced(&paged, |plan| plan.layout.firsts[0] = usize::MAX);
-    assert!(refused(&wrong, "gate range overflows"));
 
     // Stages that take more gates than the circuit has, as if the cut had
     // been asked for them.
@@ -789,7 +791,7 @@ fn a_staged_circuit_pages_beside_its_stage() -> Result<()> {
     // page names them.
     assert!(paged.report().pages.iter().all(|page| page.stage_wires > 0));
     assert!(paged.report().slots <= 2 * (pages - 1));
-    assert!(paged.layout().firsts.iter().all(|&first| first == 3));
+    assert_eq!(paged.layout().window().start, 3);
 
     let mut traces = Vec::new();
     for index in 0..pages - 1 {
@@ -827,61 +829,19 @@ fn a_staged_circuit_pages_beside_its_stage() -> Result<()> {
     Ok(())
 }
 
-/// Four values, at the first gates after the SYSTEM gate.
-#[derive(Default)]
-struct Left;
-
-impl Stage<Fp, R> for Left {
-    type Parent = ();
-    type Witness<'source> = [Fp; 4];
-    type OutputKind = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<4>>];
-
-    fn values() -> usize {
-        4
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
-        &self,
-        dr: &mut D,
-        witness: DriverValue<D, [Fp; 4]>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        FixedVec::try_from_fn(|i| {
-            Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
-        })
-    }
+#[test]
+fn a_cut_carries_no_more_than_an_even_one() -> Result<()> {
+    // A cut is placed where few wires are named across it: no worse than
+    // cutting evenly.
+    let even = Paged::fitted(Chain::<100, 3>, &Stages::whole(1), 21)?;
+    let placed = Paged::cut(
+        Chain::<100, 3>,
+        &Stages::whole(1).pages(even.num_pages()),
+        limit(),
+    )?;
+    assert!(placed.report().slots <= even.report().slots);
+    Ok(())
 }
-
-/// Four more values, which a circuit reserves after [`Left`]'s.
-#[derive(Default)]
-struct Right;
-
-impl Stage<Fp, R> for Right {
-    type Parent = Left;
-    type Witness<'source> = [Fp; 4];
-    type OutputKind = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<4>>];
-
-    fn values() -> usize {
-        4
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
-        &self,
-        dr: &mut D,
-        witness: DriverValue<D, [Fp; 4]>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        FixedVec::try_from_fn(|i| {
-            Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
-        })
-    }
-}
-
-const LEFT: [u64; 4] = [3, 5, 7, 11];
 
 /// `LEN` squares of sums of the witness, all allocated first, then a
 /// product that takes them one by one: a batch computed long before it
@@ -968,6 +928,64 @@ fn a_gate_is_placed_with_the_first_gate_it_feeds() -> Result<()> {
     Ok(())
 }
 
+/// A plan is held to the stages its circuit was cut over: one that lays a
+/// stage elsewhere names the same wires in its constraints, but a page
+/// would read them at gates the stage's polynomial does not hold them at.
+/// Four values, at the first gates after the SYSTEM gate.
+#[derive(Default)]
+struct Left;
+
+impl Stage<Fp, R> for Left {
+    type Parent = ();
+    type Witness<'source> = [Fp; 4];
+    type OutputKind = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<4>>];
+
+    fn values() -> usize {
+        4
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, [Fp; 4]>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
+        })
+    }
+}
+
+/// Four more values, which a circuit reserves after [`Left`]'s.
+#[derive(Default)]
+struct Right;
+
+impl Stage<Fp, R> for Right {
+    type Parent = Left;
+    type Witness<'source> = [Fp; 4];
+    type OutputKind = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<4>>];
+
+    fn values() -> usize {
+        4
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, [Fp; 4]>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
+        })
+    }
+}
+
+const LEFT: [u64; 4] = [3, 5, 7, 11];
 /// Holds each value of [`Left`] to the value of [`Right`] at its place:
 /// a circuit with no gates of its own, over two stages.
 struct Tie;
@@ -1040,19 +1058,18 @@ fn a_circuit_without_gates_pages_too() -> Result<()> {
     assert_eq!(holds([3, 5, 7, 12])?, [false, true]);
     Ok(())
 }
-
-/// A plan is held to the stages its circuit was cut over: one that lays
-/// the stages the other way round names the same wires in its
-/// constraints, but a page would read each stage's at the gates of the
-/// other's polynomial.
 #[test]
 fn a_plan_over_other_stages_is_refused() -> Result<()> {
-    let stages = Stages::of::<Fp, R, Tie>().pages(2);
-    let paged = Paged::cut(MultiStage::<Fp, R, _>::new(Tie), &stages, limit())?;
-    paged.check()?;
-    let spans = &paged.plan.stages.spans;
-    assert_eq!(spans[0].len(), spans[1].len(), "the stages are as large");
-    let wrong = tampered(&paged, |plan| plan.stages.spans.swap(0, 1));
+    let seeded = Paged::fitted(
+        MultiStage::<Fp, R, _>::new(Seeded::<90>),
+        &Stages::of::<Fp, R, Seeded<90>>(),
+        8,
+    )?;
+    seeded.check()?;
+    let wrong = misplaced(&seeded, |plan| {
+        let span = plan.stages.spans[0].clone();
+        plan.stages.spans[0] = span.start + 1..span.end + 1;
+    });
     assert!(refused(
         &wrong,
         "other stages than the circuit was cut over"
@@ -1060,32 +1077,20 @@ fn a_plan_over_other_stages_is_refused() -> Result<()> {
     Ok(())
 }
 
-/// Pages that each load every stage, as the aggregator's do, share one
-/// window: past every stage, up to the carry stage. One mask over it holds
-/// them all, the last page's included.
 #[test]
-fn pages_that_load_every_stage_share_a_window() -> Result<()> {
-    let paged = Paged::fitted(
+fn the_masks_cover_the_layout() -> Result<()> {
+    let stages = Stages::of::<Fp, R, Seeded<90>>();
+    let paged = Paged::cut(
         MultiStage::<Fp, R, _>::new(Seeded::<90>),
-        &Stages::of::<Fp, R, Seeded<90>>(),
-        8,
+        &stages.clone().pages(5),
+        limit(),
     )?;
-    paged.check()?;
     let layout = paged.layout();
-    let stages = paged.stages();
-    assert!(paged.num_pages() > 2, "the circuit takes pages");
-    let window = layout.window(0);
-    let stages_end = stages.spans.iter().map(|span| span.end).max().unwrap_or(1);
-    assert!(window.start >= stages_end, "the window is past every stage");
-    assert_eq!(
-        window.end, layout.carry.start,
-        "the window ends at the carry stage"
-    );
+    assert_eq!(layout.carry.end, limit());
     let _: &dyn WiringObject<Fp, R> = &paged.carry_mask::<R>()?.into_inner();
-    for page in 0..paged.num_pages() {
-        assert_eq!(layout.window(page), window, "page {page} shares the window");
-        let _: &dyn WiringObject<Fp, R> = &paged.own_mask::<R>(page)?.into_inner();
-    }
+    let _: &dyn WiringObject<Fp, R> = &paged.own_mask::<R>()?.into_inner();
+    // Every page's own gates are between the stages and the carry stage.
+    assert_eq!(layout.window(), stages.own_start()..layout.carry.start);
     Ok(())
 }
 

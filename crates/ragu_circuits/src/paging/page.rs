@@ -302,7 +302,7 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         state.update(&(pages as u64).to_le_bytes());
         gates(&mut state, &layout.carry);
         for page in 0..pages {
-            gates(&mut state, &layout.window(page));
+            gates(&mut state, &layout.window());
             let object = if page + 1 < pages {
                 into_wiring_object::<F, _, R>(self.page(page))?
             } else {
@@ -371,7 +371,8 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
     }
 
     /// The carry stage's values, read off the pages' traces, in page order.
-    /// A circuit without gates of its own gives none at all.
+    /// A circuit without gates of its own carries nothing and gives no
+    /// trace.
     ///
     /// # Errors
     ///
@@ -445,17 +446,17 @@ impl<F: Field, C: Circuit<F>> Paged<F, C> {
         staging::stage_mask(carry.start, carry.len())
     }
 
-    /// The well-formedness mask of page `page`'s own polynomial, which is
-    /// zero off the page's own gates: on the gates before them, where the
-    /// stages are, and on the carry stage's. The mask is over the
-    /// page's whole window ([`Layout::window`]), which the page need not
-    /// fill.
+    /// The well-formedness mask of a page's own polynomial, which is zero
+    /// off the page's own gates: on the gates before them, where the
+    /// stages are, and on the carry stage's. The mask is the same for
+    /// every page: it is over the whole window ([`Layout::window`]), which
+    /// a page need not fill.
     ///
     /// # Errors
     ///
-    /// Fails if the page's gates do not fit rank `R`.
-    pub fn own_mask<R: Rank>(&self, page: usize) -> Result<MaskObject<R>> {
-        let window = self.plan.layout.window(page);
+    /// Fails if the pages' gates do not fit rank `R`.
+    pub fn own_mask<R: Rank>(&self) -> Result<MaskObject<R>> {
+        let window = self.plan.layout.window();
         staging::stage_mask(window.start, window.len())
     }
 }

@@ -550,7 +550,7 @@ where
 
         for page in (0..=slot.last()).filter(|_| planted) {
             let own = claim(Claim::Mask((side.mask)(slot.mask)));
-            let window = layout.window(page);
+            let window = layout.window();
             let polynomial = (side.page)(slot, page);
 
             // On the carry stage's gates.

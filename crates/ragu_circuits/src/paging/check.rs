@@ -158,8 +158,8 @@ fn multiset<F: Field>(forms: impl IntoIterator<Item = Form<F>>) -> BTreeMap<Key,
 }
 
 /// Checks that every original gate has exactly one place, that the page
-/// programs allocate the layout's gates, and that their loaded polynomials
-/// occupy disjoint gates. The symbolic comparison below relies on this map.
+/// programs allocate the layout's gates, and that the stages, a page's own
+/// gates and the carry stage occupy disjoint gates. The symbolic comparison below relies on this map.
 fn layout<F: Field>(plan: &Plan<F>, body_gates: usize) -> Result<()> {
     let (stages, layout) = (&plan.stages, &plan.layout);
     stages.check()?;
@@ -170,7 +170,6 @@ fn layout<F: Field>(plan: &Plan<F>, body_gates: usize) -> Result<()> {
     if layout.own_start != stages.own_start()
         || plan.num_gates != body_gates
         || layout.starts.len() != pages
-        || layout.firsts.len() != pages
         || plan.held.len() != pages
         || plan.programs.len() != pages
         || plan.places.len() != own
@@ -186,11 +185,11 @@ fn layout<F: Field>(plan: &Plan<F>, body_gates: usize) -> Result<()> {
     let mut next = stages.own_start();
     for page in 0..pages {
         let held = &plan.held[page];
-        let first = layout.firsts[page];
+        let first = stages.own_start();
         let Some(own_end) = first.checked_add(held.len()) else {
             return refuse("a page's gate range overflows".into());
         };
-        if layout.starts[page] != next || first < stages.first() {
+        if layout.starts[page] != next {
             return refuse(format!("page {page} has an inconsistent gate layout"));
         }
         next = next
@@ -264,12 +263,11 @@ fn page_symbol<F: Field>(
     if let Some(symbol) = carry_symbol(page, gate, kind, &plan.layout.carry) {
         return Ok(symbol);
     }
-    for (stage, span) in plan.stages.spans.iter().enumerate() {
-        if span.contains(&gate) {
-            return Symbol::wire(plan.stages.start(stage) + gate - span.start, kind);
-        }
+    // A stage's gate is the circuit's, at the same place.
+    if gate < plan.layout.own_start {
+        return Symbol::wire(gate, kind);
     }
-    if let Some(offset) = gate.checked_sub(plan.layout.firsts[page])
+    if let Some(offset) = gate.checked_sub(plan.layout.own_start)
         && let Some(&original) = plan.held[page].get(offset)
     {
         return Symbol::wire(original as usize, kind);
