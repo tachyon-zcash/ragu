@@ -280,7 +280,8 @@ fn every_page_of_a_paged_circuit_satisfies_its_claim() -> Result<()> {
     assert!(paged.num_pages() >= 4, "the chain takes several pages");
     assert!(paged.report().slots > 0, "the chain carries values");
     assert!(holds.iter().all(|&hold| hold), "{holds:?}");
-    check::check(&paged)
+    check::check(&paged)?;
+    Ok(())
 }
 
 #[test]
@@ -1546,6 +1547,30 @@ fn a_cut_is_weighed_by_the_combinations_it_carries() -> Result<()> {
     assert_eq!(paged.pages().layout().starts, [1, 5]);
     assert_eq!(paged.pages().report().slots, 1);
     assert_eq!(paged.pages().report().carried_wires, 4);
+    Ok(())
+}
+
+/// The check tells a circuit that ends its public output with a constant
+/// zero from one that ends it with a wire, which the output's type does
+/// not: both of these return one element.
+#[test]
+fn the_check_tells_an_output_that_ends_in_a_zero() -> Result<()> {
+    let ends_in_zero = |output| -> Result<bool> {
+        let circuit = Linked {
+            gates: 6,
+            extra: &[],
+            output,
+        };
+        let checked = Pages::cut_within(MultiStage::new(Flat::<_, 4>(circuit)), 3, 5)?.check()?;
+        Ok(checked.ends_in_zero())
+    };
+    assert!(ends_in_zero(None)?);
+    // A wire of the last page, and one an earlier page carries to it.
+    assert!(!ends_in_zero(Some(5))?);
+    assert!(!ends_in_zero(Some(0))?);
+    // Two wires, neither a zero.
+    let two = Pages::cut_within(flat(TwoOutputs), 1, 1 << 12)?.check()?;
+    assert!(!two.ends_in_zero());
     Ok(())
 }
 

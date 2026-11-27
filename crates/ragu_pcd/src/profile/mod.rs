@@ -517,8 +517,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Fails if a circuit does not cut into the pages pinned, or if its
-    /// pages are not the unpaged circuit's. The default pages nothing.
+    /// Fails if a circuit does not cut into the pages pinned, if its pages
+    /// are not the unpaged circuit's, or if it does not end its public
+    /// output with that zero. The default pages nothing.
     fn native_extension_pages<'params, Base, R: Rank, const HEADER_SIZE: usize>(
         params: &'params Base::Params,
     ) -> Result<Vec<paging::ExtensionPages<'params, Base::CircuitField, R>>>

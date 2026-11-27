@@ -1043,7 +1043,7 @@ fn extension_pages_share_their_stages_and_stay_inside_the_user_declaration() {
         crate::pasta::baked_aggregator(),
     )
     .unwrap();
-    let group = |first| ExtensionPages::new(first, Profile::NESTED_PAGES, &checked);
+    let group = |first| ExtensionPages::new(first, &checked);
     let registrar = || Registrar::new::<Profile>(true);
     registrar().declare(vec![group(0).unwrap()]).unwrap();
     assert!(group(u32::MAX).is_err());
@@ -1072,6 +1072,7 @@ mod constraints {
         pasta::Fp,
     };
     use ragu_primitives::{Element, WithSuffix, vec::ConstLen};
+    use udon::field::Field;
 
     /// The constraints, and no public output.
     pub(super) struct Plain(pub usize);
@@ -1146,6 +1147,44 @@ mod constraints {
             ))
         }
     }
+
+    /// The same constraints, and an output of [`Ended`]'s type that ends
+    /// with a wire in place of the zero.
+    pub(super) struct Wired(pub usize);
+
+    impl Pageable<Fp, TestRank> for Wired {
+        type Carry = ConstLen<0>;
+    }
+
+    impl MultiStageCircuit<Fp, TestRank> for Wired {
+        type Last = ();
+        type Instance<'source> = ();
+        type Witness<'source> = ();
+        type Output = Kind![Fp; @WithSuffix<'_, _, ()>];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, ()>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let wire = Element::alloc(dr, &mut (), D::just(|| Fp::ZERO))?;
+            Ok(WithSuffix::new((), wire))
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, TestRank, (), ()>,
+            _: DriverValue<D, ()>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+            let dr = builder.finish();
+            for _ in 0..self.0 {
+                dr.enforce_zero(|lc| lc)?;
+            }
+            let wire = Element::alloc(dr, &mut (), D::just(|| Fp::ZERO))?;
+            Ok(WithAux::new(WithSuffix::new((), wire), D::unit()))
+        }
+    }
 }
 
 /// A census sizes the pages a registry takes. An extension circuit ends its
@@ -1202,5 +1241,29 @@ fn a_paged_extension_circuits_last_page_ends_with_its_own_zero() -> Result<()> {
     // The zero is a constraint of the page: without it the page is another.
     let bare = tag(RegistryBuilder::new().register_internal_circuit(plain.last())?)?;
     assert_ne!(own, bare);
+    Ok(())
+}
+
+/// The bound on a paged extension circuit's output holds its suffix's
+/// place and not its value. A circuit that writes a wire there cuts and
+/// checks, and its last page could satisfy an application instance, so its
+/// pages are not taken.
+#[test]
+fn extension_pages_refuse_a_circuit_that_ends_with_a_wire() -> Result<()> {
+    use ragu_circuits::{polynomials::TestRank, staging::MultiStage};
+
+    use self::constraints::{Ended, Wired};
+    use super::ExtensionPages;
+
+    let ended = super::split("ended", MultiStage::new(Ended(5)), 1)?.check()?;
+    assert!(ended.ends_in_zero());
+    assert!(ExtensionPages::<Fp, TestRank>::new(0, &ended).is_ok());
+
+    let wired = super::split("wired", MultiStage::new(Wired(5)), 1)?.check()?;
+    assert!(!wired.ends_in_zero());
+    let Err(error) = ExtensionPages::<Fp, TestRank>::new(0, &wired) else {
+        panic!("a circuit that ends its output with a wire is refused");
+    };
+    assert!(format!("{error:?}").contains("constant zero"), "{error:?}");
     Ok(())
 }

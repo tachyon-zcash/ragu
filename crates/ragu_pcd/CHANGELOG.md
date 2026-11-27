@@ -106,8 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `Profile::{native,nested}_extension_pages`, through which a profile
   proves a circuit of its own extension in pages
   (`profile::paging::ExtensionPages`): the pages are held to the circuit,
-  as many as the profile pins, and each is registered at the extension
-  circuit the profile declares for it.
+  which ends its public output with a constant zero, and each is registered
+  at the extension circuit the profile declares for it.
   `Profile::{native,nested}_extension_rxs_with_online` take the pages the
   registry build cut, so that the prover traces them without cutting again.
 - Added source-registry meshes: `Profile::{NATIVE,NESTED}_MESH` declare a

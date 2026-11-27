@@ -611,10 +611,14 @@ impl<F: Field> Plans<F> {
 /// extension circuit its profile declares for it.
 ///
 /// It is made of [`Checked`] pages alone, so a registry takes no page of an
-/// extension circuit that the check did not hold to the circuit, and it is
-/// held to the count its profile pins where it is made. The registry build
-/// then registers each page once and refuses to finish with a page left
-/// (`Registrar::finish`), so every page's claim is one of the proof's.
+/// extension circuit that the check did not hold to the circuit. How many
+/// pages there are and what their carry stage holds is the cut's to say,
+/// and the registry build holds both to the profile's declaration: it
+/// takes the pages only at extension circuits of the profile's own that
+/// load one set of stages (`Registrar::declare`), registers each page once
+/// with the stages it loads, the carry stage last, and refuses to finish
+/// with a page left (`Registrar::finish`), so every page's claim is one of
+/// the proof's.
 ///
 /// Each page is registered as the check held it, and no slot wraps one. A
 /// page before the last ends its output with a zero of its own. The last
@@ -622,7 +626,8 @@ impl<F: Field> Plans<F> {
 /// with the constant zero every extension circuit's ends with (see
 /// [`CircuitSlot::register`](super::CircuitSlot::register)), as the fuse's
 /// circuits end theirs, and the check holds the last page to it with the
-/// rest of the output.
+/// rest of the output. A circuit that ends its output with anything else
+/// is refused where its pages are taken ([`new`](Self::new)).
 ///
 /// The profile's [`Extension`] declares the rest, as it does for any
 /// circuit of its own: each page a circuit that loads the unpaged
@@ -647,32 +652,32 @@ impl<'params, F: Field, R: Rank> ExtensionPages<'params, F, R> {
     /// The unpaged circuit's public output is `O` and then a suffix, which
     /// the circuit must write as the constant zero: the last page is
     /// registered with the output the check held it to, and nothing here
-    /// appends to it.
+    /// appends to it. The bound on the output holds the suffix's place and
+    /// not its value, so a circuit that writes anything else there is
+    /// refused: with a wire in that row its last page could satisfy an
+    /// application instance (see
+    /// [`CircuitSlot::register`](super::CircuitSlot::register)).
     ///
     /// # Errors
     ///
-    /// Fails if the pages are not as many as `count` pins, or if their
-    /// carry stage differs from the size it pins, or if their circuit indices
-    /// overflow.
-    pub fn new<S, O>(first: u32, count: PageCount, checked: &Checked<F, R, S>) -> Result<Self>
+    /// Fails if the circuit does not end its public output with a constant
+    /// zero, or if the pages' circuit indices overflow.
+    pub fn new<S, O>(first: u32, checked: &Checked<F, R, S>) -> Result<Self>
     where
         S: Pageable<F, R> + MultiStageCircuit<F, R, Output = Kind![F; @WithSuffix<'_, _, O>]>,
         O: GadgetKind<F>,
         MultiStage<F, R, S>: 'params,
     {
-        let paged = checked.pages();
-        let (pages, carry) = (paged.num_pages(), paged.stages().carry);
-        if pages != count.num_pages() || carry != count.carry() {
+        if !checked.ends_in_zero() {
             return refuse(
                 format_args!("extension circuit {first}"),
-                format!(
-                    "is in {pages} pages over a carry stage of {carry} values, where its profile \
-                     pins {} and {}",
-                    count.num_pages(),
-                    count.carry()
-                ),
+                "does not end its public output with the constant zero an extension circuit's \
+                 ends with"
+                    .into(),
             );
         }
+        let paged = checked.pages();
+        let pages = paged.num_pages();
         let end = u32::try_from(pages)
             .ok()
             .and_then(|pages| first.checked_add(pages))
@@ -745,7 +750,9 @@ impl<'params, F: Field, R: Rank> Registrar<'params, F, R> {
     pub(crate) fn declare(&mut self, extension: Vec<ExtensionPages<'params, F, R>>) -> Result<()> {
         for (index, pages) in extension.iter().enumerate() {
             let range = &pages.circuits;
-            let Some(stages) = self.user_stages.get(range.start as usize..range.end as usize)
+            let Some(stages) = self
+                .user_stages
+                .get(range.start as usize..range.end as usize)
             else {
                 return refuse(
                     format_args!("extension circuit {}", range.start),

@@ -497,7 +497,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(H)?;
         let checked = common::checked::<Base, Native, WalletRank, R, H>(params)?;
-        Ok(vec![ExtensionPages::new(0, NATIVE_PAGES, &checked)?])
+        Ok(vec![ExtensionPages::new(0, &checked)?])
     }
 
     /// The nested side's, likewise.
@@ -509,7 +509,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(HEADER_SIZE)?;
         let checked = common::checked::<Base, Nested, WalletRank, R, HEADER_SIZE>(params)?;
-        Ok(vec![ExtensionPages::new(0, NESTED_PAGES, &checked)?])
+        Ok(vec![ExtensionPages::new(0, &checked)?])
     }
 
     /// The statement circuit: the one native circuit that is not a page.
@@ -597,8 +597,11 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(H)?;
         let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
+        let planned = pages
+            .first()
+            .ok_or_else(|| Error::Initialization(NO_PAGES.into()))?;
         context.native_rxs::<Self>(
-            pages.first(),
+            planned,
             source,
             online_openings,
             registry,
@@ -642,8 +645,11 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(H)?;
         let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
+        let planned = pages
+            .first()
+            .ok_or_else(|| Error::Initialization(NO_PAGES.into()))?;
         context.nested_rxs::<Self>(
-            pages.first(),
+            planned,
             source,
             *output_commitments,
             native_online_commitments[online::slot::IPA],
@@ -657,6 +663,12 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
 /// The pages load the online stages the step's fuse committed, so their
 /// traces are built with them.
 const NO_ONLINE_STAGES: &str = "the aggregator's pages are traced over the step's online stages";
+
+/// A side's whole circuit is traced in the pages its registry build cut it
+/// into and registered. A prover that cut it again would do so for every
+/// proof, so one that was not given the build's pages is refused.
+const NO_PAGES: &str =
+    "the aggregator's pages are traced by the cut its registry build kept, which was not given";
 
 /// A side's stage indices among its extension's stages: its front's
 /// first, `front` of them, then the lifts stage, the digits stage and the

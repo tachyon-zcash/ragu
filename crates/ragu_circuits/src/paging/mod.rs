@@ -579,7 +579,12 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
 /// The pager, and whatever kept its plan, is not trusted. A registry
 /// takes a page only through this type, so no page is registered that the
 /// check did not hold to the circuit.
-pub struct Checked<F: Field, R: Rank, S: Pageable<F, R>>(Pages<F, R, S>);
+pub struct Checked<F: Field, R: Rank, S: Pageable<F, R>> {
+    pages: Pages<F, R, S>,
+    /// Whether the circuit ends its public output with a constant zero,
+    /// as the check's walk of the circuit found.
+    ends_in_zero: bool,
+}
 
 /// The pages a circuit was cut into, apart from the circuit: what
 /// [`Pages::planned`] takes to page the same circuit again without cutting

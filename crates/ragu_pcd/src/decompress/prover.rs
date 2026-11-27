@@ -299,11 +299,11 @@ where
 
     /// The native extension's polynomials for profile `P` over `source`,
     /// or over the canonical decompression without: the trace of every
-    /// page of the side's whole circuit, cut as `pages` tells, and the
-    /// statement circuit's after them, each assembled against `registry`
-    /// at its index in `P`'s layout; and the stages' polynomials, each
-    /// with an alpha from `rng` but the digits stage's, which the
-    /// scalar-field side recomputes, then the carry stage's.
+    /// page of the side's whole circuit, in the pages `planned` holds, and
+    /// the statement circuit's after them, each assembled against
+    /// `registry` at its index in `P`'s layout; and the stages'
+    /// polynomials, each with an alpha from `rng` but the digits stage's,
+    /// which the scalar-field side recomputes, then the carry stage's.
     ///
     /// # Errors
     ///
@@ -311,7 +311,7 @@ where
     /// sides of a verified proof do not.
     pub(crate) fn native_rxs<P: Profile>(
         &self,
-        planned: Option<&Planned<C::CircuitField>>,
+        planned: &Planned<C::CircuitField>,
         source: Option<&Decompressed<C>>,
         online_openings: &[[C::CircuitField; 2]; 3 * NUM_ONLINE_FP_POLYS],
         registry: &Registry<'_, C::CircuitField, R>,
@@ -373,7 +373,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn nested_rxs<P: Profile>(
         &self,
-        planned: Option<&Planned<C::ScalarField>>,
+        planned: &Planned<C::ScalarField>,
         source: Option<&Decompressed<C>>,
         output_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
         host_ipa_commitment: C::HostCurve,
@@ -413,7 +413,7 @@ where
 /// `prepared`, in page order, each assembled against `registry` at the
 /// index `index` gives its extension circuit, and the carry stage's. The
 /// circuit is in the pages `planned` holds, those the registry build cut it
-/// into, and is cut here without them.
+/// into, and is not cut again.
 ///
 /// One walk of the circuit gives every page before the last the values of
 /// its gates, and the carry stage its values; the last page walks it once
@@ -422,7 +422,7 @@ where
 /// page order, so that no job touches the RNG.
 #[allow(clippy::type_complexity)]
 fn whole_rxs<C, S, R, const HEADER_SIZE: usize, B>(
-    planned: Option<&Planned<S::F>>,
+    planned: &Planned<S::F>,
     prepared: &Prepared<C, S>,
     params: &C::Params,
     registry: &Registry<'_, S::F, R>,

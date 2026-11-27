@@ -301,8 +301,11 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     /// or repeated, a carry slot lacks its definition, or the constraints
     /// differ.
     pub fn check(self) -> Result<Checked<F, R, S>> {
-        super::check::check(&self)?;
-        Ok(Checked(self))
+        let ends_in_zero = super::check::check(&self)?;
+        Ok(Checked {
+            pages: self,
+            ends_in_zero,
+        })
     }
 
     /// The layout of the pages' polynomials.
@@ -494,7 +497,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
 impl<F: Field, R: Rank, S: Pageable<F, R>> Checked<F, R, S> {
     /// The pages, for what does not need them held to the circuit.
     pub fn pages(&self) -> &Pages<F, R, S> {
-        &self.0
+        &self.pages
     }
 
     /// Page `index`, which is not the last, to register.
@@ -503,13 +506,25 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Checked<F, R, S> {
     ///
     /// Panics if `index` is the last page or past it.
     pub fn page(&self, index: usize) -> MultiStage<F, R, PagedCircuit<F, R, S>> {
-        self.0.page(index)
+        self.pages.page(index)
     }
 
     /// The last page, which carries the circuit's public output, to
     /// register.
     pub fn last(&self) -> MultiStage<F, R, LastPagedCircuit<F, R, S>> {
-        self.0.last()
+        self.pages.last()
+    }
+
+    /// Whether the circuit ends its public output with a constant zero:
+    /// the last wire it writes is the empty combination, so that row of
+    /// the last page's $k(Y)$ names no wire and no trace gives it a linear
+    /// term. A circuit without an output does not.
+    ///
+    /// The type of an output says where its last wire is and not what the
+    /// circuit writes there. This is read off the walk of the circuit the
+    /// check holds the last page's output to.
+    pub fn ends_in_zero(&self) -> bool {
+        self.ends_in_zero
     }
 }
 

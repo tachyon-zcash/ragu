@@ -330,14 +330,17 @@ where
 
 /// Side `S`'s whole circuit in the pages `planned` holds, which the
 /// registry build cut it into, for a prover to trace: the circuit is not
-/// cut again. Without them it is cut here.
+/// cut again. A prover is given no other way to its pages: cutting the
+/// circuit where it is proven would cut it once more for every proof, so
+/// a prover without the registry build's pages does not trace it (see the
+/// aggregator's extension hooks).
 ///
 /// # Errors
 ///
-/// Fails if the side's tables cannot be built, or as [`cut`] does.
+/// Fails if the side's tables cannot be built.
 pub(crate) fn planned<'p, C, S, K, R, const HEADER_SIZE: usize>(
     params: &'p C::Params,
-    planned: Option<&Planned<S::F>>,
+    planned: &Planned<S::F>,
 ) -> Result<WholePages<'p, C, S, K, R, HEADER_SIZE>>
 where
     C: Cycle,
@@ -345,9 +348,6 @@ where
     K: Rank,
     R: Rank,
 {
-    let Some(planned) = planned else {
-        return cut::<C, S, K, R, HEADER_SIZE>(params);
-    };
     let tables = tables::<C, S, K, R, HEADER_SIZE>()?;
     let circuit = S::circuit(tables, params);
     Ok(Pages::planned(circuit, planned))

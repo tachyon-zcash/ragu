@@ -1571,31 +1571,40 @@ mod aggregator {
         pages
             .declare(Wide::nested_extension_pages::<Pasta, AggregatorRank>(params).unwrap())
             .unwrap();
-        // Pages other than the profile pins are refused where they are
-        // made, and two paged circuits cannot take one extension circuit.
+        // The registrar holds the pages to the profile's declaration: a
+        // cut into one page more than the profile pins reaches past the
+        // side's extension circuits, and two paged circuits cannot take
+        // one extension circuit.
         {
-            use crate::profile::{PageCount, paging::ExtensionPages};
+            use ragu_circuits::paging::Pages;
 
-            let checked = crate::decompress::common::checked::<
-                Pasta,
-                crate::decompress::nested::Nested,
-                WalletRank,
-                AggregatorRank,
-                H,
-            >(params)
+            use crate::{
+                decompress::{
+                    common::{self, SideCircuit},
+                    nested::Nested,
+                },
+                profile::paging::ExtensionPages,
+            };
+
+            let more = Pages::cut(
+                <Nested as SideCircuit<Pasta, WalletRank, AggregatorRank, H>>::circuit(
+                    common::tables::<Pasta, Nested, WalletRank, AggregatorRank, H>().unwrap(),
+                    params,
+                ),
+                Wide::NESTED_PAGES.num_pages() + 1,
+            )
+            .unwrap()
+            .check()
             .unwrap();
-            let pinned = Wide::NESTED_PAGES;
-            for other in [
-                PageCount::new(pinned.num_pages() + 1).carrying(pinned.carry()),
-                PageCount::new(pinned.num_pages()).carrying(pinned.carry() + 2),
-            ] {
-                assert!(matches!(
-                    ExtensionPages::new(0, other, &checked),
-                    Err(Error::Initialization(_))
-                ));
-            }
+            let more = alloc::vec![ExtensionPages::new(0, &more).unwrap()];
+            assert!(matches!(
+                Registrar::new::<Wide>(true).declare(more),
+                Err(Error::Initialization(_))
+            ));
+            let checked =
+                common::checked::<Pasta, Nested, WalletRank, AggregatorRank, H>(params).unwrap();
             let twice = (0..2)
-                .map(|_| ExtensionPages::new(0, pinned, &checked).unwrap())
+                .map(|_| ExtensionPages::new(0, &checked).unwrap())
                 .collect();
             assert!(matches!(
                 Registrar::new::<Wide>(true).declare(twice),
