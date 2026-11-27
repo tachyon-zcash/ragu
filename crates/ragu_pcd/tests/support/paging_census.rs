@@ -30,14 +30,25 @@ pub fn header_pages_fit<const H: usize>() -> Result<()> {
     Ok(())
 }
 
-/// Check every step of both walks as well as the circuits above. A final
-/// walk step can use fewer gates, so the first step cannot stand for all
-/// of them in an exhaustive availability check.
+/// Check every step of both walks as well as the circuits above, and the
+/// decompression's pinned chunk counts against its schedules. A final walk
+/// step can use fewer gates, so the first step cannot stand for all of them
+/// in an exhaustive availability check.
 #[cfg(ragu_pcd_paging_census)]
 pub fn every_page_fits<const H: usize>() -> Result<()> {
     type C<const H: usize> = Profiled<Pasta, Aggregator<H>>;
 
     header_pages_fit::<H>()?;
+    // The chunk counts the profile pins in closed form are the schedules'
+    // at this header size too, not only at the sizes the unit tests sample.
+    assert_eq!(
+        Aggregator::<H>::scheduled::<Pasta, AggregatorRank>()?,
+        (
+            Aggregator::<H>::native_circuits(H),
+            Aggregator::<H>::NESTED_CIRCUITS
+        ),
+        "header size {H}: the pinned chunk counts are not the schedules'"
+    );
     for (step, sizing) in native_walk_census::<C<H>, AggregatorRank>()?
         .into_iter()
         .enumerate()

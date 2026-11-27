@@ -5,12 +5,17 @@ name: Paging header census
 on:
   pull_request:
     paths:
+      # Anything that can move a gate of a paged circuit or of a
+      # decompression chunk: the gadgets, the pager, the fuse's circuits
+      # and the decompression.
+      - 'crates/ragu_core/**'
+      - 'crates/ragu_primitives/**'
       - 'crates/ragu_circuits/src/paging/**'
       - 'crates/ragu_circuits/src/polynomials/mod.rs'
       - 'crates/ragu_circuits/src/staging/**'
-      - 'crates/ragu_pcd/src/decompress/aggregator.rs'
-      - 'crates/ragu_pcd/src/internal/native/**'
-      - 'crates/ragu_pcd/src/internal/nested/**'
+      - 'crates/ragu_pcd/src/decompress/**'
+      - 'crates/ragu_pcd/src/fuse/**'
+      - 'crates/ragu_pcd/src/internal/**'
       - 'crates/ragu_pcd/src/profile/**'
       - 'crates/ragu_pcd/Cargo.toml'
       - 'crates/ragu_pcd/build.rs'
