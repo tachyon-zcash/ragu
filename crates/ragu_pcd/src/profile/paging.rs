@@ -1,4 +1,4 @@
-//! Experimental: the glue between a profile's [`PageCounts`] and the fuse.
+//! The glue between a profile's [`PageCounts`] and the fuse.
 //!
 //! A profile that pages an internal circuit gets, after everything its
 //! extension declares and the online batch adds: an extension circuit for

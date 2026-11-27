@@ -1,4 +1,4 @@
-//! Experimental paging: one circuit proven as several.
+//! Paging: one circuit proven as several.
 //!
 //! An *unpaged circuit* is a multi-stage circuit that is written once,
 //! whole, and needs more gates than a polynomial holds ([`Pageable`]). It

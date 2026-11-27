@@ -43,8 +43,7 @@
 //! `Aggregator` declares the decompression circuits, at the rank with
 //! the room for them.
 //!
-//! The extension API is experimental while production decompression is being
-//! integrated. Profile authors must review and test agreement between their
+//! Profile authors must review and test agreement between their
 //! declarations, registered stages and masks, and the intended circuit relation.
 //!
 //! The verifier fixes its profile, registries and public parameters at setup.
@@ -93,7 +92,7 @@ use crate::{
 
 /// What a profile pins for one of the fuse's internal circuits, as an
 /// unpaged circuit: the pages it is cut into and the values its carry
-/// stage holds. Experimental.
+/// stage holds.
 ///
 /// Each page loads every stage the circuit reserves, then the carry stage,
 /// through which the pages pass values to one another. Both numbers size
@@ -154,7 +153,7 @@ impl PageCount {
 }
 
 /// The [`PageCount`] a profile pins for each of the fuse's internal
-/// circuits. Experimental.
+/// circuits.
 ///
 /// A circuit with more than one page is cut into that many circuits, which
 /// pass values to one another through a carry stage of the size its count
@@ -336,8 +335,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
 
     /// The pages the profile cuts each of the fuse's internal circuits
-    /// into (see [`PageCounts`]). Experimental; the default leaves every
-    /// circuit whole.
+    /// into (see [`PageCounts`]). The default leaves every circuit whole.
     const PAGE_COUNTS: PageCounts = PageCounts::WHOLE;
 
     /// What the profile's prover holds across proofs beyond the proof

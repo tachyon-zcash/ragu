@@ -1,8 +1,8 @@
-//! Experimental: profiles that page the fuse's internal circuits prove and
-//! verify. A paged circuit is cut into several circuits at the wallet rank,
-//! with nothing but the profile's declaration saying so: its pages before
-//! the last ride the profile's extension, and the last takes the circuit's
-//! own slot.
+//! Profiles that page the fuse's internal circuits prove and verify. A
+//! paged circuit is cut into several circuits at the wallet rank, with
+//! nothing but the profile's declaration saying so: its pages before the
+//! last ride the profile's extension, and the last takes the circuit's own
+//! slot.
 
 use ragu_circuits::polynomials::{AggregatorRank, Rank, WalletRank};
 use ragu_core::{

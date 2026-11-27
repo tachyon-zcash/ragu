@@ -49,8 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `finalize_with` refuses a step that outputs or reads a header naming an
   online polynomial.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
-  profile-specific prover context. The extension API is experimental while
-  decompression is integrated. `finalize` checks a profile's declaration
+  profile-specific prover context. `finalize` checks a profile's declaration
   against what its hooks register: a staged circuit through
   `CircuitSlot::register_staged` and a stage's masks through
   `MaskSlot::register_stage_mask` and `register_final_mask`; a mask of another
