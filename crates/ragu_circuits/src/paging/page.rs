@@ -15,13 +15,14 @@ use ragu_core::{
     drivers::{Driver, DriverTypes, DriverValue, LinearExpression},
     gadgets::{Bound, Gadget, Kind},
     maybe::{Always, Maybe, MaybeKind},
+    routines::{Prediction, Routine},
 };
 use ragu_primitives::{Element, WithSuffix, vec::Len};
 use udon::field::Field;
 
 use super::{
-    Captured, Carry, Checked, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned,
-    Program, Stages, Step, diverged,
+    Body, Captured, Carry, Checked, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan,
+    Planned, Program, Stages, Step, diverged,
 };
 use crate::{
     Blind, Circuit, CircuitExt, MaskObject, WithAux, floor_planner, into_wiring_object,
@@ -30,22 +31,23 @@ use crate::{
     trace::Trace,
 };
 
-/// The wires a page's steps have names for.
+/// The wires the steps of a page, or of a routine it calls, have names
+/// for.
 struct Frame<'a, W> {
     one: W,
     /// The wires of the stages' and the carry stage's gates, two a gate,
-    /// which the page's stage builder reserved.
+    /// which the page's stage builder reserved. A routine has none.
     reserved: &'a [W],
-    /// The wires of the gates of the page's own allocated so far.
+    /// The wires of the gates of its own that the steps allocated so far.
     gates: Vec<[W; 4]>,
-    /// What the steps made so far.
+    /// What the steps made so far: for a routine, after its inputs.
     made: Vec<W>,
 }
 
 impl<W: Clone> Frame<'_, W> {
-    /// The wire `name` names, if the page holds it by now: `ONE`, the $a$
+    /// The wire `name` names, if the steps hold it by now: `ONE`, the $a$
     /// or the $d$ wire of a reserved gate, which hold a stage's values, a
-    /// wire of a gate of the page's own, or what a step made.
+    /// wire of a gate of their own, or what a step made.
     fn wire(&self, name: u32) -> Option<&W> {
         if name & DERIVED != 0 {
             return self.made.get((name ^ DERIVED) as usize);
@@ -81,9 +83,105 @@ impl<W: Clone> Frame<'_, W> {
     }
 }
 
+/// One wire, as a gadget.
+#[derive(Gadget)]
+struct Bare<'dr, D: Driver<'dr>> {
+    #[ragu(wire)]
+    wire: D::Wire,
+    #[ragu(phantom)]
+    _marker: PhantomData<&'dr ()>,
+}
+
+impl<'dr, D: Driver<'dr>> Bare<'dr, D> {
+    fn of(wire: D::Wire) -> Self {
+        Bare {
+            wire,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// What a [`Replayed`] routine takes: the wires of the input of the
+/// routine it replays, in the order that routine's input gadget gives
+/// them, and with a witness the values of the gates the routine allocates.
+///
+/// The circuit's routines take gadgets of their own types, which a page
+/// does not have: it replays a recording and does not run the circuit's
+/// code. A routine's fingerprint is of the wires it takes and gives and of
+/// what it emits, and not of their types, so the wires in the same order
+/// are the same input to every driver. Their number is the routine's, and
+/// is known only once the circuit is cut.
+#[derive(Gadget)]
+struct Taken<'dr, D: Driver<'dr>> {
+    #[ragu(gadget)]
+    wires: Vec<Bare<'dr, D>>,
+    #[ragu(value)]
+    values: DriverValue<D, Arc<[[D::F; 4]]>>,
+}
+
+/// A routine the circuit calls, as a routine of the page that holds it: it
+/// replays the routine's recorded [`Body`] on any driver.
+///
+/// It is the same routine to a driver as the one the circuit calls: it
+/// takes the same wires, allocates the same gates, enforces the same
+/// constraints and makes the same calls, in the same order, and gives the
+/// same wires. Its output is not predicted.
+struct Replayed<F: Field>(Arc<Body<F>>);
+
+impl<F: Field> Clone for Replayed<F> {
+    fn clone(&self) -> Self {
+        Replayed(self.0.clone())
+    }
+}
+
+impl<F: Field> Routine<F> for Replayed<F> {
+    type Input = Kind![F; Taken<'_, _>];
+    type Output = PhantomData<Vec<Kind![F; Bare<'_, _>]>>;
+    type Aux<'dr> = Arc<[[F; 4]]>;
+
+    fn execute<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let body = &*self.0;
+        if input.wires.len() != body.inputs {
+            return Err(diverged("a routine is given other wires than it takes"));
+        }
+        let mut frame = Frame {
+            one: D::ONE,
+            reserved: &[],
+            gates: Vec::new(),
+            made: input.wires.into_iter().map(|bare| bare.wire).collect(),
+        };
+        let values = aux.as_ref().map(|values| &values[..]);
+        run(&body.steps, dr, &mut frame, &values, &mut 0)?;
+        body.outputs
+            .iter()
+            .map(|&name| {
+                let wire = frame.wire(name).cloned();
+                wire.map(Bare::of)
+                    .ok_or_else(|| diverged("a routine gives a wire it does not hold"))
+            })
+            .collect()
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = F, Wire = ()>>(
+        &self,
+        _: &mut D,
+        input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| {
+            input.values.as_ref().take().clone()
+        })))
+    }
+}
+
 /// Runs `steps` on `dr`, over the wires of `frame`, which takes what they
-/// allocate and make. `values` are those of the gates the page allocates,
-/// in order, and `next` the first that the steps have yet to allocate.
+/// allocate and make. `values` are those of the gates the steps allocate,
+/// those of the routines they call included, in order, and `next` the
+/// first that the steps have yet to allocate.
 fn run<'dr, D: Driver<'dr>>(
     steps: &[Step<D::F>],
     dr: &mut D,
@@ -120,6 +218,25 @@ fn run<'dr, D: Driver<'dr>>(
                 frame.holds(terms)?;
                 dr.enforce_zero(|lc| frame.combine(lc, terms))?;
             }
+            Step::Call(body, inputs) => {
+                let wires = inputs
+                    .iter()
+                    .map(|&name| frame.wire(name).cloned().map(Bare::of))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| diverged("a page names a wire it does not hold"))?;
+                // The routine's gates are the next ones: it is given their
+                // values, and allocates them as a segment of its own.
+                let gates = *next..*next + body.gates;
+                *next = gates.end;
+                let values =
+                    D::try_just(|| {
+                        values.snag().get(gates).map(Arc::from).ok_or_else(|| {
+                            diverged("a page was given too few of its gates' values")
+                        })
+                    })?;
+                let output = dr.routine(Replayed(body.clone()), Taken { wires, values })?;
+                frame.made.extend(output.into_iter().map(|bare| bare.wire));
+            }
         }
     }
     Ok(())
@@ -127,7 +244,8 @@ fn run<'dr, D: Driver<'dr>>(
 
 impl<F: Field> Program<F> {
     /// Runs the page's steps on `dr`: allocates the page's own gates, with
-    /// `values`, makes its combinations and enforces its constraints.
+    /// `values`, makes its combinations, enforces its constraints and calls
+    /// the routines it holds.
     /// `reserved` are the wires of the stages' and the carry stage's gates,
     /// two a gate, which the page's stage builder reserved. Gives the wires
     /// of the public output, which only the last page has.
@@ -137,12 +255,6 @@ impl<F: Field> Program<F> {
         reserved: &[D::Wire],
         values: &DriverValue<D, &[[F; 4]]>,
     ) -> Result<Vec<D::Wire>> {
-        // TODO(#503): a routine the circuit calls is replayed here as part
-        // of the page's flat run, so it has no segment a memo can key on.
-        // The check holds its gates to this page, together and in order
-        // (`Recording::split_routine`), and not yet its constraints
-        // (TODO(#1038)); what is left is for the page to call it as a
-        // routine on `dr`, once they are held here too.
         let mut frame = Frame {
             one: D::ONE,
             reserved,
@@ -557,7 +669,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Checked<F, R, S> {
 /// over the circuit's stages and its carry stage, which allocates and
 /// enforces what the plan compiled for it. Its public output is a zero and
 /// nothing else, so its $k(Y)$ is constant. Its witness
-/// is the values of the gates it holds, in the order of its polynomial
+/// is the values of the gates it holds, in the order it allocates them
 /// ([`Pages::capture`]).
 pub struct PagedCircuit<F: Field, R, S> {
     plan: Arc<Plan<F>>,

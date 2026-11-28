@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alias, which is `R<14>` as `WalletRank` now is: circuits that exceed that
   rank's capacity are cut into pages (`paging`) rather than proven at a
   larger rank.
+- A paged circuit's pages call the routines the circuit calls
+  (`Driver::routine`), each on the one page that holds its gates, so a
+  routine has the same segment and fingerprint on a page as in the circuit.
+  `Pages::check` holds the routines the pages call to the circuit's.
+- `BaseFingerprint` and `DeepFingerprint` are ordered.
 - Added `Blind`, the three coefficients of an rx polynomial that no wiring
   polynomial reads: `a[0]` of the SYSTEM gate, and `a[n - 1]` and `d[n - 1]`
   of the blind gate (`Rank::blind_gate`), the last gate of the rank.

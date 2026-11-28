@@ -1,4 +1,4 @@
-use alloc::{string::ToString, vec::Vec};
+use alloc::{string::ToString, vec, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use ragu_core::{
@@ -612,18 +612,72 @@ fn a_plan_out_of_shape_is_caught() -> Result<()> {
     Ok(())
 }
 
-/// The wiring polynomial of `circuit`, which calls no routine, written
-/// out of its recording: of `count` constraints, the one emitted at
-/// `index` is the coefficient of `Y^(count - 1 - index)`, and a gate's
-/// wires are the wiring layout's powers of `X`.
+/// The wiring polynomial of `circuit`, written out of its recording.
+///
+/// A recording counts the gates and the constraints in the order the
+/// circuit emits them. A wiring polynomial holds them by segment: what the
+/// circuit emits outside any routine, then each routine's own, in the
+/// order the walk meets the calls. A segment's constraints are the
+/// coefficients of the powers of `Y` from its last down, and a gate's
+/// wires are the wiring layout's powers of `X` at the gate's place.
 fn recorded<C: Circuit<Fp>>(circuit: &C) -> Result<Monomials<Fp>> {
     let n = R::n();
-    let (_, constraints) = Recording::<Fp>::all_of(circuit)?;
-    let count = constraints.len();
+    let recording = Recording::<Fp>::whole_of(circuit)?;
+    let count = recording.constraints.len();
+
+    // The segment of each gate and of each constraint: the innermost call
+    // that emits it, or none.
+    fn segments(calls: &[Call], gates: &mut [usize], constraints: &mut [usize], next: &mut usize) {
+        for call in calls {
+            let segment = *next;
+            *next += 1;
+            gates[call.gates.clone()].fill(segment);
+            constraints[call.constraints.clone()].fill(segment);
+            segments(&call.calls, gates, constraints, next);
+        }
+    }
+    let mut gates = vec![0; recording.num_gates];
+    let mut constraints = vec![0; count];
+    let mut segments_len = 1;
+    segments(
+        &recording.calls,
+        &mut gates,
+        &mut constraints,
+        &mut segments_len,
+    );
+    // The place of each: a segment's gates from its first on, and its
+    // constraints down from its last, in the order it emits them.
+    let place = |of: &[usize], down: bool| -> Vec<usize> {
+        let mut sizes = vec![0; segments_len];
+        for &segment in of {
+            sizes[segment] += 1;
+        }
+        let starts: Vec<usize> = sizes
+            .iter()
+            .scan(0, |start, size| {
+                let first = *start;
+                *start += size;
+                Some(first)
+            })
+            .collect();
+        let mut emitted = vec![0; segments_len];
+        of.iter()
+            .map(|&segment| {
+                emitted[segment] += 1;
+                if down {
+                    starts[segment] + sizes[segment] - emitted[segment]
+                } else {
+                    starts[segment] + emitted[segment] - 1
+                }
+            })
+            .collect()
+    };
+    let (gates, constraints) = (place(&gates, false), place(&constraints, true));
+
     let mut monomials = Vec::new();
-    for (index, terms) in constraints.iter().enumerate() {
+    for (index, (_, terms)) in recording.constraints.iter().enumerate() {
         for &(wire, coeff) in terms {
-            let gate = (wire / 4) as usize;
+            let gate = gates[(wire / 4) as usize];
             let x = match wire % 4 {
                 0 => 2 * n + gate,
                 1 => 2 * n - 1 - gate,
@@ -631,7 +685,7 @@ fn recorded<C: Circuit<Fp>>(circuit: &C) -> Result<Monomials<Fp>> {
                 _ => gate,
             };
             monomials.push(Monomial {
-                y: count - 1 - index,
+                y: constraints[index],
                 x,
                 coeff,
             });
@@ -672,13 +726,21 @@ fn a_recording_is_the_registered_polynomial() -> Result<()> {
     let small = || MultiStage::<Fp, R, _>::new(Seeded::<20>);
     assert_eq!(recorded(&small())?, registered(small())?);
 
+    // Of circuits that call routines, one within another.
+    assert_eq!(recorded(&Called::<5>)?, registered(Called::<5>)?);
+    assert_eq!(recorded(&Wrapped::<3>)?, registered(Wrapped::<3>)?);
+
     // And of every page, which is what a registry holds of a paged
-    // circuit: a page replays a routine's gates flat, so the pages of a
-    // circuit that calls routines are among them.
+    // circuit: a page calls the routines it holds, so its polynomial has
+    // their segments as the circuit's would.
     pages_are_recorded(&fitted(flat(Chain::<100, 3>), 8)?)?;
     pages_are_recorded(&fitted(flat(TwoOutputs), 1)?)?;
     pages_are_recorded(&fitted(MultiStage::new(Seeded::<90>), 8)?)?;
-    pages_are_recorded(&fitted(flat(Called::<5>), 8)?)
+    for page_gates in [8, 20, 31] {
+        pages_are_recorded(&fitted(flat(Called::<5>), page_gates)?)?;
+        pages_are_recorded(&fitted(flat(Wrapped::<5>), page_gates)?)?;
+    }
+    Ok(())
 }
 
 #[test]
@@ -1206,17 +1268,20 @@ fn a_plan_that_splits_a_routine_is_caught() -> Result<()> {
     let paged = Pages::cut_within(flat(Called::<30>), 3, 354)?;
     check::check(&paged)?;
     let routine = Recording::of(&flat(Called::<30>))?.routines[0].clone();
-    // The routine's last gate and the gate after it, which is not the
-    // routine's, on the page that holds them, at each other's place.
+    // The routine's last gate and the gate the page allocates before the
+    // routine's first, which is not the routine's, at each other's place.
     let draft = drafted(&paged).0;
-    let (page, at) = draft.place(routine.end - 1).expect("a gate");
-    assert_eq!(draft.place(routine.end), Some((page, at + 1)));
+    let (page, last) = draft.place(routine.end - 1).expect("a gate");
+    let (_, before) = draft.place(routine.start).expect("a gate");
+    let first = draft.layout.carry.end;
+    let (last, before) = (last - first, before - first - 1);
+    let other = draft.held[page][before] as usize;
+    assert!(!routine.contains(&other));
     let wrong = tampered(&paged, |plan| {
         let own_start = plan.layout.own_start;
-        let first = plan.layout.carry.end;
-        plan.held[page].swap(at - first, at + 1 - first);
+        plan.held[page].swap(last, before);
         plan.places
-            .swap(routine.end - 1 - own_start, routine.end - own_start);
+            .swap(routine.end - 1 - own_start, other - own_start);
     });
     assert!(refused(&wrong, "split a routine the circuit calls"));
     Ok(())
@@ -1728,5 +1793,290 @@ fn a_cut_counts_the_outputs_export() -> Result<()> {
     let tight = Pages::cut_within(MultiStage::new(Flat::<_, 1>(circuit)), 2, limit)?.check()?;
     assert_eq!(tight.pages().report().slots, 1);
     assert_eq!(tight.pages().layout().starts, [1, room]);
+    Ok(())
+}
+
+/// Each routine segment of `circuit`: its gates, its constraints and its
+/// fingerprint, in order.
+fn routine_segments<C: Circuit<Fp>>(
+    circuit: &C,
+) -> Result<Vec<(usize, usize, crate::metrics::DeepFingerprint)>> {
+    Ok(crate::metrics::eval(circuit)?
+        .segments
+        .iter()
+        .filter_map(|segment| match segment.identity() {
+            crate::metrics::RoutineIdentity::Routine(fingerprint) => {
+                Some((segment.num_gates(), segment.num_constraints(), *fingerprint))
+            }
+            crate::metrics::RoutineIdentity::Root => None,
+        })
+        .collect())
+}
+
+/// Holds `paged` to its circuit, its pages' routine segments to the
+/// circuit's, and each page's claim, with what one walk of the circuit
+/// `captured` for its pages and `stages`, the polynomials of the
+/// circuit's stages. `last` tells whether the last page's claim holds on
+/// what it is given to load.
+fn pages_hold<S: Pageable<Fp, R>>(
+    paged: &Pages<Fp, R, S>,
+    captured: &Captured<Fp>,
+    last: impl Fn(&sparse::Polynomial<Fp, R>) -> Result<bool>,
+    stages: Option<&sparse::Polynomial<Fp, R>>,
+) -> Result<()> {
+    check::check(paged)?;
+    let pages = paged.num_pages();
+    let mut called = routine_segments(&*paged.circuit)?;
+    let mut found = routine_segments(&paged.last())?;
+    for page in 0..pages - 1 {
+        found.extend(routine_segments(&paged.page(page))?);
+    }
+    called.sort_unstable();
+    found.sort_unstable();
+    assert_eq!(called, found);
+
+    let mut loaded = paged.carry_rx(Blind::<Fp>::random(&mut rand::rng()), &captured.carry)?;
+    if let Some(stages) = stages {
+        loaded.add_assign(stages);
+    }
+    for page in 0..pages - 1 {
+        assert!(
+            page_claim_holds(paged.page(page), &captured.pages[page][..], (), &loaded)?,
+            "page {page}"
+        );
+    }
+    assert!(last(&loaded)?);
+    Ok(())
+}
+
+#[test]
+fn a_page_calls_the_routines_it_holds() -> Result<()> {
+    let witness = Fp::from(3u64);
+    let squared = |times: usize, value: Fp| (0..times).fold(value, |acc, _| acc.square());
+    for page_gates in [8, 20, 31, 1 << 20] {
+        // A routine after another, each on what the one before gave.
+        let paged = fitted(flat(Called::<12>), page_gates)?;
+        assert_eq!(routine_segments(&*paged.circuit)?.len(), 12);
+        let instance = (0..12).fold(witness, |acc, _| squared(7, acc));
+        pages_hold(
+            &paged,
+            &paged.capture(witness)?,
+            |loaded| page_claim_holds(paged.last(), witness, instance, loaded),
+            None,
+        )?;
+
+        // A routine that calls another, passes an input through to its
+        // output and adds a constant to it.
+        let paged = fitted(flat(Wrapped::<6>), page_gates)?;
+        assert_eq!(routine_segments(&*paged.circuit)?.len(), 12);
+        let instance = (0..6).fold(witness, |acc, _| {
+            let inner = squared(7, acc);
+            (inner * acc) * (inner + acc + Fp::ONE)
+        });
+        pages_hold(
+            &paged,
+            &paged.capture(witness)?,
+            |loaded| page_claim_holds(paged.last(), witness, instance, loaded),
+            None,
+        )?;
+    }
+    Ok(())
+}
+
+/// A routine without gates: it holds the third wire it takes to the sum
+/// of the first two, and gives that sum, which is of its inputs alone.
+#[derive(Clone)]
+struct Balance;
+
+impl Routine<Fp> for Balance {
+    type Input = [PhantomData<Kind![Fp; Element<'_, _>]>; 3];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let [a, b, sum] = input;
+        let both = a.add(dr, &b);
+        both.sub(dr, &sum).enforce_zero(dr)?;
+        Ok(both)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp, Wire = ()>>(
+        &self,
+        _: &mut D,
+        _: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// The square of the witness, `LEN` squarings of it, and [`Balance`] on
+/// the first square, the last and a gate that holds their sum: a routine
+/// whose inputs are the two ends of the circuit. The circuit then
+/// multiplies what the routine gives.
+struct Far<const LEN: usize>;
+
+impl<const LEN: usize> Far<LEN> {
+    fn run(witness: Fp) -> Fp {
+        let first = witness.square();
+        let last = (0..LEN).fold(first, |acc, _| acc.square());
+        (first + last) * last
+    }
+}
+
+impl<const LEN: usize> Circuit<Fp> for Far<LEN> {
+    type Instance<'source> = Fp;
+    type Witness<'source> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Fp>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Fp>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+        let allocator = &mut Standard::new();
+        let first = Element::alloc(dr, allocator, witness)?.square(dr)?;
+        let mut last = first.clone();
+        for _ in 0..LEN {
+            last = last.square(dr)?;
+        }
+        let sum = D::just(|| *first.value().take() + *last.value().take());
+        let sum = Element::alloc(dr, allocator, sum)?;
+        let both = dr.routine(Balance, [first, last.clone(), sum])?;
+        Ok(WithAux::new(both.mul(dr, &last)?, D::unit()))
+    }
+}
+
+#[test]
+fn a_routine_takes_another_pages_wires_through_the_carry_stage() -> Result<()> {
+    let witness = Fp::from(3u64);
+    for page_gates in [8, 13, 21] {
+        let paged = fitted(flat(Far::<40>), page_gates)?;
+        assert!(paged.num_pages() > 2);
+        // The routine has no gate: the page the walk is on calls it, and
+        // reads the first square, which the first page holds, off a slot.
+        let [(gates, constraints, _)] = routine_segments(&*paged.circuit)?[..] else {
+            panic!("one routine");
+        };
+        assert_eq!((gates, constraints), (0, 1));
+        assert!(paged.report().slots > 0);
+        pages_hold(
+            &paged,
+            &paged.capture(witness)?,
+            |loaded| page_claim_holds(paged.last(), witness, Far::<40>::run(witness), loaded),
+            None,
+        )?;
+    }
+    Ok(())
+}
+
+/// `CALLS` calls of [`Wrapping`], each on a value of the stage: a routine
+/// whose input is a stage's wire, which it also passes through.
+struct SeededCalls<const CALLS: usize>;
+
+impl<const CALLS: usize> SeededCalls<CALLS> {
+    fn run(seeds: [Fp; 4]) -> Fp {
+        (0..CALLS).fold(seeds[0], |acc, call| {
+            let seed = seeds[call % 4];
+            let inner = (0..7).fold(seed, |acc, _| acc.square());
+            acc * (inner * seed) + (inner + seed + Fp::ONE)
+        })
+    }
+}
+
+impl<const CALLS: usize> Pageable<Fp, R> for SeededCalls<CALLS> {
+    type Carry = ConstLen<256>;
+}
+
+impl<const CALLS: usize> MultiStageCircuit<Fp, R> for SeededCalls<CALLS> {
+    type Last = Seeds;
+    type Instance<'source> = Fp;
+    type Witness<'source> = [Fp; 4];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Fp>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, [Fp; 4]>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>>
+    where
+        Self: 'dr,
+    {
+        let (seeds, builder) = builder.add_stage::<Seeds>()?;
+        let dr = builder.finish();
+        let seeds = seeds.unenforced(dr, witness)?;
+        let mut acc = seeds[0].clone();
+        for call in 0..CALLS {
+            let [product, passed] = dr.routine(Wrapping, seeds[call % 4].clone())?;
+            acc = acc.mul(dr, &product)?.add(dr, &passed);
+        }
+        Ok(WithAux::new(acc, D::unit()))
+    }
+}
+
+#[test]
+fn a_routine_takes_a_stages_wires() -> Result<()> {
+    let seeds = [3u64, 5, 7, 11].map(Fp::from);
+    let stage = <Seeds as StageExt<Fp, R>>::rx(Blind::<Fp>::random(&mut rand::rng()), seeds)?;
+    for page_gates in [9, 20, 40] {
+        let paged = fitted(MultiStage::new(SeededCalls::<9>), page_gates)?;
+        assert!(paged.num_pages() > 1);
+        pages_hold(
+            &paged,
+            &paged.capture(seeds)?,
+            |loaded| page_claim_holds(paged.last(), seeds, SeededCalls::<9>::run(seeds), loaded),
+            Some(&stage),
+        )?;
+    }
+    Ok(())
+}
+
+/// The check holds the pages to the routines the circuit calls, and not
+/// only to its constraints: a page that calls a routine with two of its
+/// constraints in each other's place enforces what the circuit does, and
+/// is refused.
+#[test]
+fn a_page_that_calls_another_routine_is_caught() -> Result<()> {
+    let paged = fitted(flat(Called::<5>), 20)?;
+    check::check(&paged)?;
+    let wrong = compiled(&paged, |plan| {
+        let call = plan.programs[0]
+            .steps
+            .iter_mut()
+            .find_map(|step| match step {
+                Step::Call(body, _) => Some(body),
+                _ => None,
+            })
+            .expect("the first page calls a routine");
+        let mut other = (**call).clone();
+        let enforced: Vec<usize> = (0..other.steps.len())
+            .filter(|&step| matches!(other.steps[step], Step::Enforce(_)))
+            .collect();
+        other.steps.swap(enforced[0], enforced[1]);
+        *call = Arc::new(other);
+    });
+    assert!(refused(&wrong, "which are not the"));
     Ok(())
 }

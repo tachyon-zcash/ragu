@@ -78,10 +78,6 @@ impl<F: Field> LinearExpression<u32, F> for Terms<F> {
 /// walk makes them: the call's inputs, then what is made within it, then
 /// its outputs.
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read where a page calls the routines it holds")
-)]
 pub(super) struct Call {
     /// The gates the call allocates, those of the calls within it
     /// included.
@@ -143,9 +139,7 @@ impl<F: Field> Recording<F> {
     /// gate wires. Unlike the pager's recording, this walk follows the
     /// complete relation that a registered circuit enforces.
     pub(super) fn all_of<C: Circuit<F>>(circuit: &C) -> Result<(usize, Vec<Vec<(u32, F)>>)> {
-        let mut dr = Prober::new();
-        raw::orchestrate(&mut dr, &CircuitAdapterRef(circuit), Empty)?;
-        let recording = dr.recording.expanded();
+        let recording = Self::whole_of(circuit)?;
         Ok((
             recording.num_gates,
             recording
@@ -154,6 +148,14 @@ impl<F: Field> Recording<F> {
                 .map(|(_, terms)| terms)
                 .collect(),
         ))
+    }
+
+    /// The walk [`all_of`](Self::all_of) reads, whole: with the routines
+    /// the circuit calls.
+    pub(super) fn whole_of<C: Circuit<F>>(circuit: &C) -> Result<Self> {
+        let mut dr = Prober::new();
+        raw::orchestrate(&mut dr, &CircuitAdapterRef(circuit), Empty)?;
+        Ok(dr.recording.expanded())
     }
 
     /// The first routine the circuit calls that `place` does not keep
@@ -224,11 +226,20 @@ impl<F: Field> Recording<F> {
     /// counts for: a sum built one term at a time expands in one pass
     /// over its terms, and a combination that several others name is not
     /// walked again for each.
-    fn expand(&self, terms: Vec<(u32, F)>) -> Vec<(u32, F)> {
+    pub(super) fn expand(&self, terms: Vec<(u32, F)>) -> Vec<(u32, F)> {
+        self.expand_to(terms, &(0..0))
+    }
+
+    /// As [`expand`](Self::expand), and no further than the combinations
+    /// of `kept`, which are left as the terms name them: with a call's
+    /// inputs kept, what the call makes is over its own gates' wires, its
+    /// inputs and `ONE`.
+    pub(super) fn expand_to(&self, terms: Vec<(u32, F)>, kept: &Range<usize>) -> Vec<(u32, F)> {
         let mut sum: BTreeMap<u32, F> = BTreeMap::new();
         let mut pending: BTreeMap<u32, F> = BTreeMap::new();
         let mut take = |pending: &mut BTreeMap<u32, F>, wire: u32, coeff: F| {
-            let (into, key) = if wire & DERIVED == 0 {
+            let (into, key) = if wire & DERIVED == 0 || kept.contains(&((wire ^ DERIVED) as usize))
+            {
                 (&mut sum, wire)
             } else {
                 (pending, wire ^ DERIVED)

@@ -60,6 +60,12 @@
 //! circuit whose last stage it is, so a page's own gates start where it
 //! ends.
 //!
+//! Of a page's own gates, those no routine allocates come first: with the
+//! stages' gates they are the page's root segment. The gates of each
+//! routine the page calls are a segment of their own, which a floor
+//! planner places after it, as it does for any circuit that calls
+//! routines.
+//!
 //! The carry stage's size is the unpaged circuit's to state
 //! ([`Pageable::Carry`]): a circuit that carries more values between its
 //! pages than the stage holds is not cut.
@@ -80,33 +86,41 @@
 //!
 //! The plan is then compiled into what each page allocates and enforces:
 //! its gates, the linear combinations the circuit makes as far as they are
-//! of the page's wires, and its constraints over them. A page is a circuit
-//! that replays that, on any driver, without walking the circuit it is a
-//! page of; its witness is the values of its gates, which one walk of the
-//! circuit gives every page ([`Pages::capture`]). The last page alone
-//! walks the circuit, on a driver that only counts what it emits, for the
-//! public output's shape and its witness. A page is one flat run of gates
-//! and constraints: a routine the circuit calls is not a routine of the
-//! page yet. No cut falls within one, though: its gates are on one page,
-//! together and in the order the circuit allocates them, which
-//! [`Pages::check`] holds the pages to.
+//! of the page's wires, its constraints over them, and the routines it
+//! calls. A page is a circuit that replays that, on any driver, without
+//! walking the circuit it is a page of; its witness is the values of its
+//! gates, which one walk of the circuit gives every page
+//! ([`Pages::capture`]). The last page alone walks the circuit, on a
+//! driver that only counts what it emits, for the public output's shape
+//! and its witness.
 //!
 //! The `ONE` wire is on every page and is never carried.
 //!
+//! # Routines
+//!
+//! A routine the circuit calls is called by one page, as a routine of that
+//! page's driver. No cut falls within one: its gates are on one page,
+//! together and in the order the circuit allocates them, and so are the
+//! gates of the routines it calls. That page enforces every constraint the
+//! routine does, those that name none of the routine's gates included.
+//!
+//! A page does not have the circuit's code, so it does not have the
+//! routine the circuit calls. It calls one that replays what a walk of the
+//! circuit recorded of the call: the gates, the constraints and the calls
+//! within, in the order the routine emits them, over the wires the routine
+//! takes. That is the same routine to a driver, which tells
+//! routines apart by what they emit and not by their types, so a page's
+//! routine has the segment and the fingerprint the circuit's has.
+//!
+//! What a routine emits names its inputs, its own gates and what the
+//! routines it calls give, and no other wire, so nothing in it reads a
+//! carry slot. The page that calls it makes each wire of its input in
+//! full first, as the last page does each wire of the public output: what
+//! the page holds of the wire, and a slot for what each other page does.
+//! A wire the routine gives is then the page's to name, as a gate's is.
+//!
 //! # Not yet
 //!
-//! - TODO(#503): a page does not call the routines the circuit calls. It
-//!   holds each one whole and replays its gates and constraints as part of
-//!   its own, so a page is one segment and a routine on a page has no
-//!   segment or fingerprint of its own. Calling them as routines is left
-//!   for when a floor planner or an evaluator reads segments.
-//! - TODO(#1038): the check holds a routine's gates to one page, not the
-//!   constraints the routine emits. A constraint that names no gate of the
-//!   routine, as one over its inputs alone does, is homed with the wires it
-//!   names, which may be on another page. A page that calls the routine
-//!   needs all of them: the recording is to note the constraints of each
-//!   routine and the check to hold them to the routine's page, which reads
-//!   the inputs through carry slots.
 //! - TODO: the last page walks the circuit each time it is synthesized, on
 //!   a driver that only counts, to build the public output's gadget. A
 //!   page that carried the output as the elements the circuit writes would
@@ -133,8 +147,13 @@
 //!   output, so its $k(Y)$ is constant.
 //! - **Preserve routines.** The gates of a routine the unpaged circuit
 //!   calls are on one page, together and in the order the circuit
-//!   allocates them. Its constraints are not yet held to that page (see
-//!   [Not yet](#not-yet)).
+//!   allocates them, and the routines the pages call are the circuit's:
+//!   routines with the same fingerprints, each as many times. A
+//!   fingerprint is of a routine's gates and constraints, of the wires it
+//!   gives and of the routines it calls, so a page that emits a routine's
+//!   constraints outside the routine has not called it. This one is not
+//!   what holds the pages to the circuit's relation. It holds their
+//!   segments to the circuit's.
 //! - **Deterministic pager.** [`Pages::cut`] refuses an unpaged circuit
 //!   that does not cut into the pages it is told, over the carry stage its
 //!   type states ([`Pageable::Carry`]).
@@ -385,8 +404,9 @@ pub struct Layout {
     /// the gates in: the order the circuit allocates them in, or one that
     /// puts a gate allocated long before it is used beside the gates it
     /// feeds. A page ends where the next starts, and the last holds the
-    /// rest. A page's polynomial holds them from the gate the carry stage
-    /// ends at.
+    /// rest. A page's polynomial holds them past the carry stage: those no
+    /// routine allocates from the gate the carry stage ends at, and each
+    /// routine's where the page's floor plan places its segment.
     pub starts: Vec<usize>,
 }
 
@@ -492,7 +512,8 @@ struct Plan<F: Field> {
     /// this one.
     limit: usize,
     /// For each page, the gates of the circuit's own it holds, counted
-    /// over the unpaged circuit, in the order of the page's polynomial.
+    /// over the unpaged circuit, in the order the page allocates them:
+    /// those no routine allocates, then those of each routine it calls.
     held: Vec<Vec<u32>>,
     /// Each slot's combination, over wires named `4 * gate + kind` with
     /// the gate counted over the unpaged circuit.
@@ -508,23 +529,83 @@ struct Plan<F: Field> {
 /// The wires a step names, each with its coefficient.
 type Terms<F> = Vec<(u32, Coeff<F>)>;
 
-/// One thing a page does.
+/// One thing a page does, or a routine it calls.
 ///
-/// A step names wires of the page: [`ONE`]; the $a$ and $d$ wires of a
-/// gate of the stages or of the carry stage, and the wires of a gate of
-/// the page's own allocated before the step, each `4 * gate + kind` with
-/// the gate counted as the page allocates its gates, from the SYSTEM gate;
-/// and what a step before it made, by [`DERIVED`] and its place among what
-/// the steps make.
+/// A step names wires of what runs it. For a page: [`ONE`]; the $a$ and
+/// $d$ wires of a gate of the stages or of the carry stage, and the wires
+/// of a gate of the page's own that a step before it allocated, each
+/// `4 * gate + kind` with the gate counted as the page's steps allocate
+/// them, after the SYSTEM gate and the stages'; and what a step before it
+/// made, by [`DERIVED`] and its place among what the steps make. For a
+/// routine ([`Body`]) likewise, without the stages: its own gates are
+/// counted from one, and its inputs are the first of what is made.
+///
+/// The gates a routine allocates are not the caller's to name: the caller
+/// names the routine's outputs, which a call makes.
 #[derive(Clone, Debug)]
 enum Step<F: Field> {
-    /// Allocates this many gates of the page's own, the next ones.
+    /// Allocates this many gates of the page's own, or of the routine's,
+    /// the next ones.
     Gates(usize),
-    /// Makes a linear combination: what the circuit's own combinations
-    /// have of the page's wires, or of the page's own gates' among them.
+    /// Makes a linear combination. For a page, it is what the circuit's
+    /// own combinations have of the page's wires, or of the page's own
+    /// gates' among them, or a wire a routine takes.
     Sum(Terms<F>),
     /// Enforces a constraint.
     Enforce(Terms<F>),
+    /// Calls a routine on the wires named, as a routine of the driver's,
+    /// and makes each wire of its output.
+    Call(Arc<Body<F>>, Vec<u32>),
+}
+
+/// A routine the circuit calls, as the page that holds it calls it: what
+/// the routine allocates and enforces, taken off a walk of the circuit and
+/// apart from where the circuit calls it.
+///
+/// A page calls it through [`Driver::routine`], so that the routine is a
+/// segment of the page as it is of the circuit: the same gates, the same
+/// constraints and the same calls within, in the same order, over the same
+/// inputs.
+#[derive(Clone, Debug)]
+struct Body<F: Field> {
+    /// The wires of its input.
+    inputs: usize,
+    /// What it does, in order.
+    steps: Vec<Step<F>>,
+    /// The wires of its output, each named as a step names a wire.
+    outputs: Vec<u32>,
+    /// The gates it allocates, those of the routines it calls included.
+    gates: usize,
+    /// The constraints it enforces, likewise.
+    constraints: usize,
+}
+
+impl<F: Field> Body<F> {
+    /// A routine that takes `inputs` wires, runs `steps` and gives
+    /// `outputs`.
+    fn new(inputs: usize, steps: Vec<Step<F>>, outputs: Vec<u32>) -> Self {
+        let (gates, constraints) = counts(&steps);
+        Body {
+            inputs,
+            steps,
+            outputs,
+            gates,
+            constraints,
+        }
+    }
+}
+
+/// The gates `steps` allocate and the constraints they enforce, those of
+/// the routines they call included.
+fn counts<F: Field>(steps: &[Step<F>]) -> (usize, usize) {
+    steps
+        .iter()
+        .fold((0, 0), |(gates, constraints), step| match step {
+            Step::Gates(own) => (gates + own, constraints),
+            Step::Sum(_) => (gates, constraints),
+            Step::Enforce(_) => (gates, constraints + 1),
+            Step::Call(body, _) => (gates + body.gates, constraints + body.constraints),
+        })
 }
 
 /// What one page allocates and enforces, taken off the plan and a walk of
@@ -532,7 +613,8 @@ enum Step<F: Field> {
 /// circuit that another page holds.
 #[derive(Clone, Debug)]
 struct Program<F: Field> {
-    /// What the page does, in order.
+    /// What the page does, in order. Its first step allocates the gates
+    /// of its own that no routine it calls allocates.
     steps: Vec<Step<F>>,
     /// What the steps make, counted: the next step that makes a wire names
     /// it by this.
@@ -543,7 +625,8 @@ struct Program<F: Field> {
 }
 
 impl<F: Field> Program<F> {
-    /// A page that allocates `own` gates of its own, and does nothing yet.
+    /// A page that allocates `own` gates outside any routine, and does
+    /// nothing yet.
     fn new(own: usize) -> Self {
         Program {
             steps: alloc::vec![Step::Gates(own)],
@@ -564,23 +647,25 @@ impl<F: Field> Program<F> {
         self.steps.push(Step::Enforce(terms));
     }
 
-    /// The gates of its own the page allocates, past the carry stage.
-    fn gates(&self) -> usize {
-        self.steps
-            .iter()
-            .map(|step| match step {
-                Step::Gates(gates) => *gates,
-                Step::Sum(_) | Step::Enforce(_) => 0,
-            })
-            .sum()
+    /// Calls a routine on the wires `inputs` name, and gives the wire that
+    /// names the first wire of its output: the others follow it.
+    fn call(&mut self, body: Arc<Body<F>>, inputs: Vec<u32>) -> u32 {
+        let first = self.made;
+        self.made += u32::try_from(body.outputs.len()).expect("outputs fit a wire");
+        self.steps.push(Step::Call(body, inputs));
+        DERIVED | first
     }
 
-    /// The constraints the page enforces, before those of its output.
+    /// The gates of its own the page allocates, past the carry stage:
+    /// those of the routines it calls included.
+    fn gates(&self) -> usize {
+        counts(&self.steps).0
+    }
+
+    /// The constraints the page enforces, before those of its output:
+    /// those of the routines it calls included.
     fn constraints(&self) -> usize {
-        self.steps
-            .iter()
-            .filter(|step| matches!(step, Step::Enforce(_)))
-            .count()
+        counts(&self.steps).1
     }
 }
 
@@ -710,7 +795,7 @@ pub struct Planned<F: Field> {
 #[derive(Clone, Debug)]
 pub struct Captured<F> {
     /// For each page before the last, the values of the gates it holds, in
-    /// the order of its polynomial: the page's witness.
+    /// the order it allocates them: the page's witness.
     pub pages: Vec<Vec<[F; 4]>>,
     /// The carry stage's values: its witness.
     pub carry: Vec<F>,

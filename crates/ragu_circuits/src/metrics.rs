@@ -92,7 +92,7 @@ pub enum RoutineIdentity {
 /// The 64-bit `eval` truncation gives ~2^{-64} collision probability per pair,
 /// which is adequate for floor-planner and intra-circuit memoization
 /// equivalence classes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BaseFingerprint {
     num_gates: usize,
     num_constraints: usize,
@@ -142,7 +142,7 @@ impl BaseFingerprint {
 /// The separation from [`BaseFingerprint`] matters because deep equivalence is
 /// a stronger claim than base equivalence and enables stronger memoization
 /// (caching an entire routine subtree, not just the base segment).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeepFingerprint {
     base: BaseFingerprint,
     deep: u64,

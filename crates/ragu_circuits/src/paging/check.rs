@@ -11,7 +11,12 @@ use ragu_core::{Error, Result};
 use udon::field::Field;
 
 use super::{Carry, Layout, Pageable, Pages, Plan, Stages, record::Recording, refuse};
-use crate::{polynomials::Rank, staging::Stage};
+use crate::{
+    Circuit,
+    metrics::{self, DeepFingerprint, RoutineIdentity},
+    polynomials::Rank,
+    staging::Stage,
+};
 
 /// A wire of the unpaged circuit, or one of the independent carry values
 /// the pages load. A page gate outside the stages, its own gates and the
@@ -270,6 +275,50 @@ fn page_symbol<F: Field>(
     Ok(Symbol::Unused(page, gate, kind))
 }
 
+/// The fingerprint of each routine `circuit` calls, those called within
+/// another included, in the order the walk meets the calls: what a driver
+/// tells one routine from another by.
+fn routines<F: Field, C: Circuit<F>>(circuit: &C) -> Result<Vec<DeepFingerprint>> {
+    Ok(metrics::eval(circuit)?
+        .segments
+        .iter()
+        .filter_map(|segment| match segment.identity() {
+            RoutineIdentity::Routine(fingerprint) => Some(*fingerprint),
+            RoutineIdentity::Root => None,
+        })
+        .collect())
+}
+
+/// Checks that the pages call the routines the circuit calls: between
+/// them, routines with the fingerprints of the circuit's, each as many
+/// times.
+///
+/// A fingerprint is of a routine's own gates and constraints, of the wires
+/// it gives and of the routines it calls, so a page that holds a routine's
+/// gates and enforces its constraints as its own, outside any routine, or
+/// in another order, has not called it. This is not what holds the pages
+/// to the circuit's relation: the constraints are compared whole, whatever
+/// routine emits them. It holds a page's segments to the circuit's, which
+/// a driver that keeps what a routine emits relies on.
+fn check_routines<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>) -> Result<()> {
+    let mut called = routines(&*paged.circuit)?;
+    let last = paged.plan.pages() - 1;
+    let mut found = routines(&paged.last())?;
+    for page in 0..last {
+        found.extend(routines(&paged.page(page))?);
+    }
+    called.sort_unstable();
+    found.sort_unstable();
+    if called != found {
+        return refuse(format!(
+            "the pages call {} routines, which are not the {} the circuit calls",
+            found.len(),
+            called.len()
+        ));
+    }
+    Ok(())
+}
+
 /// Checks the complete emitted relations, treating carry slots as
 /// independent wires until their defining equations have been found. Gives
 /// whether the circuit ends its public output with a constant zero
@@ -288,14 +337,15 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
     let body = Recording::<F>::raw_of(&*paged.circuit)?;
     let (body_gates, body_constraints) = (body.num_gates, body.raw.len());
     let places = places(plan, stages, layout, body_gates)?;
-    // A routine the circuit calls has its gates on one page, together.
-    // TODO(#1038): hold the routine's constraints to that page too.
+    // A routine the circuit calls has its gates on one page, together,
+    // and that page calls it.
     let place = |gate: usize| places.get(gate.checked_sub(stages.own_start())?).copied();
     if let Some(routine) = body.split_routine(place) {
         return refuse(format!(
             "the pages split a routine the circuit calls, at gates {routine:?}"
         ));
     }
+    check_routines(paged)?;
     let (all_gates, original) = Recording::<F>::all_of(&*paged.circuit)?;
     let Some(output_gates) = all_gates.checked_sub(body_gates) else {
         return refuse("the circuit's output gates precede its body".into());
