@@ -119,9 +119,11 @@
 //! [book]: https://tachyon.z.cash/ragu/guide/gadgets/
 
 mod foreign;
+mod wire_stream;
 
 use udon::field::Field;
 
+pub use self::wire_stream::{WireStream, WireStreamKind};
 use super::{
     Result,
     convert::WireMap,
