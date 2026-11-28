@@ -7,7 +7,9 @@
 //! constraint this driver did not keep is one the check does not hold the
 //! pages to, and it holds the pages to the routines this driver noted
 //! ([`Recording::split_routine`]). The pager reads the same recording to
-//! choose its cuts, and takes nothing else of the circuit.
+//! choose its cuts, and takes nothing else of the circuit: the routines the
+//! circuit calls, each with what it emits ([`Call`]), are for the pager to
+//! compile what a page runs.
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::ops::Range;
@@ -16,7 +18,7 @@ use ragu_core::{
     Coeff, Result,
     convert::WireMap,
     drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
-    gadgets::{Bound, Gadget},
+    gadgets::{Bound, Gadget, GadgetKind},
     maybe::Empty,
     routines::Routine,
 };
@@ -61,16 +63,61 @@ impl<F: Field> LinearExpression<u32, F> for Terms<F> {
     }
 }
 
+/// A routine the circuit calls, as the walk passes through it.
+///
+/// The walk names a routine's input wires afresh as it enters the routine,
+/// and its output wires afresh as it leaves: each new name is a combination
+/// of the one wire it stands for. What the routine emits then names its
+/// inputs by names that are its own, and what its caller emits names the
+/// routine's outputs likewise, whatever wires they are. So what a routine
+/// emits is over its own gates' wires, its own combinations, its inputs,
+/// the outputs of the calls it makes, and `ONE`: it names nothing else,
+/// and nothing outside it names what is within.
+///
+/// The names are combinations ([`Recording::derived`]), in the order the
+/// walk makes them: the call's inputs, then what is made within it, then
+/// its outputs.
+#[derive(Clone, Debug)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "read where a page calls the routines it holds")
+)]
+pub(super) struct Call {
+    /// The gates the call allocates, those of the calls within it
+    /// included.
+    pub(super) gates: Range<usize>,
+    /// The call's name for each wire of its input, in the order the input
+    /// gadget gives its wires: each a combination of the caller's wire
+    /// alone.
+    pub(super) inputs: Range<usize>,
+    /// The combinations made within the call, the names of the calls
+    /// within it included.
+    pub(super) sums: Range<usize>,
+    /// The caller's name for each wire of the call's output, in the order
+    /// the output gadget gives its wires: each a combination of the wire
+    /// within the call alone.
+    pub(super) outputs: Range<usize>,
+    /// The constraints emitted within the call, those of the calls within
+    /// it included, by their place among the recording's.
+    pub(super) constraints: Range<usize>,
+    /// The calls made within the call, in order.
+    pub(super) calls: Vec<Call>,
+}
+
 /// What one walk of a circuit emits: as emitted, over the gates' wires and
 /// the linear combinations the circuit makes of them, and with every wire
 /// followed back to the gates' wires.
 pub(super) struct Recording<F> {
     /// The gates the circuit allocates, the SYSTEM gate included.
     pub(super) num_gates: usize,
-    /// The linear combinations [`Driver::add`] made, each over gates'
-    /// wires and the combinations made before it, which a wire names by
-    /// [`DERIVED`] and an index here.
+    /// The linear combinations [`Driver::add`] made, and the names the
+    /// walk gave the inputs and the outputs of each routine ([`Call`]),
+    /// each over gates' wires and the combinations made before it, which a
+    /// wire names by [`DERIVED`] and an index here.
     pub(super) derived: Vec<Vec<(u32, F)>>,
+    /// How many of them [`Driver::add`] made: what a walk that only counts
+    /// its calls counts.
+    pub(super) adds: usize,
     /// Each constraint as emitted, with the gates allocated by then.
     pub(super) raw: Vec<(usize, Vec<(u32, F)>)>,
     /// Each wire of the public output as emitted, in traversal order.
@@ -79,6 +126,9 @@ pub(super) struct Recording<F> {
     /// of the calls: those of a routine called within another are among
     /// the outer one's.
     pub(super) routines: Vec<Range<usize>>,
+    /// The routines the circuit calls, in the order of the calls, each
+    /// with the calls made within it.
+    pub(super) calls: Vec<Call>,
     /// Each constraint over the gates' wires, with the gates allocated
     /// when it was emitted: empty until the recording is
     /// [expanded](Self::expanded).
@@ -93,18 +143,7 @@ impl<F: Field> Recording<F> {
     /// gate wires. Unlike the pager's recording, this walk follows the
     /// complete relation that a registered circuit enforces.
     pub(super) fn all_of<C: Circuit<F>>(circuit: &C) -> Result<(usize, Vec<Vec<(u32, F)>>)> {
-        let mut dr = Prober {
-            recording: Recording {
-                num_gates: 0,
-                derived: Vec::new(),
-                raw: Vec::new(),
-                raw_outputs: Vec::new(),
-                routines: Vec::new(),
-                constraints: Vec::new(),
-                outputs: Vec::new(),
-            },
-            depth: 0,
-        };
+        let mut dr = Prober::new();
         raw::orchestrate(&mut dr, &CircuitAdapterRef(circuit), Empty)?;
         let recording = dr.recording.expanded();
         Ok((
@@ -144,18 +183,7 @@ impl<F: Field> Recording<F> {
 
     /// Walks `circuit` for what it emits, as emitted.
     pub(super) fn raw_of<C: Circuit<F>>(circuit: &C) -> Result<Self> {
-        let mut dr = Prober {
-            recording: Recording {
-                num_gates: 0,
-                derived: Vec::new(),
-                raw: Vec::new(),
-                raw_outputs: Vec::new(),
-                routines: Vec::new(),
-                constraints: Vec::new(),
-                outputs: Vec::new(),
-            },
-            depth: 0,
-        };
+        let mut dr = Prober::new();
         walk(&mut dr, &CircuitAdapterRef(circuit))?;
         Ok(dr.recording)
     }
@@ -225,8 +253,43 @@ impl<F: Field> Recording<F> {
 /// combinations the circuit makes of them, each kept as made.
 struct Prober<F> {
     recording: Recording<F>,
-    /// The routines the walk is within.
-    depth: usize,
+    /// For each routine the walk is within, outermost first, the calls
+    /// made within it so far.
+    open: Vec<Vec<Call>>,
+}
+
+impl<F: Field> Prober<F> {
+    fn new() -> Self {
+        Prober {
+            recording: Recording {
+                num_gates: 0,
+                derived: Vec::new(),
+                adds: 0,
+                raw: Vec::new(),
+                raw_outputs: Vec::new(),
+                routines: Vec::new(),
+                calls: Vec::new(),
+                constraints: Vec::new(),
+                outputs: Vec::new(),
+            },
+            open: Vec::new(),
+        }
+    }
+}
+
+/// Names each wire of a gadget afresh: a combination of that wire alone.
+struct Renamer<'a, F>(&'a mut Vec<Vec<(u32, F)>>);
+
+impl<F: Field> WireMap<F> for Renamer<'_, F> {
+    type Src = Prober<F>;
+    type Dst = Prober<F>;
+
+    fn convert_wire(&mut self, wire: &u32) -> Result<u32> {
+        let index = u32::try_from(self.0.len()).expect("combinations fit a wire");
+        assert!(index < DERIVED_LIMIT, "combinations fit a wire");
+        self.0.push(vec![(*wire, F::ONE)]);
+        Ok(DERIVED | index)
+    }
 }
 
 impl<F: Field> DriverTypes for Prober<F> {
@@ -264,6 +327,7 @@ impl<'dr, F: Field> Driver<'dr> for Prober<F> {
         let index = u32::try_from(derived.len()).expect("combinations fit a wire");
         assert!(index < DERIVED_LIMIT, "combinations fit a wire");
         derived.push(lc(Terms::new()).terms);
+        self.recording.adds += 1;
         DERIVED | index
     }
 
@@ -279,18 +343,43 @@ impl<'dr, F: Field> Driver<'dr> for Prober<F> {
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         // Run where it is called, as a driver that knows no routines
-        // runs it, and noted for the gates it allocates: a page holds
-        // all of them or none.
-        let start = self.recording.num_gates;
-        self.depth += 1;
+        // runs it, and noted for what it emits: a page holds all of its
+        // gates or none. Its inputs are named afresh as the walk enters
+        // it, and its outputs as the walk leaves.
+        let recording = &mut self.recording;
+        let gates = recording.num_gates;
+        let inputs = recording.derived.len();
+        let input = Ro::Input::map_gadget(&input, &mut Renamer(&mut recording.derived))?;
+        let sums = recording.derived.len();
+        let constraints = recording.raw.len();
+
+        self.open.push(Vec::new());
         let output = Emulator::predict(&routine, &input)
             .and_then(|predicted| routine.execute(self, input, predicted.into_aux()));
-        self.depth -= 1;
-        let gates = start..self.recording.num_gates;
-        if self.depth == 0 && !gates.is_empty() {
-            self.recording.routines.push(gates);
+        let calls = self.open.pop().expect("the call was opened");
+        let output = output?;
+
+        let recording = &mut self.recording;
+        let outputs = recording.derived.len();
+        let output = Ro::Output::map_gadget(&output, &mut Renamer(&mut recording.derived))?;
+        let call = Call {
+            gates: gates..recording.num_gates,
+            inputs: inputs..sums,
+            sums: sums..outputs,
+            outputs: outputs..recording.derived.len(),
+            constraints: constraints..recording.raw.len(),
+            calls,
+        };
+        match self.open.last_mut() {
+            Some(within) => within.push(call),
+            None => {
+                if !call.gates.is_empty() {
+                    recording.routines.push(call.gates.clone());
+                }
+                recording.calls.push(call);
+            }
         }
-        output
+        Ok(output)
     }
 }
 

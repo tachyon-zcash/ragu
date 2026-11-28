@@ -1222,6 +1222,135 @@ fn a_plan_that_splits_a_routine_is_caught() -> Result<()> {
     Ok(())
 }
 
+/// A routine that calls another: a square of its own, [`Squarings`] on it,
+/// and a product of what that gives. Its second output is what
+/// [`Squarings`] gave plus its own input and one, so it passes an input
+/// through and holds a constant.
+#[derive(Clone)]
+struct Wrapping;
+
+impl Routine<Fp> for Wrapping {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = [PhantomData<Kind![Fp; Element<'_, _>]>; 2];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let square = input.square(dr)?;
+        let inner = dr.routine(Squarings, square)?;
+        let product = inner.mul(dr, &input)?;
+        let passed = inner.add(dr, &input).add(dr, &Element::one());
+        Ok([product, passed])
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp, Wire = ()>>(
+        &self,
+        _: &mut D,
+        _: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// `CALLS` calls of [`Wrapping`], each on the product of what the one
+/// before gave.
+struct Wrapped<const CALLS: usize>;
+
+impl<const CALLS: usize> Circuit<Fp> for Wrapped<CALLS> {
+    type Instance<'source> = Fp;
+    type Witness<'source> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Fp>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Fp>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+        let mut acc = Element::alloc(dr, &mut Standard::new(), witness)?;
+        for _ in 0..CALLS {
+            let [product, passed] = dr.routine(Wrapping, acc)?;
+            acc = product.mul(dr, &passed)?;
+        }
+        Ok(WithAux::new(acc, D::unit()))
+    }
+}
+
+#[test]
+fn a_recording_keeps_the_calls() -> Result<()> {
+    let recording = Recording::of(&flat(Wrapped::<5>))?;
+    assert_eq!(recording.calls.len(), 5);
+    assert_eq!(recording.routines.len(), 5);
+    // Every name the walk gives is a combination of one wire.
+    let renamed = |names: &Range<usize>| {
+        names
+            .clone()
+            .all(|name| matches!(recording.derived[name][..], [(_, coeff)] if coeff == Fp::ONE))
+    };
+    let mut names = 0;
+    for (call, routine) in recording.calls.iter().zip(&recording.routines) {
+        assert_eq!(&call.gates, routine);
+        // Its own square and product, and the six squarings within.
+        assert_eq!(call.gates.len(), 8);
+        assert_eq!((call.inputs.len(), call.outputs.len()), (1, 2));
+        assert_eq!(call.inputs.end, call.sums.start);
+        assert_eq!(call.sums.end, call.outputs.start);
+        assert!(renamed(&call.inputs) && renamed(&call.outputs));
+
+        let [inner] = &call.calls[..] else {
+            panic!("one call within");
+        };
+        assert_eq!(inner.gates, call.gates.start + 1..call.gates.end - 1);
+        assert_eq!((inner.inputs.len(), inner.outputs.len()), (1, 1));
+        assert!(inner.calls.is_empty());
+        assert!(renamed(&inner.inputs) && renamed(&inner.outputs));
+        // What is within the inner call is within the outer one.
+        let within = |inner: &Range<usize>, outer: &Range<usize>| {
+            outer.start <= inner.start && inner.end <= outer.end
+        };
+        assert!(within(&inner.constraints, &call.constraints));
+        assert!(within(&(inner.inputs.start..inner.outputs.end), &call.sums));
+
+        // What the call emits names its own gates, its own names and
+        // `ONE`, and nothing else of the circuit.
+        let own = |wire: u32| {
+            if wire & DERIVED != 0 {
+                (call.inputs.start..call.outputs.start).contains(&((wire ^ DERIVED) as usize))
+            } else {
+                wire == ONE || call.gates.contains(&((wire / 4) as usize))
+            }
+        };
+        for (_, terms) in &recording.raw[call.constraints.clone()] {
+            assert!(terms.iter().all(|&(wire, _)| own(wire)), "{terms:?}");
+        }
+        for terms in &recording.derived[call.sums.clone()] {
+            assert!(terms.iter().all(|&(wire, _)| own(wire)), "{terms:?}");
+        }
+        names += call.inputs.len() + call.outputs.len();
+        names += inner.inputs.len() + inner.outputs.len();
+    }
+    // The names are not combinations the circuit made.
+    assert_eq!(recording.adds + names, recording.derived.len());
+    // Followed back to the gates' wires, the recording is what it was: the
+    // pages of the circuit are still the circuit's.
+    let paged = fitted(flat(Wrapped::<5>), 20)?;
+    assert!(paged.num_pages() > 1);
+    check::check(&paged)?;
+    Ok(())
+}
+
 /// The compiled plan of `paged`, tampered with as it is: what a page runs.
 fn compiled<S: Pageable<Fp, R>>(
     paged: &Pages<Fp, R, S>,

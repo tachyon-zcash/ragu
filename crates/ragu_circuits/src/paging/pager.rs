@@ -505,7 +505,7 @@ impl<F: Field> Draft<F> {
             }
         }
         self.programs = programs;
-        self.sums = recording.derived.len();
+        self.sums = recording.adds;
     }
 }
 
