@@ -236,18 +236,20 @@ fn carry_symbol(page: usize, gate: usize, kind: u32, range: &Range<usize>) -> Op
 }
 
 /// The original wire, carry slot, or unused wire a page's local wire names.
+/// `page_body` is the gate after the last the page's steps allocate: the
+/// caller counts it once for the page, and not for each wire.
 fn page_symbol<F: Field>(
     plan: &Plan<F>,
     layout: &Layout,
     page: usize,
     wire: u32,
     body_gates: usize,
+    page_body: usize,
 ) -> Result<Symbol> {
     let (gate, kind) = ((wire / 4) as usize, wire % 4);
     if gate == 0 {
         return Ok(Symbol::One);
     }
-    let page_body = layout.carry.end + plan.programs[page].gates();
     if gate >= page_body {
         // Only the last page writes the public output. Its extra gates are
         // allocated in the same order as the unpaged circuit's output gates.
@@ -384,14 +386,14 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
         let (body, output) = constraints.split_at(body_len);
         for terms in body {
             found_body.push(Form::from_page(terms, |wire| {
-                page_symbol(plan, layout, page, wire, body_gates)
+                page_symbol(plan, layout, page, wire, body_gates, page_body)
             })?);
         }
         let output: Vec<_> = output
             .iter()
             .map(|terms| {
                 Form::from_page(terms, |wire| {
-                    page_symbol(plan, layout, page, wire, body_gates)
+                    page_symbol(plan, layout, page, wire, body_gates, page_body)
                 })
             })
             .collect::<Result<_>>()?;
