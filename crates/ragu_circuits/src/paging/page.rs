@@ -21,7 +21,7 @@ use udon::field::Field;
 
 use super::{
     Captured, Carry, Checked, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned,
-    Program, Stages, diverged,
+    Program, Stages, Step, diverged,
 };
 use crate::{
     Blind, Circuit, CircuitExt, MaskObject, WithAux, floor_planner, into_wiring_object,
@@ -30,108 +30,133 @@ use crate::{
     trace::Trace,
 };
 
+/// The wires a page's steps have names for.
+struct Frame<'a, W> {
+    one: W,
+    /// The wires of the stages' and the carry stage's gates, two a gate,
+    /// which the page's stage builder reserved.
+    reserved: &'a [W],
+    /// The wires of the gates of the page's own allocated so far.
+    gates: Vec<[W; 4]>,
+    /// What the steps made so far.
+    made: Vec<W>,
+}
+
+impl<W: Clone> Frame<'_, W> {
+    /// The wire `name` names, if the page holds it by now: `ONE`, the $a$
+    /// or the $d$ wire of a reserved gate, which hold a stage's values, a
+    /// wire of a gate of the page's own, or what a step made.
+    fn wire(&self, name: u32) -> Option<&W> {
+        if name & DERIVED != 0 {
+            return self.made.get((name ^ DERIVED) as usize);
+        }
+        // The page's own gates start past the reserved ones.
+        let first = self.reserved.len() / 2 + 1;
+        match (name / 4) as usize {
+            0 => (name == ONE).then_some(&self.one),
+            gate if gate < first => matches!(name % 4, 0 | 3)
+                .then(|| &self.reserved[2 * (gate - 1) + usize::from(name % 4 == 3)]),
+            gate => Some(&self.gates.get(gate - first)?[(name % 4) as usize]),
+        }
+    }
+
+    /// Refuses terms that name a wire the page does not hold by now. A
+    /// program that names one is not one a plan of a circuit over stages
+    /// compiles, and nothing of the plan is trusted.
+    fn holds<F: Field>(&self, terms: &[(u32, Coeff<F>)]) -> Result<()> {
+        if terms.iter().all(|&(name, _)| self.wire(name).is_some()) {
+            Ok(())
+        } else {
+            Err(diverged("a page names a wire it does not hold"))
+        }
+    }
+
+    /// The linear combination of `terms`, which the page [holds].
+    ///
+    /// [holds]: Self::holds
+    fn combine<F: Field, L: LinearExpression<W, F>>(&self, lc: L, terms: &[(u32, Coeff<F>)]) -> L {
+        terms.iter().fold(lc, |lc, &(name, coeff)| {
+            lc.add_term(self.wire(name).expect("the page holds the wire"), coeff)
+        })
+    }
+}
+
+/// Runs `steps` on `dr`, over the wires of `frame`, which takes what they
+/// allocate and make. `values` are those of the gates the page allocates,
+/// in order, and `next` the first that the steps have yet to allocate.
+fn run<'dr, D: Driver<'dr>>(
+    steps: &[Step<D::F>],
+    dr: &mut D,
+    frame: &mut Frame<'_, D::Wire>,
+    values: &DriverValue<D, &[[D::F; 4]]>,
+    next: &mut usize,
+) -> Result<()> {
+    for step in steps {
+        match step {
+            Step::Gates(gates) => {
+                for _ in 0..*gates {
+                    let gate = *next;
+                    *next += 1;
+                    let value = |kind: usize| {
+                        values
+                            .snag()
+                            .get(gate)
+                            .map(|values| Coeff::Arbitrary(values[kind]))
+                            .ok_or_else(|| {
+                                diverged("a page was given too few of its gates' values")
+                            })
+                    };
+                    let (a, b, c, extra) = dr.gate(|| Ok((value(0)?, value(1)?, value(2)?)))?;
+                    let d = dr.assign_extra(extra, || value(3))?;
+                    frame.gates.push([a, b, c, d]);
+                }
+            }
+            Step::Sum(terms) => {
+                frame.holds(terms)?;
+                let sum = dr.add(|lc| frame.combine(lc, terms));
+                frame.made.push(sum);
+            }
+            Step::Enforce(terms) => {
+                frame.holds(terms)?;
+                dr.enforce_zero(|lc| frame.combine(lc, terms))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl<F: Field> Program<F> {
-    /// Allocates the page's own gates on `dr`, with `values`, makes its
-    /// combinations and enforces its constraints. `reserved` are the wires
-    /// of the stages' and the carry stage's gates, two a gate, which the
-    /// page's stage builder reserved. Gives the wires of the public
-    /// output, which only the last page has.
+    /// Runs the page's steps on `dr`: allocates the page's own gates, with
+    /// `values`, makes its combinations and enforces its constraints.
+    /// `reserved` are the wires of the stages' and the carry stage's gates,
+    /// two a gate, which the page's stage builder reserved. Gives the wires
+    /// of the public output, which only the last page has.
     fn replay<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         reserved: &[D::Wire],
         values: &DriverValue<D, &[[F; 4]]>,
     ) -> Result<Vec<D::Wire>> {
-        // The page's own gates start past the reserved ones.
-        let first = reserved.len() / 2 + 1;
-        // A program names the page's wires alone: `ONE`, the $a$ and $d$
-        // wires of a reserved gate, which hold a stage's values, the wires
-        // of the page's own gates, and the combinations made before the one
-        // that names them. A program that names another wire is not one a
-        // plan of a circuit over stages compiles, and nothing of the plan
-        // is trusted: it is refused before the page allocates.
-        let end = first + self.own;
-        let known = |wire: u32, made: usize| {
-            if wire & DERIVED != 0 {
-                return ((wire ^ DERIVED) as usize) < made;
-            }
-            match (wire / 4) as usize {
-                0 => wire == ONE,
-                gate if gate < first => matches!(wire % 4, 0 | 3),
-                gate => gate < end,
-            }
-        };
-        let sums = self
-            .sums
-            .iter()
-            .enumerate()
-            .all(|(made, terms)| terms.iter().all(|&(wire, _)| known(wire, made)));
-        let rest = self
-            .constraints
-            .iter()
-            .chain(&self.outputs)
-            .flatten()
-            .all(|&(wire, _)| known(wire, self.sums.len()));
-        if !(sums && rest) {
-            return Err(diverged("a page names a wire it does not hold"));
-        }
-        let mut gates: Vec<[D::Wire; 4]> = Vec::with_capacity(self.own);
-        for gate in 0..self.own {
-            let value = |kind: usize| {
-                values
-                    .snag()
-                    .get(gate)
-                    .map(|values| Coeff::Arbitrary(values[kind]))
-                    .ok_or_else(|| diverged("a page was given too few of its gates' values"))
-            };
-            let (a, b, c, extra) = dr.gate(|| Ok((value(0)?, value(1)?, value(2)?)))?;
-            let d = dr.assign_extra(extra, || value(3))?;
-            gates.push([a, b, c, d]);
-        }
-        fn combine<W: Clone, F: Field, L: LinearExpression<W, F>>(
-            lc: L,
-            terms: &[(u32, Coeff<F>)],
-            one: &W,
-            (reserved, gates): (&[W], &[[W; 4]]),
-            sums: &[W],
-        ) -> L {
-            let first = reserved.len() / 2 + 1;
-            terms.iter().fold(lc, |lc, &(wire, coeff)| {
-                let wire = if wire & DERIVED != 0 {
-                    &sums[(wire ^ DERIVED) as usize]
-                } else {
-                    match (wire / 4) as usize {
-                        0 => one,
-                        gate if gate < first => {
-                            &reserved[2 * (gate - 1) + usize::from(wire % 4 == 3)]
-                        }
-                        gate => &gates[gate - first][(wire % 4) as usize],
-                    }
-                };
-                lc.add_term(wire, coeff)
-            })
-        }
         // TODO(#503): a routine the circuit calls is replayed here as part
         // of the page's flat run, so it has no segment a memo can key on.
         // The check holds its gates to this page, together and in order
         // (`Recording::split_routine`), and not yet its constraints
         // (TODO(#1038)); what is left is for the page to call it as a
         // routine on `dr`, once they are held here too.
-        let one = D::ONE;
-        let wires = (reserved, &gates[..]);
-        let mut sums: Vec<D::Wire> = Vec::with_capacity(self.sums.len());
-        for terms in &self.sums {
-            let sum = dr.add(|lc| combine(lc, terms, &one, wires, &sums));
-            sums.push(sum);
-        }
-        for terms in &self.constraints {
-            dr.enforce_zero(|lc| combine(lc, terms, &one, wires, &sums))?;
-        }
-        Ok(self
-            .outputs
+        let mut frame = Frame {
+            one: D::ONE,
+            reserved,
+            gates: Vec::new(),
+            made: Vec::with_capacity(self.made as usize),
+        };
+        run(&self.steps, dr, &mut frame, values, &mut 0)?;
+        self.outputs
             .iter()
-            .map(|terms| dr.add(|lc| combine(lc, terms, &one, wires, &sums)))
-            .collect())
+            .map(|terms| {
+                frame.holds(terms)?;
+                Ok(dr.add(|lc| frame.combine(lc, terms)))
+            })
+            .collect()
     }
 }
 

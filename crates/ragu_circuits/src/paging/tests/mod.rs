@@ -407,7 +407,7 @@ fn a_missing_carry_definition_cannot_hide_behind_a_zero_constraint() -> Result<(
     draft.compile(&recording);
     // The old value-based check included one zero for each slot definition.
     // A planner could replace a missing definition with 0 = 0 and pass it.
-    draft.programs[exporter].constraints.push(Vec::new());
+    draft.programs[exporter].enforce(Vec::new());
     let wrong = Pages::over(paged.circuit.clone(), Arc::new(draft.finish()), report);
     assert!(matches!(
         check::check(&wrong),
@@ -510,12 +510,12 @@ fn a_plan_that_misplaces_a_gate_is_caught() -> Result<()> {
     // A gate no page holds: the last page gives up its last.
     let wrong = misplaced(&paged, |plan| {
         plan.held[last].pop();
-        plan.programs[last].own -= 1;
+        *plan.programs[last].own_mut() -= 1;
     });
     assert!(refused(&wrong, "does not cover the circuit"));
 
     // A page that allocates other gates than it holds.
-    let wrong = misplaced(&paged, |plan| plan.programs[0].own += 1);
+    let wrong = misplaced(&paged, |plan| *plan.programs[0].own_mut() += 1);
     assert!(refused(&wrong, "allocates other gates than it holds"));
 
     // A page with more gates than a polynomial holds.
@@ -1368,28 +1368,32 @@ fn a_program_that_names_a_wire_it_does_not_hold_is_refused() -> Result<()> {
 
     // A combination the page never makes.
     let wrong = compiled(&paged, |plan| {
-        plan.programs[0].constraints[0].push((DERIVED | 0x00ff_ffff, one));
+        plan.programs[0]
+            .constraint(0)
+            .push((DERIVED | 0x00ff_ffff, one));
     });
     assert!(refused(&wrong, refusal));
 
     // A combination made after the one that names it.
     let wrong = compiled(&paged, |plan| {
-        let made = plan.programs[1].sums.len() as u32;
-        plan.programs[1].sums[0].push((DERIVED | (made - 1), one));
+        let made = plan.programs[1].made;
+        plan.programs[1]
+            .first_sum()
+            .push((DERIVED | (made - 1), one));
     });
     assert!(refused(&wrong, refusal));
 
     // A gate past the page's own.
     let first = paged.layout().carry.end;
     let wrong = compiled(&paged, |plan| {
-        let past = (first + plan.programs[0].own) as u32;
-        plan.programs[0].constraints[0].push((4 * past, one));
+        let past = (first + plan.programs[0].gates()) as u32;
+        plan.programs[0].constraint(0).push((4 * past, one));
     });
     assert!(refused(&wrong, refusal));
 
     // A wire of the SYSTEM gate other than `ONE`.
     let wrong = compiled(&paged, |plan| {
-        plan.programs[0].constraints[0].push((0, one));
+        plan.programs[0].constraint(0).push((0, one));
     });
     assert!(refused(&wrong, refusal));
     Ok(())
@@ -1400,7 +1404,7 @@ fn a_dropped_constraint_is_caught() -> Result<()> {
     let paged = fitted(flat(Chain::<100, 3>), 8)?;
     check::check(&paged)?;
     let page = paged.num_pages() / 2;
-    let constraints = paged.plan.programs[page].constraints.len();
+    let constraints = paged.plan.programs[page].constraints();
     assert!(constraints > 2, "a page in the middle enforces constraints");
 
     // Without any one of its constraints the page is refused: for the
@@ -1409,7 +1413,7 @@ fn a_dropped_constraint_is_caught() -> Result<()> {
     let mut missing = 0;
     for dropped in 0..constraints {
         let wrong = compiled(&paged, |plan| {
-            plan.programs[page].constraints.remove(dropped);
+            plan.programs[page].drop_constraint(dropped);
         });
         assert!(check::check(&wrong).is_err(), "constraint {dropped}");
         missing += usize::from(refused(&wrong, "constraints are not the circuit's"));
@@ -1421,12 +1425,12 @@ fn a_dropped_constraint_is_caught() -> Result<()> {
     for dropped in 0..constraints {
         let other = (dropped + 1) % constraints;
         let wrong = compiled(&paged, |plan| {
-            let filler = plan.programs[page].constraints[other].clone();
-            plan.programs[page].constraints[dropped] = filler;
+            let filler = plan.programs[page].constraint(other).clone();
+            *plan.programs[page].constraint(dropped) = filler;
         });
         assert!(check::check(&wrong).is_err(), "constraint {dropped}");
         let wrong = compiled(&paged, |plan| {
-            plan.programs[page].constraints[dropped].clear();
+            plan.programs[page].constraint(dropped).clear();
         });
         assert!(check::check(&wrong).is_err(), "constraint {dropped}");
     }
@@ -1453,7 +1457,7 @@ fn a_slot_no_page_writes_cannot_be_read() -> Result<()> {
     ] {
         for page in [0, last] {
             let wrong = compiled(&paged, |plan| {
-                plan.programs[page].constraints[0].push((wire, one));
+                plan.programs[page].constraint(0).push((wire, one));
             });
             assert!(
                 refused(&wrong, "constraints are not the circuit's"),
@@ -1473,21 +1477,21 @@ fn a_slot_is_written_by_the_page_that_holds_its_wires() -> Result<()> {
     // The first page reads no slot, so a constraint of its own that names
     // one writes it. One over gates' wires alone is as well formed on the
     // next page, which holds no fewer gates.
-    let definition = paged.plan.programs[0]
-        .constraints
-        .iter()
-        .position(|terms| {
+    let mut first = paged.plan.programs[0].clone();
+    let definition = (0..first.constraints())
+        .position(|index| {
+            let terms = first.constraint(index);
             terms.iter().any(|&(wire, _)| slot(wire))
                 && terms.iter().all(|&(wire, _)| wire & DERIVED == 0)
         })
         .expect("the first page writes a slot over its gates' wires");
-    assert!(paged.plan.programs[0].own <= paged.plan.programs[1].own);
+    assert!(paged.plan.programs[0].gates() <= paged.plan.programs[1].gates());
 
     // The same constraint on the next page is over that page's gates: the
     // slot is left without the page that holds its wires.
     let wrong = compiled(&paged, |plan| {
-        let moved = plan.programs[0].constraints.remove(definition);
-        plan.programs[1].constraints.push(moved);
+        let moved = plan.programs[0].drop_constraint(definition);
+        plan.programs[1].enforce(moved);
     });
     assert!(refused(
         &wrong,

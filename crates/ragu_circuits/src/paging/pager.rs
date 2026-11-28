@@ -405,12 +405,7 @@ impl<F: Field> Draft<F> {
         };
 
         let mut programs: Vec<Program<F>> = (0..pages)
-            .map(|page| Program {
-                own: self.held[page].len(),
-                sums: Vec::new(),
-                constraints: Vec::new(),
-                outputs: Vec::new(),
-            })
+            .map(|page| Program::new(self.held[page].len()))
             .collect();
         // For a page and the wires asked of it, those of its own gates
         // or all it has: the wire each of the circuit's combinations is
@@ -461,11 +456,7 @@ impl<F: Field> Draft<F> {
                     known[index as usize] = match sum[..] {
                         [] => NOTHING,
                         [(wire, coeff)] if coeff == F::ONE => wire,
-                        _ => {
-                            let sums = &mut programs[page].sums;
-                            sums.push(coeffs(sum));
-                            DERIVED | (sums.len() - 1) as u32
-                        }
+                        _ => programs[page].sum(coeffs(sum)),
                     };
                 }
                 resolve(known, terms)
@@ -494,14 +485,14 @@ impl<F: Field> Draft<F> {
             named.extend(links.iter().map(|link| (slot(link), link.scale)));
             let program = &mut programs[page];
             match home {
-                Some(_) => program.constraints.push(coeffs(named)),
+                Some(_) => program.enforce(coeffs(named)),
                 None => program.outputs.push(coeffs(named)),
             }
             for link in links.iter().filter(|link| link.defines) {
                 let exporter = link.exporter as usize;
                 let mut named = held(&mut programs, exporter, Some(link.exporter), &terms);
                 named.push((slot(link), -link.scale));
-                programs[exporter].constraints.push(coeffs(named));
+                programs[exporter].enforce(coeffs(named));
             }
         }
         self.programs = programs;

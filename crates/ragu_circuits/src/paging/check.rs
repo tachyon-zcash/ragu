@@ -201,7 +201,7 @@ fn places<F: Field>(
             }
             *place = Some((page, first + offset));
         }
-        if plan.programs[page].own != held.len() {
+        if plan.programs[page].gates() != held.len() {
             return refuse(format!("page {page} allocates other gates than it holds"));
         }
     }
@@ -242,7 +242,7 @@ fn page_symbol<F: Field>(
     if gate == 0 {
         return Ok(Symbol::One);
     }
-    let page_body = layout.carry.end + plan.programs[page].own;
+    let page_body = layout.carry.end + plan.programs[page].gates();
     if gate >= page_body {
         // Only the last page writes the public output. Its extra gates are
         // allocated in the same order as the unpaged circuit's output gates.
@@ -313,7 +313,7 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
         } else {
             Recording::<F>::all_of(&paged.page(page))?
         };
-        let page_body = layout.carry.end + plan.programs[page].own;
+        let page_body = layout.carry.end + plan.programs[page].gates();
         let expected_gates = page_body
             + if page + 1 == plan.pages() {
                 output_gates
@@ -325,7 +325,7 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
                 "page {page} allocates other output gates than the circuit"
             ));
         }
-        let body_len = plan.programs[page].constraints.len();
+        let body_len = plan.programs[page].constraints();
         if constraints.len() <= body_len
             || (page + 1 != plan.pages() && constraints.len() != body_len + 2)
         {

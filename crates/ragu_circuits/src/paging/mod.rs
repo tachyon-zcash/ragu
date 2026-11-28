@@ -505,24 +505,130 @@ struct Plan<F: Field> {
     constraints: usize,
 }
 
+/// The wires a step names, each with its coefficient.
+type Terms<F> = Vec<(u32, Coeff<F>)>;
+
+/// One thing a page does.
+///
+/// A step names wires of the page: [`ONE`]; the $a$ and $d$ wires of a
+/// gate of the stages or of the carry stage, and the wires of a gate of
+/// the page's own allocated before the step, each `4 * gate + kind` with
+/// the gate counted as the page allocates its gates, from the SYSTEM gate;
+/// and what a step before it made, by [`DERIVED`] and its place among what
+/// the steps make.
+#[derive(Clone, Debug)]
+enum Step<F: Field> {
+    /// Allocates this many gates of the page's own, the next ones.
+    Gates(usize),
+    /// Makes a linear combination: what the circuit's own combinations
+    /// have of the page's wires, or of the page's own gates' among them.
+    Sum(Terms<F>),
+    /// Enforces a constraint.
+    Enforce(Terms<F>),
+}
+
 /// What one page allocates and enforces, taken off the plan and a walk of
 /// the circuit: the page replays it on any driver, and walks no part of the
 /// circuit that another page holds.
 #[derive(Clone, Debug)]
 struct Program<F: Field> {
-    /// The gates of its own the page allocates, past the carry stage.
-    own: usize,
-    /// The linear combinations it makes, in order, each over its wires and
-    /// the combinations before it: what the circuit's own combinations
-    /// have of the page's wires, or of the page's own gates' among them. A
-    /// wire is named `4 * gate + kind` with the gate counted in the page's
-    /// polynomial, [`ONE`], or [`DERIVED`] with a combination's index.
-    sums: Vec<Vec<(u32, Coeff<F>)>>,
-    /// Its constraints, over the same wires.
-    constraints: Vec<Vec<(u32, Coeff<F>)>>,
+    /// What the page does, in order.
+    steps: Vec<Step<F>>,
+    /// What the steps make, counted: the next step that makes a wire names
+    /// it by this.
+    made: u32,
     /// The wires of the public output, on the last page: each a
-    /// combination of the same wires.
-    outputs: Vec<Vec<(u32, Coeff<F>)>>,
+    /// combination of the page's wires, made after its steps.
+    outputs: Vec<Terms<F>>,
+}
+
+impl<F: Field> Program<F> {
+    /// A page that allocates `own` gates of its own, and does nothing yet.
+    fn new(own: usize) -> Self {
+        Program {
+            steps: alloc::vec![Step::Gates(own)],
+            made: 0,
+            outputs: Vec::new(),
+        }
+    }
+
+    /// Makes a linear combination, and gives the wire that names it.
+    fn sum(&mut self, terms: Terms<F>) -> u32 {
+        self.steps.push(Step::Sum(terms));
+        self.made += 1;
+        DERIVED | (self.made - 1)
+    }
+
+    /// Enforces a constraint.
+    fn enforce(&mut self, terms: Terms<F>) {
+        self.steps.push(Step::Enforce(terms));
+    }
+
+    /// The gates of its own the page allocates, past the carry stage.
+    fn gates(&self) -> usize {
+        self.steps
+            .iter()
+            .map(|step| match step {
+                Step::Gates(gates) => *gates,
+                Step::Sum(_) | Step::Enforce(_) => 0,
+            })
+            .sum()
+    }
+
+    /// The constraints the page enforces, before those of its output.
+    fn constraints(&self) -> usize {
+        self.steps
+            .iter()
+            .filter(|step| matches!(step, Step::Enforce(_)))
+            .count()
+    }
+}
+
+#[cfg(test)]
+impl<F: Field> Program<F> {
+    /// The gates the page's first step allocates, for a test to change.
+    fn own_mut(&mut self) -> &mut usize {
+        match &mut self.steps[0] {
+            Step::Gates(gates) => gates,
+            _ => panic!("a page allocates its gates first"),
+        }
+    }
+
+    /// The place among the steps of each constraint the page enforces.
+    fn enforced(&self) -> Vec<usize> {
+        (0..self.steps.len())
+            .filter(|&step| matches!(self.steps[step], Step::Enforce(_)))
+            .collect()
+    }
+
+    /// The page's `index`-th constraint.
+    fn constraint(&mut self, index: usize) -> &mut Terms<F> {
+        let step = self.enforced()[index];
+        match &mut self.steps[step] {
+            Step::Enforce(terms) => terms,
+            _ => unreachable!("a constraint"),
+        }
+    }
+
+    /// Takes the page's `index`-th constraint off it.
+    fn drop_constraint(&mut self, index: usize) -> Terms<F> {
+        let step = self.enforced()[index];
+        match self.steps.remove(step) {
+            Step::Enforce(terms) => terms,
+            _ => unreachable!("a constraint"),
+        }
+    }
+
+    /// The first combination the page makes.
+    fn first_sum(&mut self) -> &mut Terms<F> {
+        self.steps
+            .iter_mut()
+            .find_map(|step| match step {
+                Step::Sum(terms) => Some(terms),
+                _ => None,
+            })
+            .expect("the page makes a combination")
+    }
 }
 
 impl<F: Field> Plan<F> {
