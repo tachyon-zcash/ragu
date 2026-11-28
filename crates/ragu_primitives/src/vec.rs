@@ -1,7 +1,7 @@
 //! Provides [`FixedVec`], a wrapper around [`Vec<T>`] with a compile-time
-//! length guarantee.
+//! length guarantee that allows it to implement [`Gadget`].
 //!
-//! A `Vec<T>` of gadgets is not a [`Gadget`]: its type does not fix its
+//! A `Vec<T>` of gadgets is not a `Gadget`: its type does not fix its
 //! length, and for an arbitrary `T` the number of wires does not give the
 //! length back, as fungibility asks of a gadget whose number of wires
 //! varies. Ragu provides `Gadget` implementations for `[T; N]` and

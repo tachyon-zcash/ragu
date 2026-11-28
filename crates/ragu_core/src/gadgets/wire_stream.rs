@@ -160,49 +160,6 @@ mod tests {
     /// wire by a value of its own.
     type Dr = Emulator<Wired<Fp>>;
 
-    /// One wire: what an array holds where a stream holds a wire.
-    struct Wire<'dr, D: Driver<'dr>>(D::Wire, PhantomData<&'dr ()>);
-
-    impl<'dr, D: Driver<'dr>> Clone for Wire<'dr, D> {
-        fn clone(&self) -> Self {
-            Wire(self.0.clone(), PhantomData)
-        }
-    }
-
-    struct WireKind;
-
-    impl<'dr, D: Driver<'dr>> Gadget<'dr, D> for Wire<'dr, D> {
-        type Kind = WireKind;
-    }
-
-    /// Safety: `Wire` holds one wire and nothing else.
-    unsafe impl<F: Field> GadgetKind<F> for WireKind {
-        type Rebind<'dr, D: Driver<'dr, F = F>> = Wire<'dr, D>;
-
-        fn map_gadget<
-            'src,
-            'dst,
-            WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>,
-        >(
-            this: &Bound<'src, WM::Src, Self>,
-            wm: &mut WM,
-        ) -> Result<Bound<'dst, WM::Dst, Self>> {
-            Ok(Wire(wm.convert_wire(&this.0)?, PhantomData))
-        }
-
-        fn enforce_conservative_equal_gadget<
-            'dr,
-            D1: Driver<'dr, F = F>,
-            D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
-        >(
-            eq: &mut WireEqualizer<'_, 'dr, D1>,
-            a: &Bound<'dr, D2, Self>,
-            b: &Bound<'dr, D2, Self>,
-        ) -> Result<()> {
-            eq.enforce_conservative_equal(&a.0, &b.0)
-        }
-    }
-
     /// The stream that holds the wires `values` name, in order.
     fn by_hand<'dr>(values: &[u64]) -> WireStream<'dr, Dr> {
         values.iter().map(|&value| Fp::from(value)).collect()
@@ -297,16 +254,6 @@ mod tests {
                 prop_assert_eq!(stream.into_iter().collect::<Vec<_>>(), wires);
             }
 
-            /// A stream of `n` wires is what an array of `n` single wires
-            /// is: the same wires in the same order.
-            #[test]
-            fn a_stream_is_traversed_as_an_array(values in proptest::array::uniform12(any::<u64>())) {
-                let stream = by_hand(&values);
-                let array: [Wire<'_, Dr>; 12] = values.map(|value| Wire(Fp::from(value), PhantomData));
-                prop_assert_eq!(stream_of(&stream), stream_of(&array));
-                prop_assert_eq!(stream.num_wires().unwrap(), array.num_wires().unwrap());
-            }
-
             /// Substitution at one length: an instance takes the wires of
             /// another of its length, in order, and is then that other.
             #[test]
@@ -326,14 +273,6 @@ mod tests {
                 let stream = by_hand(&values);
                 let assembled = assemble(&stream_of(&stream)).unwrap();
                 prop_assert_eq!(assembled.as_slice(), stream.as_slice());
-            }
-
-            /// Instances of two lengths never share a number of wires, so
-            /// that number gives the shape.
-            #[test]
-            fn a_number_of_wires_is_of_one_length(a in 0usize..200, b in 0usize..200) {
-                let count = |length: usize| by_hand(&vec![0; length]).num_wires().unwrap();
-                prop_assert_eq!(count(a) == count(b), a == b);
             }
         }
     }

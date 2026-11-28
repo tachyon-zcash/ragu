@@ -606,14 +606,13 @@ this property **allocation determinism**:
 Allocation determinism is the part of
 [fungibility](../guide/gadgets/index.md#fungibility) that injection rests on.
 It is strictly weaker than wire-layout determinism, in which the type alone
-fixes the wires of every instance: a gadget kind may own a runtime-sized
-collection (the stream length resolves the count, and any divergence is
-already caught by the fingerprint), so `Vec`-shaped gadgets are admissible.
-The stream length resolves the count for one collection of elements with a
-fixed, nonzero number of wires, and Ragu provides one such gadget:
-[`WireStream`], a run of bare wires. A kind with two runtime lengths, such as
-a `Vec` of `Vec`s or two `WireStream`s, has several shapes over one stream
-length and is not admissible, which is why `Vec<G>` is not a gadget. What it
+fixes the wires of every instance: a gadget kind may own one runtime-sized
+collection of elements with a fixed, nonzero number of wires (the stream
+length resolves the count, and any divergence is already caught by the
+fingerprint). Ragu provides one such gadget: [`WireStream`], a run of bare
+wires. A kind with two runtime lengths, such as a `Vec` of `Vec`s or two
+`WireStream`s, has several shapes over one stream length and is not
+admissible, which is why `Vec<G>` is not a gadget for every `G`. What it
 also rules out are shapes that need
 a side-channel discriminant — most notably enum-shaped gadgets, where
 variant choice cannot in general be recovered from the wire stream (two
