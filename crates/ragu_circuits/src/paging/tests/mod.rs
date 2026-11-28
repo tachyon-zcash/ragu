@@ -16,7 +16,12 @@ use ragu_primitives::{
 };
 use rand::Rng;
 
-use super::{pager::*, record::*, replay::Step, *};
+use super::{
+    pager::*,
+    record::*,
+    replay::{Body, Step},
+    *,
+};
 use crate::{
     Blind, Circuit, CircuitExt, WiringObject, WithAux, floor_planner, into_wiring_object,
     polynomials::sparse,
@@ -2048,6 +2053,18 @@ fn a_routine_takes_a_stages_wires() -> Result<()> {
     Ok(())
 }
 
+/// The first routine the first page of `plan` calls.
+fn first_call(plan: &mut Plan<Fp>) -> &mut Arc<Body<Fp>> {
+    plan.programs[0]
+        .steps
+        .iter_mut()
+        .find_map(|step| match step {
+            Step::Call(body, _) => Some(body),
+            _ => None,
+        })
+        .expect("the first page calls a routine")
+}
+
 /// The check holds the pages to the routines the circuit calls, and not
 /// only to its constraints: a page that calls a routine with two of its
 /// constraints in each other's place enforces what the circuit does, and
@@ -2057,14 +2074,7 @@ fn a_page_that_calls_another_routine_is_caught() -> Result<()> {
     let paged = fitted(flat(Called::<5>), 20)?;
     check::check(&paged)?;
     let wrong = compiled(&paged, |plan| {
-        let call = plan.programs[0]
-            .steps
-            .iter_mut()
-            .find_map(|step| match step {
-                Step::Call(body, _) => Some(body),
-                _ => None,
-            })
-            .expect("the first page calls a routine");
+        let call = first_call(plan);
         *call = Arc::new(call.changed(|steps| {
             let enforced: Vec<usize> = (0..steps.len())
                 .filter(|&step| matches!(steps[step], Step::Enforce(_)))
@@ -2072,6 +2082,27 @@ fn a_page_that_calls_another_routine_is_caught() -> Result<()> {
             steps.swap(enforced[0], enforced[1]);
         }));
     });
-    assert!(refused(&wrong, "which are not the"));
+    assert!(refused(&wrong, "a routine more times than"));
+    Ok(())
+}
+
+/// The check of the relation reaches into the routines a page calls: a
+/// routine that does not enforce one of its constraints is refused for the
+/// constraint, before the routines are compared.
+#[test]
+fn a_constraint_dropped_within_a_routine_is_caught() -> Result<()> {
+    let paged = fitted(flat(Called::<5>), 20)?;
+    check::check(&paged)?;
+    let wrong = compiled(&paged, |plan| {
+        let call = first_call(plan);
+        *call = Arc::new(call.changed(|steps| {
+            let enforced = steps
+                .iter()
+                .position(|step| matches!(step, Step::Enforce(_)))
+                .expect("the routine enforces a constraint");
+            steps.remove(enforced);
+        }));
+    });
+    assert!(refused(&wrong, "constraints are not the circuit's"));
     Ok(())
 }

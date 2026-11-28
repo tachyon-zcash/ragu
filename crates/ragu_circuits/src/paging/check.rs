@@ -309,13 +309,49 @@ fn check_routines<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>) 
     for page in 0..last {
         found.extend(routines(&paged.page(page))?);
     }
-    called.sort_unstable();
-    found.sort_unstable();
-    if called != found {
+    // A fingerprint has no order of its own. This one brings equal ones
+    // together, and the comparison below is of the fingerprints whole.
+    let key = |routine: &DeepFingerprint| {
+        let base = routine.base();
+        (routine.deep(), base.num_gates(), base.num_constraints())
+    };
+    let describe = |routine: &DeepFingerprint| {
+        let base = routine.base();
+        format!(
+            "its own segment has {} gates and {} constraints, and its deep fingerprint is \
+             {:#018x}",
+            base.num_gates(),
+            base.num_constraints(),
+            routine.deep(),
+        )
+    };
+    called.sort_unstable_by_key(key);
+    found.sort_unstable_by_key(key);
+    // The first routine that one side calls more times than the other.
+    let mut found = found.iter().peekable();
+    for routine in &called {
+        match found.peek() {
+            Some(&other) if other == routine => {
+                found.next();
+            }
+            Some(&other) if key(other) < key(routine) => {
+                return refuse(format!(
+                    "the pages call a routine more times than the circuit does: {}",
+                    describe(other)
+                ));
+            }
+            _ => {
+                return refuse(format!(
+                    "the circuit calls a routine more times than the pages do: {}",
+                    describe(routine)
+                ));
+            }
+        }
+    }
+    if let Some(other) = found.next() {
         return refuse(format!(
-            "the pages call {} routines, which are not the {} the circuit calls",
-            found.len(),
-            called.len()
+            "the pages call a routine more times than the circuit does: {}",
+            describe(other)
         ));
     }
     Ok(())
@@ -339,15 +375,13 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
     let body = Recording::<F>::raw_of(&*paged.circuit)?;
     let (body_gates, body_constraints) = (body.num_gates, body.raw.len());
     let places = places(plan, stages, layout, body_gates)?;
-    // A routine the circuit calls has its gates on one page, together,
-    // and that page calls it.
+    // A routine the circuit calls has its gates on one page, together.
     let place = |gate: usize| places.get(gate.checked_sub(stages.own_start())?).copied();
     if let Some(routine) = body.split_routine(place) {
         return refuse(format!(
             "the pages split a routine the circuit calls, at gates {routine:?}"
         ));
     }
-    check_routines(paged)?;
     let original = Recording::<F>::whole_of(&*paged.circuit)?;
     let Some(output_gates) = original.num_gates.checked_sub(body_gates) else {
         return refuse("the circuit's output gates precede its body".into());
@@ -469,8 +503,12 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
     // The public output's constraints end with one for each wire the
     // circuit writes, in order, and the final `ONE`: the last wire's names
     // no wire where the circuit writes a constant zero there.
-    Ok(original_output
+    let ends_in_zero = original_output
         .len()
         .checked_sub(2)
-        .is_some_and(|last| Form::from_original(&original_output[last].1).0.is_empty()))
+        .is_some_and(|last| Form::from_original(&original_output[last].1).0.is_empty());
+    // Last, and apart from the relation: what the pages enforce is held to
+    // the circuit's by now, whatever routine emits it.
+    check_routines(paged)?;
+    Ok(ends_in_zero)
 }

@@ -194,8 +194,10 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     ///
     /// Fails if the plan is laid over other stages than the circuit's, a
     /// walk fails, a page names a wire it does not hold, a gate is missing
-    /// or repeated, a carry slot lacks its definition, or the constraints
-    /// differ.
+    /// or repeated, the gates of a routine the circuit calls are not
+    /// together on one page, a carry slot lacks its definition, the
+    /// constraints differ, or the pages call other routines than the
+    /// circuit calls.
     pub fn check(self) -> Result<Checked<F, R, S>> {
         let ends_in_zero = super::check::check(&self)?;
         Ok(Checked {
