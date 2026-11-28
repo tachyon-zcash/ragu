@@ -278,8 +278,7 @@ fn page_symbol<F: Field>(
 }
 
 /// The fingerprint of each routine `circuit` calls, those called within
-/// another included, in the order the walk meets the calls: what a driver
-/// tells one routine from another by.
+/// another included, in the order the walk meets the calls.
 fn routines<F: Field, C: Circuit<F>>(circuit: &C) -> Result<Vec<DeepFingerprint>> {
     Ok(metrics::eval(circuit)?
         .segments
@@ -300,8 +299,10 @@ fn routines<F: Field, C: Circuit<F>>(circuit: &C) -> Result<Vec<DeepFingerprint>
 /// gates and enforces its constraints as its own, outside any routine, or
 /// in another order, has not called it. This is not what holds the pages
 /// to the circuit's relation: the constraints are compared whole, whatever
-/// routine emits them. It holds a page's segments to the circuit's, which
-/// a driver that keeps what a routine emits relies on.
+/// routine emits them. It holds a page's segments to the circuit's. No
+/// driver reads the fingerprints yet: a driver that memoizes routines
+/// (#503) will key on them, and will then find on a page the routines it
+/// finds in the circuit.
 fn check_routines<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>) -> Result<()> {
     let mut called = routines(&*paged.circuit)?;
     let last = paged.plan.pages() - 1;

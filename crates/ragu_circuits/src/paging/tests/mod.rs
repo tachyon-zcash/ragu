@@ -413,7 +413,7 @@ fn a_missing_carry_definition_cannot_hide_behind_a_zero_constraint() -> Result<(
     draft.compile(&recording);
     // The old value-based check included one zero for each slot definition.
     // A planner could replace a missing definition with 0 = 0 and pass it.
-    draft.programs[exporter].enforce(Vec::new());
+    draft.programs[exporter].enforce_zero(Vec::new());
     let wrong = Pages::over(paged.circuit.clone(), Arc::new(draft.finish()), report);
     assert!(matches!(
         check::check(&wrong),
@@ -633,20 +633,25 @@ fn recorded<C: Circuit<Fp>>(circuit: &C) -> Result<Monomials<Fp>> {
 
     // The segment of each gate and of each constraint: the innermost call
     // that emits it, or none.
-    fn segments(calls: &[Call], gates: &mut [usize], constraints: &mut [usize], next: &mut usize) {
+    fn segments(
+        calls: &[Invocation],
+        gates: &mut [usize],
+        constraints: &mut [usize],
+        next: &mut usize,
+    ) {
         for call in calls {
             let segment = *next;
             *next += 1;
             gates[call.gates.clone()].fill(segment);
             constraints[call.constraints.clone()].fill(segment);
-            segments(&call.calls, gates, constraints, next);
+            segments(&call.invocations, gates, constraints, next);
         }
     }
     let mut gates = vec![0; recording.num_gates];
     let mut constraints = vec![0; count];
     let mut segments_len = 1;
     segments(
-        &recording.calls,
+        &recording.invocations,
         &mut gates,
         &mut constraints,
         &mut segments_len,
@@ -1364,43 +1369,46 @@ impl<const CALLS: usize> Circuit<Fp> for Wrapped<CALLS> {
 #[test]
 fn a_recording_keeps_the_calls() -> Result<()> {
     let recording = Recording::of(&flat(Wrapped::<5>))?;
-    assert_eq!(recording.calls.len(), 5);
+    assert_eq!(recording.invocations.len(), 5);
     assert_eq!(recording.routines().count(), 5);
-    // Every name the walk gives is a combination of one wire.
+    // Every name the walk gives is a virtual wire that holds one wire.
     let renamed = |names: &Range<usize>| {
         names
             .clone()
-            .all(|name| matches!(recording.derived[name][..], [(_, coeff)] if coeff == Fp::ONE))
+            .all(|name| matches!(recording.virtuals[name][..], [(_, coeff)] if coeff == Fp::ONE))
     };
     let mut names = 0;
-    for (call, routine) in recording.calls.iter().zip(recording.routines()) {
+    for (call, routine) in recording.invocations.iter().zip(recording.routines()) {
         assert_eq!(&call.gates, routine);
         // Its own square and product, and the six squarings within.
         assert_eq!(call.gates.len(), 8);
         assert_eq!((call.inputs.len(), call.outputs.len()), (1, 2));
-        assert_eq!(call.inputs.end, call.sums.start);
-        assert_eq!(call.sums.end, call.outputs.start);
+        assert_eq!(call.inputs.end, call.internal.start);
+        assert_eq!(call.internal.end, call.outputs.start);
         assert!(renamed(&call.inputs) && renamed(&call.outputs));
 
-        let [inner] = &call.calls[..] else {
+        let [inner] = &call.invocations[..] else {
             panic!("one call within");
         };
         assert_eq!(inner.gates, call.gates.start + 1..call.gates.end - 1);
         assert_eq!((inner.inputs.len(), inner.outputs.len()), (1, 1));
-        assert!(inner.calls.is_empty());
+        assert!(inner.invocations.is_empty());
         assert!(renamed(&inner.inputs) && renamed(&inner.outputs));
         // What is within the inner call is within the outer one.
         let within = |inner: &Range<usize>, outer: &Range<usize>| {
             outer.start <= inner.start && inner.end <= outer.end
         };
         assert!(within(&inner.constraints, &call.constraints));
-        assert!(within(&(inner.inputs.start..inner.outputs.end), &call.sums));
+        assert!(within(
+            &(inner.inputs.start..inner.outputs.end),
+            &call.internal
+        ));
 
         // What the call emits names its own gates, its own names and
         // `ONE`, and nothing else of the circuit.
         let own = |wire: u32| {
-            if wire & DERIVED != 0 {
-                (call.inputs.start..call.outputs.start).contains(&((wire ^ DERIVED) as usize))
+            if wire & VIRTUAL != 0 {
+                (call.inputs.start..call.outputs.start).contains(&((wire ^ VIRTUAL) as usize))
             } else {
                 wire == ONE || call.gates.contains(&((wire / 4) as usize))
             }
@@ -1408,14 +1416,14 @@ fn a_recording_keeps_the_calls() -> Result<()> {
         for (_, terms) in &recording.raw[call.constraints.clone()] {
             assert!(terms.iter().all(|&(wire, _)| own(wire)), "{terms:?}");
         }
-        for terms in &recording.derived[call.sums.clone()] {
+        for terms in &recording.virtuals[call.internal.clone()] {
             assert!(terms.iter().all(|&(wire, _)| own(wire)), "{terms:?}");
         }
         names += call.inputs.len() + call.outputs.len();
         names += inner.inputs.len() + inner.outputs.len();
     }
-    // The names are not combinations the circuit made.
-    assert_eq!(recording.adds + names, recording.derived.len());
+    // The names are not virtual wires the circuit made.
+    assert_eq!(recording.adds + names, recording.virtuals.len());
     // Followed back to the gates' wires, the recording is what it was: the
     // pages of the circuit are still the circuit's.
     let paged = fitted(flat(Wrapped::<5>), 20)?;
@@ -1439,20 +1447,20 @@ fn a_program_that_names_a_wire_it_does_not_hold_is_refused() -> Result<()> {
     let one = Coeff::Arbitrary(Fp::ONE);
     let refusal = "names a wire it does not hold";
 
-    // A combination the page never makes.
+    // A virtual wire the page never makes.
     let wrong = compiled(&paged, |plan| {
         plan.programs[0]
             .constraint(0)
-            .push((DERIVED | 0x00ff_ffff, one));
+            .push((VIRTUAL | 0x00ff_ffff, one));
     });
     assert!(refused(&wrong, refusal));
 
-    // A combination made after the one that names it.
+    // A virtual wire made after the one that names it.
     let wrong = compiled(&paged, |plan| {
-        let made = plan.programs[1].made;
+        let made = plan.programs[1].virtuals;
         plan.programs[1]
-            .first_sum()
-            .push((DERIVED | (made - 1), one));
+            .first_add()
+            .push((VIRTUAL | (made - 1), one));
     });
     assert!(refused(&wrong, refusal));
 
@@ -1546,7 +1554,7 @@ fn a_slot_is_written_by_the_page_that_holds_its_wires() -> Result<()> {
     let paged = fitted(flat(Chain::<100, 3>), 8)?;
     check::check(&paged)?;
     let carry = paged.layout().carry.clone();
-    let slot = |wire: u32| wire & DERIVED == 0 && carry.contains(&((wire / 4) as usize));
+    let slot = |wire: u32| wire & VIRTUAL == 0 && carry.contains(&((wire / 4) as usize));
     // The first page reads no slot, so a constraint of its own that names
     // one writes it. One over gates' wires alone is as well formed on the
     // next page, which holds no fewer gates.
@@ -1555,7 +1563,7 @@ fn a_slot_is_written_by_the_page_that_holds_its_wires() -> Result<()> {
         .position(|index| {
             let terms = first.constraint(index);
             terms.iter().any(|&(wire, _)| slot(wire))
-                && terms.iter().all(|&(wire, _)| wire & DERIVED == 0)
+                && terms.iter().all(|&(wire, _)| wire & VIRTUAL == 0)
         })
         .expect("the first page writes a slot over its gates' wires");
     assert!(paged.plan.programs[0].gates() <= paged.plan.programs[1].gates());
@@ -1564,7 +1572,7 @@ fn a_slot_is_written_by_the_page_that_holds_its_wires() -> Result<()> {
     // slot is left without the page that holds its wires.
     let wrong = compiled(&paged, |plan| {
         let moved = plan.programs[0].drop_constraint(definition);
-        plan.programs[1].enforce(moved);
+        plan.programs[1].enforce_zero(moved);
     });
     assert!(refused(
         &wrong,
@@ -2054,12 +2062,12 @@ fn a_routine_takes_a_stages_wires() -> Result<()> {
 }
 
 /// The first routine the first page of `plan` calls.
-fn first_call(plan: &mut Plan<Fp>) -> &mut Arc<Body<Fp>> {
+fn first_routine(plan: &mut Plan<Fp>) -> &mut Arc<Body<Fp>> {
     plan.programs[0]
         .steps
         .iter_mut()
         .find_map(|step| match step {
-            Step::Call(body, _) => Some(body),
+            Step::Routine(body, _) => Some(body),
             _ => None,
         })
         .expect("the first page calls a routine")
@@ -2074,10 +2082,10 @@ fn a_page_that_calls_another_routine_is_caught() -> Result<()> {
     let paged = fitted(flat(Called::<5>), 20)?;
     check::check(&paged)?;
     let wrong = compiled(&paged, |plan| {
-        let call = first_call(plan);
+        let call = first_routine(plan);
         *call = Arc::new(call.changed(|steps| {
             let enforced: Vec<usize> = (0..steps.len())
-                .filter(|&step| matches!(steps[step], Step::Enforce(_)))
+                .filter(|&step| matches!(steps[step], Step::EnforceZero(_)))
                 .collect();
             steps.swap(enforced[0], enforced[1]);
         }));
@@ -2094,11 +2102,11 @@ fn a_constraint_dropped_within_a_routine_is_caught() -> Result<()> {
     let paged = fitted(flat(Called::<5>), 20)?;
     check::check(&paged)?;
     let wrong = compiled(&paged, |plan| {
-        let call = first_call(plan);
+        let call = first_routine(plan);
         *call = Arc::new(call.changed(|steps| {
             let enforced = steps
                 .iter()
-                .position(|step| matches!(step, Step::Enforce(_)))
+                .position(|step| matches!(step, Step::EnforceZero(_)))
                 .expect("the routine enforces a constraint");
             steps.remove(enforced);
         }));

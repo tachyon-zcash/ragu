@@ -5,6 +5,13 @@
 //! is part of what a page's soundness rests on: it gives each name of a
 //! step its wire, refuses a name that the page does not hold, and calls a
 //! routine through [`Driver::routine`].
+//!
+//! "Replay" here is of a recording: every gate is allocated and every
+//! constraint is enforced again, on the driver the page is run on. It is
+//! not the replay the book describes for a driver that memoizes routines,
+//! which skips a routine's body on a cache hit and adds what it kept of
+//! it. A [`Replayed`] routine is one such a driver could memoize, as it
+//! could the routine of the circuit.
 
 use alloc::{sync::Arc, vec::Vec};
 use core::marker::PhantomData;
@@ -18,38 +25,40 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::{DERIVED, ONE, diverged};
+use super::{ONE, VIRTUAL, diverged};
 
 /// The wires a step names, each with its coefficient.
 pub(super) type Terms<F> = Vec<(u32, Coeff<F>)>;
 
-/// One thing a page does, or a routine it calls.
+/// One thing a page does, or a routine it calls: one call to the
+/// [`Driver`] method its variant is named after ([`Gates`](Self::Gates)
+/// is so many calls to `Driver::gate`).
 ///
 /// A step names wires of what runs it. For a page: [`ONE`]; the $a$ and
 /// $d$ wires of a gate of the stages or of the carry stage, and the wires
 /// of a gate of the page's own that a step before it allocated, each
 /// `4 * gate + kind` with the gate counted as the page's steps allocate
-/// them, after the SYSTEM gate and the stages'; and what a step before it
-/// made, by [`DERIVED`] and its place among what the steps make. For a
-/// routine ([`Body`]) likewise, without the stages: its own gates are
-/// counted from one, and its inputs are the first of what is made.
+/// them, after the SYSTEM gate and the stages'; and a virtual wire that a
+/// step before it made, by [`VIRTUAL`] and its place among those the steps
+/// make. For a routine ([`Body`]) likewise, without the stages: its own
+/// gates are counted from one, and its inputs are its first virtual wires.
 ///
 /// The gates a routine allocates are not the caller's to name: the caller
-/// names the routine's outputs, which a call makes.
+/// names the routine's outputs, which are virtual wires of the caller's.
 #[derive(Clone, Debug)]
 pub(super) enum Step<F: Field> {
     /// Allocates this many gates of the page's own, or of the routine's,
     /// the next ones.
     Gates(usize),
-    /// Makes a linear combination. For a page, it is what the circuit's
-    /// own combinations have of the page's wires, or of the page's own
-    /// gates' among them, or a wire a routine takes.
-    Sum(Terms<F>),
-    /// Enforces a constraint.
-    Enforce(Terms<F>),
+    /// Makes a virtual wire of the terms. For a page, it is what a
+    /// virtual wire of the circuit's has of the page's wires, or of the
+    /// page's own gates' among them, or a wire a routine takes.
+    Add(Terms<F>),
+    /// Enforces that the terms sum to zero.
+    EnforceZero(Terms<F>),
     /// Calls a routine on the wires named, as a routine of the driver's,
-    /// and makes each wire of its output.
-    Call(Arc<Body<F>>, Vec<u32>),
+    /// and makes a virtual wire of each wire of its output.
+    Routine(Arc<Body<F>>, Vec<u32>),
 }
 
 /// A routine the circuit calls, as the page that holds it calls it: what
@@ -107,9 +116,9 @@ fn counts<F: Field>(steps: &[Step<F>]) -> (usize, usize) {
         .iter()
         .fold((0, 0), |(gates, constraints), step| match step {
             Step::Gates(own) => (gates + own, constraints),
-            Step::Sum(_) => (gates, constraints),
-            Step::Enforce(_) => (gates, constraints + 1),
-            Step::Call(body, _) => (gates + body.gates, constraints + body.constraints),
+            Step::Add(_) => (gates, constraints),
+            Step::EnforceZero(_) => (gates, constraints + 1),
+            Step::Routine(body, _) => (gates + body.gates, constraints + body.constraints),
         })
 }
 
@@ -121,11 +130,11 @@ pub(super) struct Program<F: Field> {
     /// What the page does, in order. Its first step allocates the gates
     /// of its own that no routine it calls allocates.
     pub(super) steps: Vec<Step<F>>,
-    /// What the steps make, counted: the next step that makes a wire names
-    /// it by this.
-    pub(super) made: u32,
-    /// The wires of the public output, on the last page: each a
-    /// combination of the page's wires, made after its steps.
+    /// The virtual wires the steps make, counted: the next one a step
+    /// makes is named by this.
+    pub(super) virtuals: u32,
+    /// The wires of the public output, on the last page: each a virtual
+    /// wire over the page's wires, made after its steps.
     pub(super) outputs: Vec<Terms<F>>,
 }
 
@@ -135,30 +144,30 @@ impl<F: Field> Program<F> {
     pub(super) fn new(own: usize) -> Self {
         Program {
             steps: alloc::vec![Step::Gates(own)],
-            made: 0,
+            virtuals: 0,
             outputs: Vec::new(),
         }
     }
 
-    /// Makes a linear combination, and gives the wire that names it.
-    pub(super) fn sum(&mut self, terms: Terms<F>) -> u32 {
-        self.steps.push(Step::Sum(terms));
-        self.made += 1;
-        DERIVED | (self.made - 1)
+    /// Makes a virtual wire of `terms`, and gives its name.
+    pub(super) fn add(&mut self, terms: Terms<F>) -> u32 {
+        self.steps.push(Step::Add(terms));
+        self.virtuals += 1;
+        VIRTUAL | (self.virtuals - 1)
     }
 
-    /// Enforces a constraint.
-    pub(super) fn enforce(&mut self, terms: Terms<F>) {
-        self.steps.push(Step::Enforce(terms));
+    /// Enforces that `terms` sum to zero.
+    pub(super) fn enforce_zero(&mut self, terms: Terms<F>) {
+        self.steps.push(Step::EnforceZero(terms));
     }
 
     /// Calls a routine on the wires `inputs` name, and gives the wire that
     /// names the first wire of its output: the others follow it.
-    pub(super) fn call(&mut self, body: Arc<Body<F>>, inputs: Vec<u32>) -> u32 {
-        let first = self.made;
-        self.made += u32::try_from(body.outputs.len()).expect("outputs fit a wire");
-        self.steps.push(Step::Call(body, inputs));
-        DERIVED | first
+    pub(super) fn routine(&mut self, body: Arc<Body<F>>, inputs: Vec<u32>) -> u32 {
+        let first = self.virtuals;
+        self.virtuals += u32::try_from(body.outputs.len()).expect("outputs fit a wire");
+        self.steps.push(Step::Routine(body, inputs));
+        VIRTUAL | first
     }
 
     /// The gates of its own the page allocates, past the carry stage:
@@ -187,7 +196,7 @@ impl<F: Field> Program<F> {
     /// The place among the steps of each constraint the page enforces.
     pub(super) fn enforced(&self) -> Vec<usize> {
         (0..self.steps.len())
-            .filter(|&step| matches!(self.steps[step], Step::Enforce(_)))
+            .filter(|&step| matches!(self.steps[step], Step::EnforceZero(_)))
             .collect()
     }
 
@@ -195,7 +204,7 @@ impl<F: Field> Program<F> {
     pub(super) fn constraint(&mut self, index: usize) -> &mut Terms<F> {
         let step = self.enforced()[index];
         match &mut self.steps[step] {
-            Step::Enforce(terms) => terms,
+            Step::EnforceZero(terms) => terms,
             _ => unreachable!("a constraint"),
         }
     }
@@ -204,17 +213,17 @@ impl<F: Field> Program<F> {
     pub(super) fn drop_constraint(&mut self, index: usize) -> Terms<F> {
         let step = self.enforced()[index];
         match self.steps.remove(step) {
-            Step::Enforce(terms) => terms,
+            Step::EnforceZero(terms) => terms,
             _ => unreachable!("a constraint"),
         }
     }
 
-    /// The first combination the page makes.
-    pub(super) fn first_sum(&mut self) -> &mut Terms<F> {
+    /// The first virtual wire the page makes.
+    pub(super) fn first_add(&mut self) -> &mut Terms<F> {
         self.steps
             .iter_mut()
             .find_map(|step| match step {
-                Step::Sum(terms) => Some(terms),
+                Step::Add(terms) => Some(terms),
                 _ => None,
             })
             .expect("the page makes a combination")
@@ -222,25 +231,27 @@ impl<F: Field> Program<F> {
 }
 
 /// The wires the steps of a page, or of a routine it calls, have names
-/// for.
-struct Frame<'a, W> {
+/// for: what the replay keeps for one of them, as a driver keeps a scope
+/// for each routine.
+struct Scope<'a, W> {
     one: W,
     /// The wires of the stages' and the carry stage's gates, two a gate,
     /// which the page's stage builder reserved. A routine has none.
     reserved: &'a [W],
     /// The wires of the gates of its own that the steps allocated so far.
     gates: Vec<[W; 4]>,
-    /// What the steps made so far: for a routine, after its inputs.
-    made: Vec<W>,
+    /// The virtual wires the steps made so far: for a routine, after its
+    /// inputs.
+    virtuals: Vec<W>,
 }
 
-impl<W: Clone> Frame<'_, W> {
+impl<W: Clone> Scope<'_, W> {
     /// The wire `name` names, if the steps hold it by now: `ONE`, the $a$
     /// or the $d$ wire of a reserved gate, which hold a stage's values, a
-    /// wire of a gate of their own, or what a step made.
+    /// wire of a gate of their own, or a virtual wire a step made.
     fn wire(&self, name: u32) -> Option<&W> {
-        if name & DERIVED != 0 {
-            return self.made.get((name ^ DERIVED) as usize);
+        if name & VIRTUAL != 0 {
+            return self.virtuals.get((name ^ VIRTUAL) as usize);
         }
         // The page's own gates start past the reserved ones.
         let first = self.reserved.len() / 2 + 1;
@@ -273,26 +284,27 @@ impl<W: Clone> Frame<'_, W> {
     }
 }
 
-/// One wire, as a gadget.
+/// One wire, as a gadget: an element of the input and of the output of a
+/// [`Replayed`] routine.
 #[derive(Gadget)]
-struct Bare<'dr, D: Driver<'dr>> {
+struct OneWire<'dr, D: Driver<'dr>> {
     #[ragu(wire)]
     wire: D::Wire,
     #[ragu(phantom)]
     _marker: PhantomData<&'dr ()>,
 }
 
-impl<'dr, D: Driver<'dr>> Bare<'dr, D> {
+impl<'dr, D: Driver<'dr>> OneWire<'dr, D> {
     fn of(wire: D::Wire) -> Self {
-        Bare {
+        OneWire {
             wire,
             _marker: PhantomData,
         }
     }
 }
 
-/// What a [`Replayed`] routine takes: the wires of the input of the
-/// routine it replays, in the order that routine's input gadget gives
+/// The input gadget of a [`Replayed`] routine: the wires of the input of
+/// the routine it replays, in the order that routine's input gadget gives
 /// them, and with a witness the values of the gates the routine allocates.
 ///
 /// The circuit's routines take gadgets of their own types, which a page
@@ -302,9 +314,9 @@ impl<'dr, D: Driver<'dr>> Bare<'dr, D> {
 /// are the same input to every driver. Their number is the routine's, and
 /// is known only once the circuit is cut.
 #[derive(Gadget)]
-struct Taken<'dr, D: Driver<'dr>> {
+struct InputWires<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
-    wires: Vec<Bare<'dr, D>>,
+    wires: Vec<OneWire<'dr, D>>,
     #[ragu(value)]
     values: DriverValue<D, Arc<[[D::F; 4]]>>,
 }
@@ -314,8 +326,8 @@ struct Taken<'dr, D: Driver<'dr>> {
 ///
 /// It is the same routine to a driver as the one the circuit calls: it
 /// takes the same wires, allocates the same gates, enforces the same
-/// constraints and makes the same calls, in the same order, and gives the
-/// same wires. Its output is not predicted.
+/// constraints and calls the same routines, in the same order, and gives
+/// the same wires. Its output is not predicted.
 struct Replayed<F: Field>(Arc<Body<F>>);
 
 impl<F: Field> Clone for Replayed<F> {
@@ -325,8 +337,8 @@ impl<F: Field> Clone for Replayed<F> {
 }
 
 impl<F: Field> Routine<F> for Replayed<F> {
-    type Input = Kind![F; Taken<'_, _>];
-    type Output = PhantomData<Vec<Kind![F; Bare<'_, _>]>>;
+    type Input = Kind![F; InputWires<'_, _>];
+    type Output = PhantomData<Vec<Kind![F; OneWire<'_, _>]>>;
     type Aux<'dr> = Arc<[[F; 4]]>;
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
@@ -339,19 +351,19 @@ impl<F: Field> Routine<F> for Replayed<F> {
         if input.wires.len() != body.inputs {
             return Err(diverged("a routine is given other wires than it takes"));
         }
-        let mut frame = Frame {
+        let mut scope = Scope {
             one: D::ONE,
             reserved: &[],
             gates: Vec::new(),
-            made: input.wires.into_iter().map(|bare| bare.wire).collect(),
+            virtuals: input.wires.into_iter().map(|each| each.wire).collect(),
         };
         let values = aux.as_ref().map(|values| &values[..]);
-        run(&body.steps, dr, &mut frame, &values, &mut 0)?;
+        run(&body.steps, dr, &mut scope, &values, &mut 0)?;
         body.outputs
             .iter()
             .map(|&name| {
-                let wire = frame.wire(name).cloned();
-                wire.map(Bare::of)
+                let wire = scope.wire(name).cloned();
+                wire.map(OneWire::of)
                     .ok_or_else(|| diverged("a routine gives a wire it does not hold"))
             })
             .collect()
@@ -368,14 +380,14 @@ impl<F: Field> Routine<F> for Replayed<F> {
     }
 }
 
-/// Runs `steps` on `dr`, over the wires of `frame`, which takes what they
+/// Runs `steps` on `dr`, over the wires of `scope`, which takes what they
 /// allocate and make. `values` are those of the gates the steps allocate,
 /// those of the routines they call included, in order, and `next` the
 /// first that the steps have yet to allocate.
 fn run<'dr, D: Driver<'dr>>(
     steps: &[Step<D::F>],
     dr: &mut D,
-    frame: &mut Frame<'_, D::Wire>,
+    scope: &mut Scope<'_, D::Wire>,
     values: &DriverValue<D, &[[D::F; 4]]>,
     next: &mut usize,
 ) -> Result<()> {
@@ -396,22 +408,22 @@ fn run<'dr, D: Driver<'dr>>(
                     };
                     let (a, b, c, extra) = dr.gate(|| Ok((value(0)?, value(1)?, value(2)?)))?;
                     let d = dr.assign_extra(extra, || value(3))?;
-                    frame.gates.push([a, b, c, d]);
+                    scope.gates.push([a, b, c, d]);
                 }
             }
-            Step::Sum(terms) => {
-                frame.holds(terms)?;
-                let sum = dr.add(|lc| frame.combine(lc, terms));
-                frame.made.push(sum);
+            Step::Add(terms) => {
+                scope.holds(terms)?;
+                let wire = dr.add(|lc| scope.combine(lc, terms));
+                scope.virtuals.push(wire);
             }
-            Step::Enforce(terms) => {
-                frame.holds(terms)?;
-                dr.enforce_zero(|lc| frame.combine(lc, terms))?;
+            Step::EnforceZero(terms) => {
+                scope.holds(terms)?;
+                dr.enforce_zero(|lc| scope.combine(lc, terms))?;
             }
-            Step::Call(body, inputs) => {
+            Step::Routine(body, inputs) => {
                 let wires = inputs
                     .iter()
-                    .map(|&name| frame.wire(name).cloned().map(Bare::of))
+                    .map(|&name| scope.wire(name).cloned().map(OneWire::of))
                     .collect::<Option<Vec<_>>>()
                     .ok_or_else(|| diverged("a page names a wire it does not hold"))?;
                 // The routine's gates are the next ones: it is given their
@@ -424,8 +436,10 @@ fn run<'dr, D: Driver<'dr>>(
                             diverged("a page was given too few of its gates' values")
                         })
                     })?;
-                let output = dr.routine(Replayed(body.clone()), Taken { wires, values })?;
-                frame.made.extend(output.into_iter().map(|bare| bare.wire));
+                let output = dr.routine(Replayed(body.clone()), InputWires { wires, values })?;
+                scope
+                    .virtuals
+                    .extend(output.into_iter().map(|each| each.wire));
             }
         }
     }
@@ -434,8 +448,8 @@ fn run<'dr, D: Driver<'dr>>(
 
 impl<F: Field> Program<F> {
     /// Runs the page's steps on `dr`: allocates the page's own gates, with
-    /// `values`, makes its combinations, enforces its constraints and calls
-    /// the routines it holds.
+    /// `values`, makes its virtual wires, enforces its constraints and
+    /// calls the routines it holds.
     /// `reserved` are the wires of the stages' and the carry stage's gates,
     /// two a gate, which the page's stage builder reserved. Gives the wires
     /// of the public output, which only the last page has.
@@ -445,18 +459,18 @@ impl<F: Field> Program<F> {
         reserved: &[D::Wire],
         values: &DriverValue<D, &[[F; 4]]>,
     ) -> Result<Vec<D::Wire>> {
-        let mut frame = Frame {
+        let mut scope = Scope {
             one: D::ONE,
             reserved,
             gates: Vec::new(),
-            made: Vec::with_capacity(self.made as usize),
+            virtuals: Vec::with_capacity(self.virtuals as usize),
         };
-        run(&self.steps, dr, &mut frame, values, &mut 0)?;
+        run(&self.steps, dr, &mut scope, values, &mut 0)?;
         self.outputs
             .iter()
             .map(|terms| {
-                frame.holds(terms)?;
-                Ok(dr.add(|lc| frame.combine(lc, terms)))
+                scope.holds(terms)?;
+                Ok(dr.add(|lc| scope.combine(lc, terms)))
             })
             .collect()
     }

@@ -21,8 +21,8 @@ use ragu_primitives::{Element, WithSuffix, vec::Len};
 use udon::field::Field;
 
 use super::{
-    Captured, Carry, Checked, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned,
-    Stages, diverged,
+    Captured, Carry, Checked, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned, Stages,
+    VIRTUAL, diverged,
 };
 use crate::{
     Blind, Circuit, CircuitExt, MaskObject, WithAux, floor_planner, into_wiring_object,
@@ -38,8 +38,8 @@ use crate::{
 struct Shadow<F, K> {
     /// The gates allocated, the SYSTEM gate included.
     gates: usize,
-    /// The linear combinations made.
-    sums: usize,
+    /// The virtual wires made.
+    adds: usize,
     /// The constraints enforced.
     constraints: usize,
     /// The $a$, $b$, $c$ and $d$ values of each gate, the SYSTEM gate
@@ -53,7 +53,7 @@ impl<F: Field, K: MaybeKind> Shadow<F, K> {
         // The SYSTEM gate is the driver's.
         Shadow {
             gates: 1,
-            sums: 0,
+            adds: 0,
             constraints: 0,
             values: vec![[F::ZERO; 4]],
             _kind: PhantomData,
@@ -61,14 +61,14 @@ impl<F: Field, K: MaybeKind> Shadow<F, K> {
     }
 
     /// Whether the circuit emitted the `gates`, the constraints and the
-    /// combinations its plan was made from.
+    /// virtual wires its plan was made from.
     fn follows(&self, plan: &Plan<F>, gates: usize) -> Result<()> {
-        let (constraints, sums) = (plan.constraints, plan.sums);
-        if self.gates != gates || self.constraints != constraints || self.sums != sums {
+        let (constraints, adds) = (plan.constraints, plan.adds);
+        if self.gates != gates || self.constraints != constraints || self.adds != adds {
             return Err(diverged(&format!(
-                "the walk saw {} gates, {} constraints and {} combinations where the plan has \
+                "the walk saw {} gates, {} constraints and {} virtual wires where the plan has \
                  {}, {} and {}",
-                self.gates, self.constraints, self.sums, gates, constraints, sums,
+                self.gates, self.constraints, self.adds, gates, constraints, adds,
             )));
         }
         Ok(())
@@ -115,8 +115,8 @@ impl<'dr, F: Field, K: MaybeKind> Driver<'dr> for Shadow<F, K> {
     const ONE: u32 = ONE;
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> u32 {
-        self.sums += 1;
-        DERIVED | (self.sums - 1) as u32
+        self.adds += 1;
+        VIRTUAL | (self.adds - 1) as u32
     }
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {

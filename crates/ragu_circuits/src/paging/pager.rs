@@ -20,8 +20,8 @@ use ragu_core::{Coeff, Error, Result};
 use udon::field::Field;
 
 use super::{
-    DERIVED, Layout, ONE, PageReport, Pageable, Pages, PagingReport, Plan, Stages,
-    record::{Call, DERIVED_LIMIT, Recording},
+    Layout, ONE, PageReport, Pageable, Pages, PagingReport, Plan, Stages, VIRTUAL,
+    record::{Invocation, Recording, VIRTUAL_LIMIT},
     refuse,
     replay::{Body, Program, Step, Terms},
 };
@@ -278,12 +278,12 @@ impl Layout {
     }
 }
 
-/// A combination nothing has asked a page for yet: a wire no recording
-/// names (see [`DERIVED_LIMIT`]).
-const UNSEEN: u32 = DERIVED | (DERIVED_LIMIT + 1);
+/// A virtual wire nothing has asked a page for yet: one no recording
+/// names (see [`VIRTUAL_LIMIT`]).
+const UNSEEN: u32 = VIRTUAL | (VIRTUAL_LIMIT + 1);
 
-/// A combination that has nothing of what a page was asked for, likewise.
-const NOTHING: u32 = DERIVED | DERIVED_LIMIT;
+/// A virtual wire that has nothing of what a page was asked for, likewise.
+const NOTHING: u32 = VIRTUAL | VIRTUAL_LIMIT;
 
 /// A carry slot a constraint reads off its home page.
 #[derive(Clone, Debug)]
@@ -314,7 +314,7 @@ pub(super) struct Draft<F: Field> {
     pub(super) outputs: Vec<Vec<Link<F>>>,
     /// For each routine the circuit calls, in the order of the calls, the
     /// page that calls it and the slots of each wire of its input.
-    pub(super) calls: Vec<(u32, Vec<Vec<Link<F>>>)>,
+    pub(super) invocations: Vec<(u32, Vec<Vec<Link<F>>>)>,
     /// Each slot's combination, over wires named `4 * gate + kind` with
     /// the gate counted over the unpaged circuit.
     pub(super) slots: Vec<Vec<(u32, F)>>,
@@ -331,8 +331,8 @@ pub(super) struct Draft<F: Field> {
     /// What each page allocates and enforces, once the plan is
     /// [compiled](Self::compile).
     pub(super) programs: Vec<Program<F>>,
-    /// The linear combinations the circuit makes, likewise.
-    pub(super) sums: usize,
+    /// The virtual wires the circuit makes, likewise.
+    pub(super) adds: usize,
 }
 
 impl<F: Field> Draft<F> {
@@ -355,7 +355,7 @@ impl<F: Field> Draft<F> {
             held: self.held,
             slots: self.slots,
             programs: self.programs,
-            sums: self.sums,
+            adds: self.adds,
             constraints: self.homes.len(),
         }
     }
@@ -365,25 +365,25 @@ impl<F: Field> Draft<F> {
     /// Compiles each page into what it allocates and enforces, off
     /// `recording`, the walk the plan was made from: its own constraints
     /// with each slot in place of what they name off the page, a
-    /// constraint for each slot the page holds to its wires, and a call
-    /// for each routine it holds, in the order the circuit emits them. The
-    /// layout is final by then.
+    /// constraint for each slot the page holds to its wires, and an
+    /// invocation of each routine it holds, in the order the circuit emits
+    /// them. The layout is final by then.
     ///
-    /// The circuit's linear combinations stay combinations: a page makes
+    /// The circuit's virtual wires stay virtual wires: a page makes
     /// what each one it needs has of its wires, over what the ones before
     /// have, so it enforces no more terms than the circuit does.
     pub(super) fn compile(&mut self, recording: &Recording<F>) {
         let mut compiler = Compiler::new(self, recording);
-        let mut calls = recording.calls.iter().enumerate().peekable();
+        let mut invocations = recording.invocations.iter().enumerate().peekable();
         let mut within = 0;
         for (index, (_, terms)) in recording.raw.iter().enumerate() {
             // A routine is called where the circuit calls it, and what it
             // enforces is its body's.
-            while let Some((call, called)) =
-                calls.next_if(|(_, called)| called.constraints.start == index)
+            while let Some((which, invocation)) =
+                invocations.next_if(|(_, invocation)| invocation.constraints.start == index)
             {
-                compiler.call(call, called);
-                within = called.constraints.end;
+                compiler.invoke(which, invocation);
+                within = invocation.constraints.end;
             }
             if index < within {
                 continue;
@@ -394,11 +394,11 @@ impl<F: Field> Draft<F> {
                 .map_or(&[][..], Vec::as_slice);
             let home = self.homes[index] as usize;
             let named = compiler.named(home, terms, links);
-            compiler.programs[home].enforce(coeffs(named));
+            compiler.programs[home].enforce_zero(coeffs(named));
             compiler.define(terms, links);
         }
-        for (call, called) in calls {
-            compiler.call(call, called);
+        for (which, invocation) in invocations {
+            compiler.invoke(which, invocation);
         }
         // The public output's wires are the last page's: the others only
         // hold slots to what it reads of them.
@@ -410,7 +410,7 @@ impl<F: Field> Draft<F> {
             compiler.define(&terms, links);
         }
         self.programs = compiler.programs;
-        self.sums = recording.adds;
+        self.adds = recording.adds;
     }
 }
 
@@ -432,19 +432,21 @@ fn coeffs<F: Field>(terms: Vec<(u32, F)>) -> Terms<F> {
 }
 
 /// A wire of the output of a routine the circuit calls, as the pages have
-/// it. The wire is what the routine's own gates give, which only the page
-/// that calls the routine holds, plus what the routine passes through of
-/// its inputs and of `ONE`, which is a combination like any other.
-struct Given<F> {
-    /// The call, by its place among the circuit's.
-    call: usize,
-    /// The wire's place in the call's output.
+/// it. The wire is its internal terms, over the routine's own gates, which
+/// only the page that calls the routine holds, plus its interface terms,
+/// over the routine's inputs and `ONE`, which a page has as it has any
+/// other virtual wire.
+struct OutputWire<F> {
+    /// The invocation, by its place among the circuit's.
+    invocation: usize,
+    /// The wire's place in the invocation's output.
     place: usize,
-    /// What the wire has of the call's inputs, each by the call's name
-    /// for it, and of `ONE`.
-    passed: Vec<(u32, F)>,
-    /// Whether it has anything of the routine's own gates.
-    own: bool,
+    /// The interface terms: what the wire has of the invocation's inputs,
+    /// each by the invocation's name for it, and of `ONE`.
+    interface: Vec<(u32, F)>,
+    /// Whether it has internal terms: anything of the routine's own
+    /// gates.
+    has_internal: bool,
 }
 
 /// Compiles a draft's pages ([`Draft::compile`]).
@@ -453,37 +455,38 @@ struct Compiler<'a, F: Field> {
     recording: &'a Recording<F>,
     programs: Vec<Program<F>>,
     /// For a page and the wires asked of it, those of its own gates or all
-    /// it has: the wire each of the circuit's combinations is there.
+    /// it has: the wire each of the circuit's virtual wires is there.
     seen: BTreeMap<(usize, bool), Vec<u32>>,
     /// Each wire a routine the circuit calls gives, by the circuit's name
     /// for it.
-    given: BTreeMap<u32, Given<F>>,
-    /// For each call a page has made, the wires it named for the call's
-    /// input and the first wire of the call's output.
-    called: Vec<Option<(Vec<u32>, u32)>>,
-    /// What the gates of a routine give of a wire of its output, on the
-    /// page that calls it: by the circuit's name for the wire.
-    own: BTreeMap<u32, u32>,
+    outputs: BTreeMap<u32, OutputWire<F>>,
+    /// For each invocation a page has made, the wires it named for the
+    /// input and the first wire of the output.
+    invoked: Vec<Option<(Vec<u32>, u32)>>,
+    /// The internal part of a wire of a routine's output, on the page that
+    /// calls the routine: by the circuit's name for the wire.
+    internal: BTreeMap<u32, u32>,
 }
 
 impl<'a, F: Field> Compiler<'a, F> {
     fn new(draft: &'a Draft<F>, recording: &'a Recording<F>) -> Self {
-        let mut given = BTreeMap::new();
-        for (call, called) in recording.calls.iter().enumerate() {
-            for (place, name) in called.outputs.clone().enumerate() {
-                // What the wire is within the call, over the call's gates,
+        let mut outputs = BTreeMap::new();
+        for (which, invocation) in recording.invocations.iter().enumerate() {
+            for (place, name) in invocation.outputs.clone().enumerate() {
+                // What the wire is within the invocation, over its gates,
                 // its inputs and `ONE`.
-                let within = recording.expand_to(recording.derived[name].clone(), &called.inputs);
-                let (passed, own): (Vec<_>, Vec<_>) = within
+                let within =
+                    recording.expand_to(recording.virtuals[name].clone(), &invocation.inputs);
+                let (interface, internal): (Vec<_>, Vec<_>) = within
                     .into_iter()
-                    .partition(|&(wire, _)| wire & DERIVED != 0 || wire == ONE);
-                given.insert(
-                    u32::try_from(name).expect("combinations fit a wire"),
-                    Given {
-                        call,
+                    .partition(|&(wire, _)| wire & VIRTUAL != 0 || wire == ONE);
+                outputs.insert(
+                    u32::try_from(name).expect("virtual wires fit a wire name"),
+                    OutputWire {
+                        invocation: which,
                         place,
-                        passed,
-                        own: !own.is_empty(),
+                        interface,
+                        has_internal: !internal.is_empty(),
                     },
                 );
             }
@@ -495,9 +498,9 @@ impl<'a, F: Field> Compiler<'a, F> {
                 .map(|page| Program::new(draft.root[page]))
                 .collect(),
             seen: BTreeMap::new(),
-            given,
-            called: vec![None; recording.calls.len()],
-            own: BTreeMap::new(),
+            outputs,
+            invoked: vec![None; recording.invocations.len()],
+            internal: BTreeMap::new(),
         }
     }
 
@@ -515,7 +518,7 @@ impl<'a, F: Field> Compiler<'a, F> {
 
     /// Whether a wire is of a page's own gates: what a slot the page holds
     /// combines.
-    fn of(&self, page: u32, wire: u32) -> bool {
+    fn holds(&self, page: u32, wire: u32) -> bool {
         self.draft
             .place((wire / 4) as usize)
             .is_some_and(|(holder, _)| holder == page as usize)
@@ -527,66 +530,68 @@ impl<'a, F: Field> Compiler<'a, F> {
         4 * (self.draft.layout.carry.start + (link.slot / 2) as usize) as u32 + kind
     }
 
-    /// What the routine's own gates give of a wire of its output, on the
-    /// page that calls the routine: the wire, less what it passes through.
-    fn own(&mut self, name: u32) -> u32 {
-        if let Some(&wire) = self.own.get(&name) {
+    /// The internal part of a wire of a routine's output, on the page that
+    /// calls the routine: the wire, less its interface terms.
+    fn internal_wire(&mut self, name: u32) -> u32 {
+        if let Some(&wire) = self.internal.get(&name) {
             return wire;
         }
-        let given = &self.given[&name];
-        let (page, _) = self.draft.calls[given.call];
-        let (inputs, first) = self.called[given.call]
+        let output = &self.outputs[&name];
+        let (page, _) = self.draft.invocations[output.invocation];
+        let (inputs, first) = self.invoked[output.invocation]
             .as_ref()
-            .expect("a wire is given by a call the page has made");
-        let first_input = self.recording.calls[given.call].inputs.start as u32;
-        let mut terms = vec![(first + given.place as u32, F::ONE)];
-        terms.extend(given.passed.iter().map(|&(wire, coeff)| {
+            .expect("the page has made the invocation that gives the wire");
+        let first_input = self.recording.invocations[output.invocation].inputs.start as u32;
+        let mut terms = vec![(first + output.place as u32, F::ONE)];
+        terms.extend(output.interface.iter().map(|&(wire, coeff)| {
             let wire = if wire == ONE {
                 ONE
             } else {
-                inputs[((wire ^ DERIVED) - first_input) as usize]
+                inputs[((wire ^ VIRTUAL) - first_input) as usize]
             };
             (wire, -coeff)
         }));
         let wire = match terms[..] {
             [(wire, _)] => wire,
-            _ => self.programs[page as usize].sum(coeffs(terms)),
+            _ => self.programs[page as usize].add(coeffs(terms)),
         };
-        self.own.insert(name, wire);
+        self.internal.insert(name, wire);
         wire
     }
 
     /// What `terms` have on `page`, of its own gates alone if `source`
-    /// names it: the page's wires and the combinations it makes of them.
+    /// names it: the page's wires and the virtual wires it makes of them.
     fn held(&mut self, page: usize, source: Option<u32>, terms: &[(u32, F)]) -> Vec<(u32, F)> {
         let recording = self.recording;
         let key = (page, source.is_some());
         let mut known = self
             .seen
             .remove(&key)
-            .unwrap_or_else(|| vec![UNSEEN; recording.derived.len()]);
-        // The combinations the terms reach that the page has not made,
-        // each after those it names. What a routine gives is reached as
-        // what it passes through: its own gates are not the page's to
+            .unwrap_or_else(|| vec![UNSEEN; recording.virtuals.len()]);
+        // The virtual wires the terms reach that the page has not made,
+        // each after those it names. What a routine gives is reached by
+        // its interface terms: its internal ones are not the page's to
         // name.
         let mut reached = BTreeSet::new();
         let mut pending = inner(terms);
         while let Some(index) = pending.pop() {
             if known[index as usize] == UNSEEN && reached.insert(index) {
-                pending.extend(inner(match self.given.get(&index) {
-                    Some(given) => &given.passed,
-                    None => &recording.derived[index as usize],
+                pending.extend(inner(match self.outputs.get(&index) {
+                    Some(output) => &output.interface,
+                    None => &recording.virtuals[index as usize],
                 }));
             }
         }
         for index in reached {
-            let sum = match self.given.get(&index) {
-                None => self.resolve(page, source, &known, &recording.derived[index as usize]),
-                Some(given) => {
-                    let here = given.own && self.draft.calls[given.call].0 as usize == page;
-                    let mut sum = self.resolve(page, source, &known, &self.given[&index].passed);
+            let sum = match self.outputs.get(&index) {
+                None => self.resolve(page, source, &known, &recording.virtuals[index as usize]),
+                Some(output) => {
+                    let here = output.has_internal
+                        && self.draft.invocations[output.invocation].0 as usize == page;
+                    let mut sum =
+                        self.resolve(page, source, &known, &self.outputs[&index].interface);
                     if here {
-                        sum.push((self.own(index), F::ONE));
+                        sum.push((self.internal_wire(index), F::ONE));
                     }
                     sum
                 }
@@ -594,7 +599,7 @@ impl<'a, F: Field> Compiler<'a, F> {
             known[index as usize] = match sum[..] {
                 [] => NOTHING,
                 [(wire, coeff)] if coeff == F::ONE => wire,
-                _ => self.programs[page].sum(coeffs(sum)),
+                _ => self.programs[page].add(coeffs(sum)),
             };
         }
         let held = self.resolve(page, source, &known, terms);
@@ -602,7 +607,7 @@ impl<'a, F: Field> Compiler<'a, F> {
         held
     }
 
-    /// `terms` over the wires of `page`, with each combination as `known`
+    /// `terms` over the wires of `page`, with each virtual wire as `known`
     /// has it.
     fn resolve(
         &self,
@@ -614,11 +619,11 @@ impl<'a, F: Field> Compiler<'a, F> {
         terms
             .iter()
             .filter_map(|&(wire, coeff)| {
-                let wire = if wire & DERIVED != 0 {
-                    Some(known[(wire ^ DERIVED) as usize]).filter(|&at| at != NOTHING)?
+                let wire = if wire & VIRTUAL != 0 {
+                    Some(known[(wire ^ VIRTUAL) as usize]).filter(|&at| at != NOTHING)?
                 } else {
                     source
-                        .is_none_or(|source| self.of(source, wire))
+                        .is_none_or(|source| self.holds(source, wire))
                         .then(|| self.local(page, wire))??
                 };
                 Some((wire, coeff))
@@ -641,79 +646,79 @@ impl<'a, F: Field> Compiler<'a, F> {
             let exporter = link.exporter as usize;
             let mut named = self.held(exporter, Some(link.exporter), terms);
             named.push((self.slot(link), -link.scale));
-            self.programs[exporter].enforce(coeffs(named));
+            self.programs[exporter].enforce_zero(coeffs(named));
         }
     }
 
     /// Calls a routine on the page that holds it: the page makes each wire
     /// of the routine's input in full, and the routine's body is the
     /// recording's.
-    fn call(&mut self, call: usize, called: &Call) {
+    fn invoke(&mut self, which: usize, invocation: &Invocation) {
         let draft = self.draft;
-        let (page, links) = &draft.calls[call];
+        let (page, links) = &draft.invocations[which];
         let page = *page as usize;
-        let mut inputs = Vec::with_capacity(called.inputs.len());
-        for (name, links) in called.inputs.clone().zip(links) {
-            let terms = [(DERIVED | name as u32, F::ONE)];
+        let mut inputs = Vec::with_capacity(invocation.inputs.len());
+        for (name, links) in invocation.inputs.clone().zip(links) {
+            let terms = [(VIRTUAL | name as u32, F::ONE)];
             let named = self.named(page, &terms, links);
             inputs.push(match named[..] {
                 [(wire, coeff)] if coeff == F::ONE => wire,
-                _ => self.programs[page].sum(coeffs(named)),
+                _ => self.programs[page].add(coeffs(named)),
             });
             self.define(&terms, links);
         }
-        let body = Arc::new(body(self.recording, called));
-        let first = self.programs[page].call(body, inputs.clone());
-        self.called[call] = Some((inputs, first));
+        let body = Arc::new(body(self.recording, invocation));
+        let first = self.programs[page].routine(body, inputs.clone());
+        self.invoked[which] = Some((inputs, first));
     }
 }
 
-/// The combinations `terms` name.
+/// The virtual wires `terms` name.
 fn inner<F>(terms: &[(u32, F)]) -> Vec<u32> {
     terms
         .iter()
-        .filter(|(wire, _)| wire & DERIVED != 0)
-        .map(|(wire, _)| wire ^ DERIVED)
+        .filter(|(wire, _)| wire & VIRTUAL != 0)
+        .map(|(wire, _)| wire ^ VIRTUAL)
         .collect()
 }
 
 /// What a routine the circuit calls runs, off the recording of the call:
-/// its own gates, the combinations it makes, its constraints and the calls
-/// it makes, each stream in the order the circuit emits it, and over the
-/// routine's own names.
-fn body<F: Field>(recording: &Recording<F>, call: &Call) -> Body<F> {
+/// its own gates, the virtual wires it makes, its constraints and the
+/// routines it calls, each stream in the order the circuit emits it, and
+/// over the routine's own names.
+fn body<F: Field>(recording: &Recording<F>, invocation: &Invocation) -> Body<F> {
     // The routine's name for each of the circuit's names it may use: its
     // inputs, then what it makes. One it has no name for is left as a wire
     // no routine holds, and a page that calls the routine is refused.
-    let names = call.inputs.start..call.outputs.start;
-    let mut made: Vec<u32> = (0..names.len())
+    let names = invocation.inputs.start..invocation.outputs.start;
+    let mut renamed: Vec<u32> = (0..names.len())
         .map(|name| {
-            if name < call.inputs.len() {
-                DERIVED | name as u32
+            if name < invocation.inputs.len() {
+                VIRTUAL | name as u32
             } else {
                 NOTHING
             }
         })
         .collect();
-    let mut next = call.inputs.len() as u32;
+    let mut next = invocation.inputs.len() as u32;
     // Its own gates, counted apart from those of the calls it makes.
-    let mut gates: Vec<u32> = vec![u32::MAX; call.gates.len()];
+    let mut gates: Vec<u32> = vec![u32::MAX; invocation.gates.len()];
     let mut own = 0;
     fn local<F: Field>(
         terms: &[(u32, F)],
-        call: &Call,
-        made: &[u32],
+        invocation: &Invocation,
+        renamed: &[u32],
         gates: &[u32],
     ) -> Vec<(u32, F)> {
         let name = |wire: u32| -> Option<u32> {
             if wire == ONE {
                 return Some(ONE);
             }
-            if wire & DERIVED != 0 {
-                let name = ((wire ^ DERIVED) as usize).checked_sub(call.inputs.start)?;
-                return made.get(name).copied();
+            if wire & VIRTUAL != 0 {
+                let name = ((wire ^ VIRTUAL) as usize).checked_sub(invocation.inputs.start)?;
+                return renamed.get(name).copied();
             }
-            let gate = ((wire / 4) as usize).checked_sub(call.gates.start)?;
+            let gate = ((wire / 4) as usize).checked_sub(invocation.gates.start)?;
             let own = *gates.get(gate)?;
             (own != u32::MAX).then(|| 4 * (own + 1) + wire % 4)
         };
@@ -725,12 +730,15 @@ fn body<F: Field>(recording: &Recording<F>, call: &Call) -> Body<F> {
 
     let mut steps = Vec::new();
     // What the routine emits itself up to a call it makes, or to its end:
-    // its gates, then its combinations, then its constraints. Each names
+    // its gates, then its virtual wires, then its constraints. Each names
     // only what is emitted before it.
-    let (mut gate, mut sum, mut constraint) =
-        (call.gates.start, call.sums.start, call.constraints.start);
+    let (mut gate, mut added, mut constraint) = (
+        invocation.gates.start,
+        invocation.internal.start,
+        invocation.constraints.start,
+    );
     let mut emit = |steps: &mut Vec<Step<F>>,
-                    made: &mut Vec<u32>,
+                    renamed: &mut Vec<u32>,
                     next: &mut u32,
                     gates: &mut Vec<u32>,
                     until: (usize, usize, usize),
@@ -738,26 +746,26 @@ fn body<F: Field>(recording: &Recording<F>, call: &Call) -> Body<F> {
         if until.0 > gate {
             steps.push(Step::Gates(until.0 - gate));
             for gate in gate..until.0 {
-                gates[gate - call.gates.start] = own;
+                gates[gate - invocation.gates.start] = own;
                 own += 1;
             }
         }
-        for sum in sum..until.1 {
-            let terms = local(&recording.derived[sum], call, made, gates);
-            steps.push(Step::Sum(coeffs(terms)));
-            made[sum - call.inputs.start] = DERIVED | *next;
+        for added in added..until.1 {
+            let terms = local(&recording.virtuals[added], invocation, renamed, gates);
+            steps.push(Step::Add(coeffs(terms)));
+            renamed[added - invocation.inputs.start] = VIRTUAL | *next;
             *next += 1;
         }
         for constraint in constraint..until.2 {
-            let terms = local(&recording.raw[constraint].1, call, made, gates);
-            steps.push(Step::Enforce(coeffs(terms)));
+            let terms = local(&recording.raw[constraint].1, invocation, renamed, gates);
+            steps.push(Step::EnforceZero(coeffs(terms)));
         }
-        (gate, sum, constraint) = resume;
+        (gate, added, constraint) = resume;
     };
-    for within in &call.calls {
+    for within in &invocation.invocations {
         emit(
             &mut steps,
-            &mut made,
+            &mut renamed,
             &mut next,
             &mut gates,
             (
@@ -772,22 +780,26 @@ fn body<F: Field>(recording: &Recording<F>, call: &Call) -> Body<F> {
         let inputs = within
             .inputs
             .clone()
-            .map(|name| local(&recording.derived[name], call, &made, &gates)[0].0)
+            .map(|name| local(&recording.virtuals[name], invocation, &renamed, &gates)[0].0)
             .collect();
-        steps.push(Step::Call(Arc::new(body(recording, within)), inputs));
+        steps.push(Step::Routine(Arc::new(body(recording, within)), inputs));
         for name in within.outputs.clone() {
-            made[name - call.inputs.start] = DERIVED | next;
+            renamed[name - invocation.inputs.start] = VIRTUAL | next;
             next += 1;
         }
     }
-    let end = (call.gates.end, call.sums.end, call.constraints.end);
-    emit(&mut steps, &mut made, &mut next, &mut gates, end, end);
-    let outputs = call
+    let end = (
+        invocation.gates.end,
+        invocation.internal.end,
+        invocation.constraints.end,
+    );
+    emit(&mut steps, &mut renamed, &mut next, &mut gates, end, end);
+    let outputs = invocation
         .outputs
         .clone()
-        .map(|name| local(&recording.derived[name], call, &made, &gates)[0].0)
+        .map(|name| local(&recording.virtuals[name], invocation, &renamed, &gates)[0].0)
         .collect();
-    Body::new(call.inputs.len(), steps, outputs)
+    Body::new(invocation.inputs.len(), steps, outputs)
 }
 
 /// The gates `circuit` allocates, the SYSTEM gate included, and its
@@ -1094,29 +1106,29 @@ impl<F: Field> Arranger<'_, F> {
         );
     }
 
-    /// The page that calls a routine, and the slots it reads for each wire
-    /// of the routine's input, which are added to `calls`.
-    fn call(
+    /// The page that invocations a routine, and the slots it reads for each wire
+    /// of the routine's input, which are added to `invocations`.
+    fn invoke(
         &mut self,
         recording: &Recording<F>,
-        call: &Call,
-        calls: &mut Vec<(u32, Vec<Vec<Link<F>>>)>,
+        invocation: &Invocation,
+        invocations: &mut Vec<(u32, Vec<Vec<Link<F>>>)>,
     ) -> usize {
-        let on = if call.gates.is_empty() {
-            call.gates.start.checked_sub(1)
+        let on = if invocation.gates.is_empty() {
+            invocation.gates.start.checked_sub(1)
         } else {
-            Some(call.gates.start)
+            Some(invocation.gates.start)
         };
         let caller = on.and_then(|gate| self.page_of(gate)).unwrap_or(0);
-        let links = call
+        let links = invocation
             .inputs
             .clone()
             .map(|name| {
-                let wire = recording.expand(vec![(DERIVED | name as u32, F::ONE)]);
-                self.read(&wire, Some(caller), call.gates.start).1
+                let wire = recording.expand(vec![(VIRTUAL | name as u32, F::ONE)]);
+                self.read(&wire, Some(caller), invocation.gates.start).1
             })
             .collect();
-        calls.push((u32::try_from(caller).expect("pages fit a u32"), links));
+        invocations.push((u32::try_from(caller).expect("pages fit a u32"), links));
         caller
     }
 
@@ -1271,8 +1283,8 @@ fn arrange<F: Field>(
     };
     let mut homes = Vec::with_capacity(recording.constraints.len());
     let mut links = BTreeMap::new();
-    let mut calls = Vec::with_capacity(recording.calls.len());
-    let mut next = recording.calls.iter().peekable();
+    let mut invocations = Vec::with_capacity(recording.invocations.len());
+    let mut next = recording.invocations.iter().peekable();
     let mut within = 0..0;
     let mut caller = 0;
     for (index, (at, terms)) in recording.constraints.iter().enumerate() {
@@ -1282,9 +1294,11 @@ fn arrange<F: Field>(
         // page does each wire of the public output, and what the routine
         // enforces is over its inputs and its own gates, so it reads no
         // slot itself.
-        while let Some(call) = next.next_if(|call| call.constraints.start == index) {
-            caller = arranger.call(recording, call, &mut calls);
-            within = call.constraints.clone();
+        while let Some(invocation) =
+            next.next_if(|invocation| invocation.constraints.start == index)
+        {
+            caller = arranger.invoke(recording, invocation, &mut invocations);
+            within = invocation.constraints.clone();
         }
         if within.contains(&index) {
             arranger.within(terms, caller);
@@ -1298,8 +1312,8 @@ fn arrange<F: Field>(
             links.insert(index, read);
         }
     }
-    for call in next {
-        arranger.call(recording, call, &mut calls);
+    for invocation in next {
+        arranger.invoke(recording, invocation, &mut invocations);
     }
     // The public output binds one instance polynomial, so one page holds
     // every wire of it: the last.
@@ -1356,13 +1370,13 @@ fn arrange<F: Field>(
         homes,
         links,
         outputs,
-        calls,
+        invocations,
         slots,
         places,
         held,
         root,
         programs: Vec::new(),
-        sums: 0,
+        adds: 0,
     };
     Ok((plan, report))
 }

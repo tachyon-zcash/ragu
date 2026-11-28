@@ -1,5 +1,5 @@
 //! Recording a circuit: one walk of it on a driver that keeps what it
-//! emits, the gates it allocates, the linear combinations it makes and the
+//! emits, the gates it allocates, the virtual wires it makes and the
 //! constraints it enforces, each over the gates' wires.
 //!
 //! [`Pages::check`](super::Pages::check) rests on this module: it compares
@@ -8,8 +8,8 @@
 //! pages to, and it holds the pages to the routines this driver noted
 //! ([`Recording::split_routine`]). The pager reads the same recording to
 //! choose its cuts, and takes nothing else of the circuit: the routines the
-//! circuit calls, each with what it emits ([`Call`]), are for the pager to
-//! compile what a page runs.
+//! circuit calls, each with what it emits ([`Invocation`]), are for the
+//! pager to compile what a page runs.
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::ops::Range;
@@ -24,15 +24,15 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::{DERIVED, ONE};
+use super::{ONE, VIRTUAL};
 use crate::{
     Circuit,
     raw::{self, CircuitAdapterRef, RawCircuit},
 };
 
-/// A recording names fewer combinations than this: the two wires past them
+/// A recording names fewer virtual wires than this: the two wires past them
 /// are left to whoever reads it to mark with.
-pub(super) const DERIVED_LIMIT: u32 = DERIVED - 2;
+pub(super) const VIRTUAL_LIMIT: u32 = VIRTUAL - 2;
 
 /// A planning linear expression: its raw terms.
 struct Terms<F> {
@@ -63,54 +63,58 @@ impl<F: Field> LinearExpression<u32, F> for Terms<F> {
     }
 }
 
-/// A routine the circuit calls, as the walk passes through it.
+/// One invocation of a routine by the circuit, as the walk passes through
+/// it.
 ///
-/// The walk names a routine's input wires afresh as it enters the routine,
-/// and its output wires afresh as it leaves: each new name is a combination
-/// of the one wire it stands for. What the routine emits then names its
-/// inputs by names that are its own, and what its caller emits names the
-/// routine's outputs likewise, whatever wires they are. So what a routine
-/// emits is over its own gates' wires, its own combinations, its inputs,
-/// the outputs of the calls it makes, and `ONE`: it names nothing else,
-/// and nothing outside it names what is within.
+/// The walk replaces a routine's interface wires at the boundary
+/// ([`Renamer`]): its input wires as it enters the routine, and its output
+/// wires as it leaves. Each new name is a virtual wire that holds the one
+/// wire it stands for. What the routine emits then names its inputs by
+/// names that are its own, and what its caller emits names the routine's
+/// outputs likewise, whatever wires they are. So what a routine emits is
+/// over its own gates' wires, its own virtual wires, its inputs, the
+/// outputs of the routines it calls, and `ONE`: it names nothing else, and
+/// nothing outside it names what is within.
 ///
-/// The names are combinations ([`Recording::derived`]), in the order the
-/// walk makes them: the call's inputs, then what is made within it, then
+/// The names are virtual wires ([`Recording::virtuals`]), in the order the
+/// walk makes them: the invocation's inputs, then its internal ones, then
 /// its outputs.
 #[derive(Clone, Debug)]
-pub(super) struct Call {
-    /// The gates the call allocates, those of the calls within it
-    /// included.
-    pub(super) gates: Range<usize>,
-    /// The call's name for each wire of its input, in the order the input
-    /// gadget gives its wires: each a combination of the caller's wire
-    /// alone.
-    pub(super) inputs: Range<usize>,
-    /// The combinations made within the call, the names of the calls
+pub(super) struct Invocation {
+    /// The gates the invocation allocates, those of the invocations
     /// within it included.
-    pub(super) sums: Range<usize>,
-    /// The caller's name for each wire of the call's output, in the order
-    /// the output gadget gives its wires: each a combination of the wire
-    /// within the call alone.
+    pub(super) gates: Range<usize>,
+    /// The invocation's name for each wire of its input, in the order the
+    /// input gadget gives its wires: each a virtual wire that holds the
+    /// caller's wire alone.
+    pub(super) inputs: Range<usize>,
+    /// The virtual wires made within the invocation, the names of the
+    /// invocations within it included.
+    pub(super) internal: Range<usize>,
+    /// The caller's name for each wire of the invocation's output, in the
+    /// order the output gadget gives its wires: each a virtual wire that
+    /// holds the wire within the invocation alone.
     pub(super) outputs: Range<usize>,
-    /// The constraints emitted within the call, those of the calls within
-    /// it included, by their place among the recording's.
+    /// The constraints emitted within the invocation, those of the
+    /// invocations within it included, by their place among the
+    /// recording's.
     pub(super) constraints: Range<usize>,
-    /// The calls made within the call, in order.
-    pub(super) calls: Vec<Call>,
+    /// The invocations made within this one, in order.
+    pub(super) invocations: Vec<Invocation>,
 }
 
 /// What one walk of a circuit emits: as emitted, over the gates' wires and
-/// the linear combinations the circuit makes of them, and with every wire
+/// the virtual wires the circuit makes of them, and with every wire
 /// followed back to the gates' wires.
 pub(super) struct Recording<F> {
     /// The gates the circuit allocates, the SYSTEM gate included.
     pub(super) num_gates: usize,
-    /// The linear combinations [`Driver::add`] made, and the names the
-    /// walk gave the inputs and the outputs of each routine ([`Call`]),
-    /// each over gates' wires and the combinations made before it, which a
-    /// wire names by [`DERIVED`] and an index here.
-    pub(super) derived: Vec<Vec<(u32, F)>>,
+    /// The virtual wires: those [`Driver::add`] made, and the names the
+    /// walk gave the inputs and the outputs of each routine
+    /// ([`Invocation`]). Each is a linear combination of gates' wires and
+    /// of the virtual wires made before it, which a wire names by
+    /// [`VIRTUAL`] and an index here.
+    pub(super) virtuals: Vec<Vec<(u32, F)>>,
     /// How many of them [`Driver::add`] made: what a walk that only counts
     /// its calls counts.
     pub(super) adds: usize,
@@ -118,9 +122,9 @@ pub(super) struct Recording<F> {
     pub(super) raw: Vec<(usize, Vec<(u32, F)>)>,
     /// Each wire of the public output as emitted, in traversal order.
     pub(super) raw_outputs: Vec<u32>,
-    /// The routines the circuit calls, in the order of the calls, each
-    /// with the calls made within it.
-    pub(super) calls: Vec<Call>,
+    /// The routines the circuit calls, in the order it calls them, each
+    /// with the invocations made within it.
+    pub(super) invocations: Vec<Invocation>,
     /// Each constraint over the gates' wires, with the gates allocated
     /// when it was emitted: empty until the recording is
     /// [expanded](Self::expanded).
@@ -146,9 +150,9 @@ impl<F: Field> Recording<F> {
     /// the outer one's, and a routine that allocates none is not given:
     /// it has no gate to place.
     pub(super) fn routines(&self) -> impl Iterator<Item = &Range<usize>> {
-        self.calls
+        self.invocations
             .iter()
-            .map(|call| &call.gates)
+            .map(|invocation| &invocation.gates)
             .filter(|gates| !gates.is_empty())
     }
 
@@ -211,31 +215,31 @@ impl<F: Field> Recording<F> {
         self
     }
 
-    /// Expands raw terms into a combination of gates' wires, in wire order
-    /// and without zero terms.
+    /// Expands raw terms into a linear combination of gates' wires, in
+    /// wire order and without zero terms.
     ///
-    /// A combination names only combinations made before it, so the ones
+    /// A virtual wire names only virtual wires made before it, so the ones
     /// the terms reach are taken latest first, each once with all it
     /// counts for: a sum built one term at a time expands in one pass
-    /// over its terms, and a combination that several others name is not
+    /// over its terms, and a virtual wire that several others name is not
     /// walked again for each.
     pub(super) fn expand(&self, terms: Vec<(u32, F)>) -> Vec<(u32, F)> {
         self.expand_to(terms, &(0..0))
     }
 
-    /// As [`expand`](Self::expand), and no further than the combinations
-    /// of `kept`, which are left as the terms name them: with a call's
-    /// inputs kept, what the call makes is over its own gates' wires, its
-    /// inputs and `ONE`.
+    /// As [`expand`](Self::expand), and no further than the virtual wires
+    /// of `kept`, which are left as the terms name them: with an
+    /// invocation's inputs kept, what it makes is over its own gates'
+    /// wires, its inputs and `ONE`.
     pub(super) fn expand_to(&self, terms: Vec<(u32, F)>, kept: &Range<usize>) -> Vec<(u32, F)> {
         let mut sum: BTreeMap<u32, F> = BTreeMap::new();
         let mut pending: BTreeMap<u32, F> = BTreeMap::new();
         let mut take = |pending: &mut BTreeMap<u32, F>, wire: u32, coeff: F| {
-            let (into, key) = if wire & DERIVED == 0 || kept.contains(&((wire ^ DERIVED) as usize))
+            let (into, key) = if wire & VIRTUAL == 0 || kept.contains(&((wire ^ VIRTUAL) as usize))
             {
                 (&mut sum, wire)
             } else {
-                (pending, wire ^ DERIVED)
+                (pending, wire ^ VIRTUAL)
             };
             *into.entry(key).or_insert(F::ZERO) += coeff;
         };
@@ -243,7 +247,7 @@ impl<F: Field> Recording<F> {
             take(&mut pending, wire, coeff);
         }
         while let Some((index, coeff)) = pending.pop_last() {
-            for &(inner, scale) in &self.derived[index as usize] {
+            for &(inner, scale) in &self.virtuals[index as usize] {
                 take(&mut pending, inner, scale * coeff);
             }
         }
@@ -253,13 +257,13 @@ impl<F: Field> Recording<F> {
     }
 }
 
-/// The planning driver: its wires are the gates' wires or the linear
-/// combinations the circuit makes of them, each kept as made.
+/// The planning driver: its wires are the gates' wires or the virtual
+/// wires the circuit makes of them, each kept as made.
 struct Prober<F> {
     recording: Recording<F>,
-    /// For each routine the walk is within, outermost first, the calls
-    /// made within it so far.
-    open: Vec<Vec<Call>>,
+    /// For each routine the walk is within, outermost first, the
+    /// invocations made within it so far.
+    open: Vec<Vec<Invocation>>,
 }
 
 impl<F: Field> Prober<F> {
@@ -267,11 +271,11 @@ impl<F: Field> Prober<F> {
         Prober {
             recording: Recording {
                 num_gates: 0,
-                derived: Vec::new(),
+                virtuals: Vec::new(),
                 adds: 0,
                 raw: Vec::new(),
                 raw_outputs: Vec::new(),
-                calls: Vec::new(),
+                invocations: Vec::new(),
                 constraints: Vec::new(),
                 outputs: Vec::new(),
             },
@@ -280,7 +284,14 @@ impl<F: Field> Prober<F> {
     }
 }
 
-/// Names each wire of a gadget afresh: a combination of that wire alone.
+/// Replaces the interface wires of a routine at its boundary: each wire of
+/// the input gadget on entry, and each wire of the output gadget on exit,
+/// by a new virtual wire that holds that wire alone.
+///
+/// `ReinitWires` in [`metrics`](crate::metrics) does the same at the same
+/// two places for a routine's fingerprint, so the recording and the
+/// fingerprint treat the boundary alike: what a routine emits is over
+/// names of its own, whatever wires its caller gives it.
 struct Renamer<'a, F>(&'a mut Vec<Vec<(u32, F)>>);
 
 impl<F: Field> WireMap<F> for Renamer<'_, F> {
@@ -288,10 +299,10 @@ impl<F: Field> WireMap<F> for Renamer<'_, F> {
     type Dst = Prober<F>;
 
     fn convert_wire(&mut self, wire: &u32) -> Result<u32> {
-        let index = u32::try_from(self.0.len()).expect("combinations fit a wire");
-        assert!(index < DERIVED_LIMIT, "combinations fit a wire");
+        let index = u32::try_from(self.0.len()).expect("virtual wires fit a wire name");
+        assert!(index < VIRTUAL_LIMIT, "virtual wires fit a wire name");
         self.0.push(vec![(*wire, F::ONE)]);
-        Ok(DERIVED | index)
+        Ok(VIRTUAL | index)
     }
 }
 
@@ -308,7 +319,7 @@ impl<F: Field> DriverTypes for Prober<F> {
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(u32, u32, u32, u32)> {
         let gate = u32::try_from(self.recording.num_gates).expect("gate indices fit a wire");
-        assert!(gate < DERIVED / 4, "gate indices fit a wire");
+        assert!(gate < VIRTUAL / 4, "gate indices fit a wire");
         self.recording.num_gates += 1;
         Ok((4 * gate, 4 * gate + 1, 4 * gate + 2, 4 * gate + 3))
     }
@@ -324,14 +335,14 @@ impl<'dr, F: Field> Driver<'dr> for Prober<F> {
     const ONE: u32 = ONE;
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> u32 {
-        // Every call makes a combination, so that a walk which only
+        // Every call makes a virtual wire, so that a walk which only
         // counts the calls names the same ones.
-        let derived = &mut self.recording.derived;
-        let index = u32::try_from(derived.len()).expect("combinations fit a wire");
-        assert!(index < DERIVED_LIMIT, "combinations fit a wire");
-        derived.push(lc(Terms::new()).terms);
+        let virtuals = &mut self.recording.virtuals;
+        let index = u32::try_from(virtuals.len()).expect("virtual wires fit a wire name");
+        assert!(index < VIRTUAL_LIMIT, "virtual wires fit a wire name");
+        virtuals.push(lc(Terms::new()).terms);
         self.recording.adds += 1;
-        DERIVED | index
+        VIRTUAL | index
     }
 
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
@@ -347,35 +358,35 @@ impl<'dr, F: Field> Driver<'dr> for Prober<F> {
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         // Run where it is called, as a driver that knows no routines
         // runs it, and noted for what it emits: a page holds all of its
-        // gates or none. Its inputs are named afresh as the walk enters
-        // it, and its outputs as the walk leaves.
+        // gates or none. Its interface wires are replaced as the walk
+        // enters it, and again as the walk leaves.
         let recording = &mut self.recording;
         let gates = recording.num_gates;
-        let inputs = recording.derived.len();
-        let input = Ro::Input::map_gadget(&input, &mut Renamer(&mut recording.derived))?;
-        let sums = recording.derived.len();
+        let inputs = recording.virtuals.len();
+        let input = Ro::Input::map_gadget(&input, &mut Renamer(&mut recording.virtuals))?;
+        let internal = recording.virtuals.len();
         let constraints = recording.raw.len();
 
         self.open.push(Vec::new());
         let output = Emulator::predict(&routine, &input)
             .and_then(|predicted| routine.execute(self, input, predicted.into_aux()));
-        let calls = self.open.pop().expect("the call was opened");
+        let invocations = self.open.pop().expect("the invocation was opened");
         let output = output?;
 
         let recording = &mut self.recording;
-        let outputs = recording.derived.len();
-        let output = Ro::Output::map_gadget(&output, &mut Renamer(&mut recording.derived))?;
-        let call = Call {
+        let outputs = recording.virtuals.len();
+        let output = Ro::Output::map_gadget(&output, &mut Renamer(&mut recording.virtuals))?;
+        let invocation = Invocation {
             gates: gates..recording.num_gates,
-            inputs: inputs..sums,
-            sums: sums..outputs,
-            outputs: outputs..recording.derived.len(),
+            inputs: inputs..internal,
+            internal: internal..outputs,
+            outputs: outputs..recording.virtuals.len(),
             constraints: constraints..recording.raw.len(),
-            calls,
+            invocations,
         };
         match self.open.last_mut() {
-            Some(within) => within.push(call),
-            None => recording.calls.push(call),
+            Some(within) => within.push(invocation),
+            None => recording.invocations.push(invocation),
         }
         Ok(output)
     }

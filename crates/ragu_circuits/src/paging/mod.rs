@@ -85,8 +85,8 @@
 //! # Replaying
 //!
 //! The plan is then compiled into what each page allocates and enforces:
-//! its gates, the linear combinations the circuit makes as far as they are
-//! of the page's wires, its constraints over them, and the routines it
+//! its gates, the virtual wires the circuit makes as far as they are of
+//! the page's wires, its constraints over them, and the routines it
 //! calls. A page is a circuit that replays that, on any driver, without
 //! walking the circuit it is a page of; its witness is the values of its
 //! gates, which one walk of the circuit gives every page
@@ -108,9 +108,11 @@
 //! routine the circuit calls. It calls one that replays what a walk of the
 //! circuit recorded of the call: the gates, the constraints and the calls
 //! within, in the order the routine emits them, over the wires the routine
-//! takes. That is the same routine to a driver, which tells
-//! routines apart by what they emit and not by their types, so a page's
-//! routine has the segment and the fingerprint the circuit's has.
+//! takes. A routine's segment and its fingerprint are of what it emits
+//! and not of its type, so a page's routine has the segment and the
+//! fingerprint the circuit's has. No driver reads the fingerprints yet:
+//! they are what a driver that memoizes routines will tell them apart by
+//! ([#503]).
 //!
 //! What a routine emits names its inputs, its own gates and what the
 //! routines it calls give, and no other wire, so nothing in it reads a
@@ -204,6 +206,8 @@
 //! of a plan, and their replay on a driver; and the `page` module is what
 //! is registered and proven: the pages. This module holds what they share:
 //! the carry stage, the stages, the layout, and the plan between them.
+//!
+//! [#503]: https://github.com/tachyon-zcash/ragu/issues/503
 
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::{marker::PhantomData, ops::Range};
@@ -241,9 +245,9 @@ pub use self::{
     pager::size,
 };
 
-/// The flag of a planning wire that names a linear combination rather than
-/// the wire of a gate.
-const DERIVED: u32 = 1 << 31;
+/// The flag of a planning wire that names a virtual wire, which is a
+/// linear combination of wires, rather than the wire of a gate.
+const VIRTUAL: u32 = 1 << 31;
 
 /// The planning `ONE` wire: the $d$ wire of the SYSTEM gate.
 const ONE: u32 = 3;
@@ -523,9 +527,9 @@ struct Plan<F: Field> {
     slots: Vec<Vec<(u32, F)>>,
     /// What each page allocates and enforces.
     programs: Vec<Program<F>>,
-    /// The linear combinations and the constraints the circuit makes: with
-    /// its gates, what a walk of it is counted against.
-    sums: usize,
+    /// The virtual wires and the constraints the circuit makes: with its
+    /// gates, what a walk of it is counted against.
+    adds: usize,
     constraints: usize,
 }
 
