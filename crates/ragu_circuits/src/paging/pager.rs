@@ -26,23 +26,99 @@ use super::{
 };
 use crate::{Circuit, polynomials::Rank, staging::MultiStage};
 
-/// The places among a circuit's gates at which a cut is looked for, at
-/// most: the circuit's gates are shared into as many stretches, and a cut
-/// may fall at one gate of each.
+/// The target number of stretches to search for cuts. Each contributes
+/// at most one candidate, alongside the beginning and end of the circuit.
 pub(super) const GRID: usize = 1024;
 
-/// What the cuts of a circuit are weighed by, for one order of its gates:
-/// the same whatever the carry stage's size, so it is counted once and the
-/// cuts looked for under each size off it.
+/// The linear combinations a cut would carry, each named once.
+///
+/// A constraint homed past a cut names, of the gates before it, a linear
+/// combination of their wires, which one carry slot holds for every
+/// constraint that names a multiple of it ([`normalized`]). With a
+/// constraint's terms in the order their gates are placed in, what it names
+/// before a cut is what it names before an earlier cut and more terms. So a
+/// combination is kept as the one before it and its last term, scaled so
+/// that the first term's coefficient is one: a constraint finds every one
+/// it names in one pass over its terms, and two constraints that name the
+/// same one find the same.
+struct Carried {
+    /// The scaled coefficients met, by their bytes: one is the first.
+    coeffs: BTreeMap<Vec<u8>, u32>,
+    /// Each combination, by the one before it, its last wire and that
+    /// wire's scaled coefficient.
+    combinations: BTreeMap<(u32, u32, u32), u32>,
+    /// For each combination, the cuts that carry it, each cut as the gates
+    /// before it: from the first past its last gate to the last before a
+    /// constraint that names it names another gate, or is homed. Nothing
+    /// carries one whose last is before its first.
+    cuts: Vec<(usize, usize)>,
+}
+
+impl Carried {
+    /// No combination yet.
+    const NONE: u32 = u32::MAX;
+
+    fn new<F: Field>() -> Self {
+        Carried {
+            coeffs: BTreeMap::from([(F::ONE.to_bytes().as_ref().to_vec(), 0)]),
+            combinations: BTreeMap::new(),
+            cuts: Vec::new(),
+        }
+    }
+
+    /// Names what a constraint homed at gate `home` names before each cut
+    /// it is past: `terms` are its terms over the circuit's own gates, each
+    /// with its gate's place, in the order of the places.
+    fn name<F: Field>(&mut self, terms: &[(usize, u32, F)], home: usize) {
+        let Some(&(_, _, scale)) = terms.first() else {
+            return;
+        };
+        let mut inverse = None;
+        let mut combination = Self::NONE;
+        for (index, &(place, wire, coeff)) in terms.iter().enumerate() {
+            let coeff = if index == 0 {
+                0
+            } else {
+                let inverse = *inverse
+                    .get_or_insert_with(|| scale.invert().expect("expanded terms are nonzero"));
+                let bytes = (coeff * inverse).to_bytes();
+                let next = u32::try_from(self.coeffs.len()).expect("coefficients fit a u32");
+                match self.coeffs.get(bytes.as_ref()) {
+                    Some(&coeff) => coeff,
+                    None => {
+                        self.coeffs.insert(bytes.as_ref().to_vec(), next);
+                        next
+                    }
+                }
+            };
+            let next = u32::try_from(self.cuts.len()).expect("combinations fit a u32");
+            combination = match self.combinations.entry((combination, wire, coeff)) {
+                Entry::Vacant(entry) => {
+                    self.cuts.push((place + 1, 0));
+                    *entry.insert(next)
+                }
+                Entry::Occupied(entry) => *entry.get(),
+            };
+            // The constraint names this much and no more before every cut
+            // up to the next gate it names, or to its home.
+            let until = terms.get(index + 1).map_or(home, |&(next, _, _)| next);
+            let (_, last) = &mut self.cuts[combination as usize];
+            *last = (*last).max(until);
+        }
+    }
+}
+
+/// Candidate boundaries and their costs for one gate placement.
 struct Costs {
     /// The places a page may end at, each as the gates of the circuit's
     /// own before it: none, then one gate of each stretch of the
-    /// circuit's gates, the one fewest wires are named across among those
-    /// that split no routine, then all of them.
+    /// circuit's gates, the one a cut before which carries least among
+    /// those that split no routine, then all of them.
     places: Vec<usize>,
-    /// For each place, the wires of the circuit's own allocated before it
-    /// that a constraint past it names.
-    crossing: Vec<i64>,
+    /// For each place, what a cut there carries: the distinct linear
+    /// combinations, up to scale, that the constraints past it name of the
+    /// circuit's own gates before it.
+    carried: Vec<i64>,
 }
 
 impl Costs {
@@ -52,37 +128,40 @@ impl Costs {
         let own = recording.num_gates.saturating_sub(own_start);
         let place = |gate: usize| placement.place(gate).map(|place| place - own_start);
 
-        // For each wire of the circuit's own, the last gate a constraint
-        // that names it is homed at.
-        let mut named: BTreeMap<u32, usize> = BTreeMap::new();
-        for (emitted, terms) in &recording.constraints {
-            // The constraint's home is the page of the last gate it names,
-            // or else of the last gate allocated before it.
-            let Some(position) = terms
-                .iter()
-                .filter_map(|&(wire, _)| place((wire / 4) as usize))
-                .max()
-                .or_else(|| emitted.checked_sub(1).and_then(place))
-            else {
-                continue;
-            };
-            for &(wire, _) in terms {
-                if (wire / 4) as usize >= own_start {
-                    let last = named.entry(wire).or_insert(position);
-                    *last = (*last).max(position);
-                }
+        // What each constraint names of the circuit's own gates before
+        // each cut it is past. Its home is the page of the last gate it
+        // names; one that names a stage's wires alone carries nothing.
+        let mut carried = Carried::new::<F>();
+        let mut named = Vec::new();
+        let mut name = |terms: &[(u32, F)], home: Option<usize>| {
+            named.clear();
+            named.extend(
+                terms
+                    .iter()
+                    .filter_map(|&(wire, coeff)| Some((place((wire / 4) as usize)?, wire, coeff))),
+            );
+            named.sort_unstable_by_key(|&(place, wire, _)| (place, wire));
+            if let Some(&(last, _, _)) = named.last() {
+                carried.name(&named, home.unwrap_or(last));
             }
+        };
+        for (_, terms) in &recording.constraints {
+            name(terms, None);
+        }
+        // The public output is the last page's (see `arrange`), so each of
+        // its wires is named at the end of the circuit: what it has of an
+        // earlier page is carried to the last.
+        for terms in &recording.outputs {
+            name(terms, Some(own));
         }
 
-        // For a cut before each gate, the wires of the circuit's own
-        // allocated before it that a constraint past it names, and
+        // For a cut before each gate, the combinations it carries, and
         // whether it splits a routine: falls after one of its gates and
         // not after all of them.
         let mut across = vec![0i64; own + 2];
-        for (&wire, &last) in &named {
-            let gate = place((wire / 4) as usize).expect("a gate of the circuit's own");
-            if gate < last {
-                across[gate + 1] += 1;
+        for &(first, last) in &carried.cuts {
+            if first <= last {
+                across[first] += 1;
                 across[last + 1] -= 1;
             }
         }
@@ -100,33 +179,45 @@ impl Costs {
         }
 
         // The places a page may end at: of each stretch of `step` gates,
-        // the gate fewest wires are named across among those that split
-        // no routine, the last such gate if several do as well; and the
-        // end of the circuit's gates.
+        // the gate a cut before which carries least among those that
+        // split no routine, the last such gate if several do as well; and
+        // the end of the circuit's gates.
         let step = own.div_ceil(GRID).max(1);
         let mut places = vec![0];
-        for stretch in (0..own).step_by(step) {
-            let found = (stretch + 1..=(stretch + step).min(own.saturating_sub(1)))
+        let mut start = 0;
+        for end in (step..own).step_by(step).chain(core::iter::once(own)) {
+            let found = (start + 1..=end.min(own.saturating_sub(1)))
                 .filter(|&gate| split[gate] == 0)
                 .min_by_key(|&gate| (across[gate], core::cmp::Reverse(gate)));
             places.extend(found);
+            start = end;
         }
         if own > 0 {
             places.push(own);
         }
-        let crossing = places.iter().map(|&gates| across[gates]).collect();
+        let carried = places.iter().map(|&gates| across[gates]).collect();
+        Costs { places, carried }
+    }
 
-        Costs { places, crossing }
+    /// What the page from place `start` to place `end` adds to what the
+    /// pages carry: what the cut at its end carries, unless the page holds
+    /// no gate or ends the circuit.
+    fn cost(&self, start: usize, end: usize) -> u64 {
+        if start == end || end + 1 == self.places.len() {
+            return 0;
+        }
+        self.carried[end] as u64
     }
 }
 
 impl Layout {
     /// The layout that cuts `recording` into the pages of `stages`, in
-    /// polynomials of `limit` gates, so that the pages carry little: a
-    /// page ends where few of the wires before are named after. The cuts
-    /// are looked for at [`GRID`] places at most, none of which splits a
-    /// routine the circuit calls, and what a cut carries is counted with
-    /// repeats, so the layout is a good one rather than the best.
+    /// polynomials of `limit` gates, so that the pages carry little by
+    /// `costs`. The cuts are looked for on a grid whose candidates
+    /// preserve whole routines. The costs only estimate carry: a
+    /// combination carried across several cuts is counted at each, and
+    /// takes one slot. `arrange` counts the actual slots, and the cut is
+    /// taken only if those fit the carry stage.
     fn fit(costs: &Costs, num_gates: usize, stages: &Stages, limit: usize) -> Result<Self> {
         let short = || Error::GateBoundExceeded { limit };
         let pages = stages.num_pages();
@@ -137,7 +228,7 @@ impl Layout {
 
         // The places a page may end at, as gates of the circuit's own
         // before them.
-        let Costs { places, crossing } = costs;
+        let places = &costs.places;
         assert_eq!(places.last().copied().unwrap_or(0), own);
         let before = |place: usize| places[place];
         let places = places.len() - 1;
@@ -159,12 +250,7 @@ impl Layout {
                     if least[start] == NONE {
                         continue;
                     }
-                    let crossed = if start < end && end < places {
-                        crossing[end] as u64
-                    } else {
-                        0
-                    };
-                    let carried = least[start] + crossed;
+                    let carried = least[start] + costs.cost(start, end);
                     if carried < next[end] {
                         (next[end], from[end]) = (carried, start);
                     }
@@ -218,7 +304,6 @@ pub(super) struct Link<F> {
 #[derive(Clone, Debug)]
 pub(super) struct Draft<F: Field> {
     pub(super) layout: Layout,
-    pub(super) stages: Stages,
     /// The home page of each constraint, in emission order.
     pub(super) homes: Vec<u32>,
     /// The slots of the constraints that read any, by constraint.
@@ -253,19 +338,6 @@ impl<F: Field> Draft<F> {
     pub(super) fn place(&self, gate: usize) -> Option<(usize, usize)> {
         let (page, local) = *self.places.get(gate.checked_sub(self.layout.own_start)?)?;
         Some((page as usize, local as usize))
-    }
-
-    /// Refuses a carry stage too small for its slots.
-    fn fits(&self) -> Result<()> {
-        let holds = self.stages.carry;
-        if self.slots.len() > holds {
-            return refuse(format!(
-                "the circuit carries {} values between pages, more than the {holds} their carry \
-                 stage holds",
-                self.slots.len(),
-            ));
-        }
-        Ok(())
     }
 
     /// What the pager hands over of a compiled draft.
@@ -541,7 +613,9 @@ enum Feeders {
 /// while the others are placed, and no one way suits every circuit: the
 /// feeder with the longest chain of gates behind it ([`Feeders::Deepest`])
 /// or the one allocated last ([`Feeders::Latest`]). A cut is looked for in
-/// each order, and in the order the circuit allocates its gates in.
+/// the order the circuit allocates its gates in first, and in each of
+/// these orders only where that cut does not fit the carry stage: placing
+/// the gates is most of a cut's work, and most circuits cut as allocated.
 struct Placement {
     own_start: usize,
     /// For each gate of the circuit's own, in the order it allocates them,
@@ -909,7 +983,6 @@ fn arrange<F: Field>(
     let slots = arranger.slots;
     let plan = Draft {
         layout,
-        stages: stages.clone(),
         homes,
         links,
         outputs,
@@ -978,43 +1051,42 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
             ));
         }
 
-        // With the gates that wait placed beside their use, either way,
-        // and with every gate where the circuit allocates it: whichever
-        // carries least.
-        let placements: [&(dyn Fn() -> Placement + Sync); 3] = [
-            &|| Placement::of(&recording, stages.own_start(), Feeders::Deepest),
-            &|| Placement::of(&recording, stages.own_start(), Feeders::Latest),
-            &|| Placement::allocated(&recording, stages.own_start()),
-        ];
-        let cut = |placement: &(dyn Fn() -> Placement + Sync)| -> Result<(Draft<F>, PagingReport)> {
-            let placement = &placement();
-            let costs = Costs::of(&recording, placement, stages);
+        let own_start = stages.own_start();
+        let cut = |placement: Placement| -> Result<_> {
+            let costs = Costs::of(&recording, &placement, stages);
             let layout = Layout::fit(&costs, recording.num_gates, stages, limit)?;
-            let planned = arrange(&recording, placement, stages, layout)?;
-            planned.0.fits()?;
-            Ok(planned)
+            let planned = arrange(&recording, &placement, stages, layout)?;
+            let slots = planned.1.slots;
+            // An over-capacity placement contributes only its slot count.
+            Ok((slots, (slots <= stages.carry).then_some(planned)))
         };
-        // Each order is cut on its own, so the three are cut at once.
-        let (first, (second, third)) = maybe_rayon::join(
-            || cut(placements[0]),
-            || maybe_rayon::join(|| cut(placements[1]), || cut(placements[2])),
-        );
-        let mut least: Option<Result<(Draft<F>, PagingReport)>> = None;
-        for cut in [first, second, third] {
-            least = Some(match (least, cut) {
-                // By the values the pages carry: the carry stage takes
-                // the same gates either way.
-                (Some(Ok(least)), Ok(cut)) => Ok(if cut.0.slots.len() < least.0.slots.len() {
-                    cut
-                } else {
-                    least
-                }),
-                (Some(Ok(least)), Err(_)) => Ok(least),
-                (Some(Err(error)), Err(_)) => Err(error),
-                (_, cut) => cut,
-            });
+        // With every gate where the circuit allocates it, first: a cut that
+        // fits so is taken, and no other order is looked at.
+        let allocated = cut(Placement::allocated(&recording, own_start));
+        if let Ok((_, Some((draft, report)))) = allocated {
+            return Ok((draft, report, recording));
         }
-        let (draft, report) = least.expect("an order")?;
-        Ok((draft, report, recording))
+        // Otherwise with the gates that wait placed beside their use,
+        // either way: whichever carries least.
+        let (deepest, latest) = maybe_rayon::join(
+            || cut(Placement::of(&recording, own_start, Feeders::Deepest)),
+            || cut(Placement::of(&recording, own_start, Feeders::Latest)),
+        );
+        // Fixed order breaks ties even when the placements run in parallel.
+        let (needed, cut) = [deepest, latest, allocated]
+            .into_iter()
+            .reduce(|a, b| match (&a, &b) {
+                (Ok((first, _)), Ok((next, _))) if next < first => b,
+                (Err(_), Ok(_)) => b,
+                _ => a,
+            })
+            .expect("three placements")?;
+        if let Some((draft, report)) = cut {
+            return Ok((draft, report, recording));
+        }
+        refuse(format!(
+            "the circuit carries {needed} values between pages, more than the {} their carry stage holds",
+            stages.carry
+        ))
     }
 }

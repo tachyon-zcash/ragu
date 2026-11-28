@@ -37,26 +37,27 @@ aggregator Fuse.
   outputs.
   The decompression proof binds both output commitments to the wallet
   proof's commitments.
-- The aggregator divides the wallet verifier's arithmetic into *chunks* and
-  packs them into internal circuits at the aggregator rank. Native chunks run
-  over the
-  circuit field $\F_p$, nested chunks over the scalar field $\F_q$.
+- The aggregator runs the wallet verifier's arithmetic in two circuits, one
+  for each field of the cycle: the *native circuit* over the circuit field
+  $\F_p$ and the *nested circuit* over the scalar field $\F_q$. Each is
+  larger than a polynomial at the aggregator rank holds, and is cut into
+  *pages*: internal circuits at the aggregator rank.
   The diagrams show the stage commitments carried by the aggregator proof.
-  The chunks draw no challenges of their own.
+  The two circuits draw no challenges of their own.
 - Four protocol runs meet in a decompression, and a subscript names the run
   that a challenge belongs to. The field side, native or nested, is a
   separate matter, marked by $q$ as elsewhere.
 
   | Run | Subscript | Its Challenges in This Chapter |
   |---|---|---|
-  | the Fuse that produced the wallet proof | $F$ | replayed by the chunks: raw squeezes on the native side, their lifts on the nested side and for both $\beta$ |
-  | the compression of the wallet proof | $C$ | replayed by the chunks: each is the lift of a squeeze, with squeezes of its own for each curve |
-  | the Fuse of the aggregator step that carries the chunks | $\text{step}$ | fresh: application slots open at $w_{\rm step}$ and the host IPA helper opens at $y_{\rm step}$ |
+  | the Fuse that produced the wallet proof | $F$ | replayed by the circuits: raw squeezes on the native side, their lifts on the nested side and for both $\beta$ |
+  | the compression of the wallet proof | $C$ | replayed by the circuits: each is the lift of a squeeze, with squeezes of its own for each curve |
+  | the Fuse of the aggregator step that carries the circuits | $\text{step}$ | fresh: application slots open at $w_{\rm step}$ and the host IPA helper opens at $y_{\rm step}$ |
   | a Fuse that takes the result as a child | $\text{parent}$ | fresh: its $y$ is the point at which the claim targets are evaluated |
 
   The sequence diagrams below show what the prover commits and what the
   circuits check, phase by phase. They are views of one construction, and the
-  chunk circuits exchange no messages and draw no challenges.
+  decompression's circuits exchange no messages and draw no challenges.
 
 ## Protocol in Detail {#decompression-protocol}
 
@@ -69,26 +70,27 @@ headers. The step encodes the
 wallet proof's output header data and constrains the encoded header's
 type suffix to differ from `Dummy` and zero.
 
-Every aggregator proof carries the chunk, statement and binding circuits.
+Every aggregator proof carries both sides' pages and the statement circuit.
+The last page of a side is its binding circuit.
 For the decompression step the prover supplies $\pi$ to these circuits.
 For any other step the prover reuses witnesses prepared at setup from the
 wallet application's compressed bootstrap proof. The
 [statement check](#4-claims) gives the required header and openings.
 
-The chunks replay the wallet's Fuse and compression transcripts. The
-aggregator step's own Fuse supplies $w_{\rm step}$ for its openings.
+The native circuit replays the wallet's Fuse and compression transcripts.
+The aggregator step's own Fuse supplies $w_{\rm step}$ for its openings.
 When another Fuse consumes the result, it evaluates the native claim
 targets at its fresh $y$ and the nested targets at the lift $y_q$.
 
 ```mermaid
 flowchart TB
     accTitle: Boundaries of a decompression
-    accDescr: The compressed wallet proof supplies its circuit-field parts to the native chunks and its scalar-field parts to the nested chunks. The native chunks replay the wallet proof's Fuse and compression transcripts. The two sides exchange challenge bits, run commitments and the digits of full-width scalars, and each recomputes the commitments of the other's stages. The enclosing aggregator Fuse supplies the registry and IPA polynomial evaluations through its own online batches. The openings are batched into the step's accumulator with an outgoing source restriction, and the claims of the chunk, statement and binding circuits join the step's frontier. A consumer folds those claims at a fresh challenge of its own and inherits the restriction, or checks both at a root.
+    accDescr: The compressed wallet proof supplies its circuit-field parts to the native circuit and its scalar-field parts to the nested circuit. The native circuit replays the wallet proof's Fuse and compression transcripts. The two sides exchange challenge bits, run commitments and the digits of full-width scalars, and each recomputes the commitments of the other's stages. The enclosing aggregator Fuse supplies the registry and IPA polynomial evaluations through its own online batches. The openings are batched into the step's accumulator with an outgoing source restriction, and the claims of the pages and of the statement circuit join the step's frontier. A consumer folds those claims at a fresh challenge of its own and inherits the restriction, or checks both at a root.
     W["Compressed wallet proof<br/>instance and messages;<br/>its Fuse and compression<br/>challenges are replayed"]
     ON["Online batches of the step<br/>wallet registry restrictions,<br/>s(X) of each IPA,<br/>opened at y_step"]
-    NA["Native chunks<br/>replay both transcripts,<br/>host scalar equations,<br/>nested point arithmetic"]
-    NE["Nested chunks<br/>lift the same bits,<br/>nested scalar equations,<br/>host point arithmetic"]
-    FR["Frontier of the step<br/>claims of the chunk,<br/>statement and<br/>binding circuits"]
+    NA["Native circuit<br/>replay both transcripts,<br/>host scalar equations,<br/>nested point arithmetic"]
+    NE["Nested circuit<br/>lift the same bits,<br/>nested scalar equations,<br/>host point arithmetic"]
+    FR["Frontier of the step<br/>claims of the pages,<br/>each side's last binding,<br/>and of the statement circuit"]
     AC["Accumulator of the step<br/>online openings, batched;<br/>outgoing source restriction"]
     CO["Consumer<br/>a parent Fuse, or the<br/>compressed verifier<br/>at a root"]
     W -->|"circuit-field parts"| NA
@@ -104,14 +106,14 @@ flowchart TB
 ```
 
 The figure has four parts: the wallet proof with the two transcripts that
-it fixes, the chunks of each side, and the enclosing step with its consumer.
-Neither side's chunks verify the wallet proof alone. Each side does the scalar
+it fixes, the circuit of each side, and the enclosing step with its consumer.
+Neither side's circuit verifies the wallet proof alone. Each side does the scalar
 arithmetic of its own field and the group arithmetic on the other side's
 points, and what one side takes from the other is held by the binding
 claims. What leaves the step is of two kinds. The online openings, the
 registry values among them, are batched into the step's accumulator, and the
 outgoing source restriction is an obligation that a parent inherits. The
-chunk, statement and binding circuits are internal circuits of the profile,
+pages and the statement circuit are internal circuits of the profile,
 so the claims that they are satisfied are in the step's frontier.
 
 ### Phase 1. Commit the wallet proof in stages {#1-compressed-proof--stages}
@@ -127,7 +129,7 @@ sequenceDiagram
     Note over V: Masks hold each stage to its positions
 ```
 
-Stage masks specify where the chunks read each field of $\pi$.
+Stage masks specify where the circuits read each field of $\pi$.
 $\mathcal P$ commits to those stages and keeps the field values as witnesses.
 A mask confines a stage to its gates and does nothing else. It does not make
 an accepted stage the encoding of $\pi$ that the honest prover commits, which
@@ -151,8 +153,8 @@ sequenceDiagram
     participant P as Prover
     participant V as Verifier
     Note over P: Native side<br/>Squeeze each challenge and keep its 143 bits<br/>For the host curve's compression challenges,<br/>also their scalar in the circuit field, the lift
-    P->>V: [lifts], [transcript]
-    Note over V: Replay Fuse and compression using the staged fields<br/>Absorb each [runᵢ] at its scheduled position<br/>Range-check each raw squeeze and extract its low 143 bits<br/>Hold each lift to [lifts]
+    P->>V: [lifts]
+    Note over V: Replay Fuse and compression using the staged fields<br/>Absorb each [runᵢ] at its position in the transcript<br/>Range-check each raw squeeze and extract its low 143 bits<br/>Hold each lift to [lifts]
     Note over P: Nested side<br/>Take the same 143 bits and their scalar<br/>in the scalar field, the lift
     P->>V: [lifts] (free coefficients zero)
     Note over V: Hold each lift to [lifts]<br/>Native side recomputes this [lifts]<br/>from the squeezed bits
@@ -163,20 +165,19 @@ sequenceDiagram
    instance fields, the encoded output header and the compression messages
    in that order.
    Skip the four enclosing-step fields. Absorb each $[\mathrm{run}_i]$ at
-   its scheduled position. The $[\mathrm{transcript}]$ stage carries sponge
-   states between chunks.
+   its position in the transcript.
 2. **Challenge extraction.** Range-check each raw squeeze against $2^{254}$
    and extract its low 143 bits. Both curves use lifts of the compression
    challenges. Fuse uses the first eight raw squeezes on the native side,
    their lifts on the nested side, and a lift of the ninth for each $\beta$.
    The native $[\mathrm{lifts}]$ stage holds the host compression lifts.
-3. **Nested lifts.** The nested chunks receive the challenge bits as
+3. **Nested lifts.** The nested circuit receives the challenge bits as
    witnesses. In order, their $[\mathrm{lifts}]$ stage, whose free
    coefficients are zero, holds the nested compression lifts, the wallet Fuse
    lifts of $x_F,y_F,u_F,w_F$, then the host compression lifts into $\F_q$.
-   Each chunk that uses the bits constrains their lift to the matching stage
-   wire. The native chunks
-   recompute the commitment with the bits from replay. The native binding
+   Wherever it scales by the bits, it constrains their lift to the matching
+   stage wire. The native circuit
+   recomputes the commitment with the bits from replay. The native binding
    claim checks it against the nested stage.
 
 The honest prover zeroes unused run coefficients, reproducing the points
@@ -195,23 +196,31 @@ sequenceDiagram
     participant P as Prover
     participant V as Verifier
     Note over P: Both sides<br/>Run the verifier's arithmetic in the side's field<br/>and derive its commitments over the points it holds
-    P->>V: [work], [digits] (digits with free coefficients zero)
+    P->>V: [digits] (free coefficients zero), [carry]
     Note over V: Field identities, in the side's field<br/>Derived commitments, as endoscalar chains<br/>Full-width scalings, by the other side's digits<br/>Equalities with the instance and the IPA final check
     Note over V: Each side recomputes the other side's [digits]
 ```
 
-All chunks on a side load the same committed $[\mathrm{work}]$ stage.
-One chunk constrains an intermediate value at its assigned wire, and a
-later chunk can read that wire.
+Each side's checks run in one circuit, so an intermediate value is a wire
+that a later check reads directly. Where the two fall on different pages,
+the value passes through the committed $[\mathrm{carry}]$ stage, which every
+page of the side loads. The page that holds the wire constrains a slot of
+the stage to it, and the page that reads it names the slot in the wire's
+place. Every page's claim sums the same stage commitments and the one
+$[\mathrm{carry}]$ commitment, each held to its own gates by its mask, so
+the reader sees the value the holder constrained. Before any page is
+registered, the cut is checked against the side's whole circuit: each gate
+and each constraint on one page, each slot a page reads held to a wire by
+another, and the output on the last page.
 
-1. **Field equations.** Native chunks check the host scalar equations over
-   $\F_p$ and nested chunks check the nested scalar equations over $\F_q$.
+1. **Field equations.** The native circuit checks the host scalar equations
+   over $\F_p$ and the nested circuit the nested scalar equations over $\F_q$.
    Each recomputes the claim targets, fold, split, opening batch and IPA
    scalars. Inverse checks require the compression challenges $r_C,z_C$,
    every batch denominator $u_C-x_j$ and every IPA round challenge $u_j$ to be
    nonzero.
-2. **Curve equations.** Native chunks check nested points. Nested chunks
-   check host points. Each side checks curve membership for every supplied
+2. **Curve equations.** The native circuit checks nested points. The nested
+   circuit checks host points. Each side checks curve membership for every supplied
    point, derives the folded commitments and $[H]$, and checks that the
    IPA's final multiscalar multiplication equals the identity. For each
    round $\mathcal P$ supplies a point $Q_j$. The circuit checks
@@ -223,14 +232,14 @@ later chunk can read that wire.
    side uses the digits for its point scalings and recomputes the stage
    commitment. Native digits also carry the decompression flag. Nested
    digits also carry both coordinates of $[A]$, $[B]$ and the `PointsAb`
-   commitment, and $\texttt{bridge\_alpha}^2$. The native chunks use these
+   commitment, and $\texttt{bridge\_alpha}^2$. The native circuit uses these
    seven values to rebuild `BridgeAB` and check both `BridgeAB` and
    `ChallengeStage` against the wallet instance.
 
 #### Registry evaluations {#registry-evaluations-and-g}
 
 The standalone wallet verifier evaluates $m(W,X,Y)$ itself. For the same
-values, the chunks use openings of nine restrictions $m(W,a,b)$ per field.
+values, the circuits use openings of nine restrictions $m(W,a,b)$ per field.
 In slot order their $(a,b)$ are
 $$
 (r_C,y_C),\ (x_F,y_F),\ (x^{(0)},y^{(0)}),\ (x^{(1)},y^{(1)}),\ (u_F,y_F),\
@@ -253,9 +262,10 @@ restrictions at $w_F$.
    Each opening value has a wire in the online query stage. Every extension
    circuit, including the statement and binding circuits, loads these two
    stages first, as does the Fuse helper.
-2. The chunks match the coordinates and opening points to the wallet Fuse
+2. The circuits match the coordinates and opening points to the wallet Fuse
    and compression challenges and the children's values. They bind the
-   evaluations in $[\mathrm{work}]$ to their query wires. The native side
+   evaluations they read, which the prover supplies, to their query wires.
+   The native side
    also binds the wallet proof's own circuit domain point, which the helper
    checks belongs to the wallet registry domain.
 3. The step's Fuse batches the openings and both ends of each
@@ -279,18 +289,18 @@ the nested $s$ in the nested online batch.
    This is the wallet compression transcript's final squeeze, after both
    IPAs' round messages. The step opens its left input's first slot at
    that digest.
-   Under the decompression flag the native chunks equate the opening point
-   with the last squeeze they replayed. This fixes both IPAs' round
+   Under the decompression flag the native circuit equates the opening point
+   with the last squeeze it replayed. This fixes both IPAs' round
    challenges before $w_{\rm step}$ under the sponge's collision and
    preimage resistance.
 2. **Host IPA.** The decompression step commits $s$ in the native online
    batch before $y_{\rm step}$ and opens it at $y_{\rm step}$. Under
-   the flag, the native chunks check the opening against $s(y_{\rm step})$
-   and the nested chunks hold the host $G'$ to that batch commitment.
+   the flag, the native circuit checks the opening against $s(y_{\rm step})$
+   and the nested circuit holds the host $G'$ to that batch commitment.
 3. **Nested IPA.** Every step commits the nested $s$ in the nested online
    batch before $y_{\rm step}$ and opens it at the lift
-   $y_{{\rm step},q}$. The nested chunks check the opening against
-   $s(y_{{\rm step},q})$, and the native chunks' $G'$ must equal that
+   $y_{{\rm step},q}$. The nested circuit checks the opening against
+   $s(y_{{\rm step},q})$, and the native circuit's $G'$ must equal that
    batch commitment. Neither check is under the flag.
 
 For a decompression step, both polynomials in each equality are fixed
@@ -311,12 +321,12 @@ sequenceDiagram
     participant P as Prover
     participant V as Verifier
     P->>V: Decompression proof
-    Note over V: Statement claim<br/>The step outputs the header the chunks verified
+    Note over V: Statement claim<br/>The step outputs the header the circuits verified
     Note over V: Binding claims<br/>Each side exposes the other side's stage commitments
-    Note over V: Accumulate the chunk circuits<br/>as internal circuits
+    Note over V: Accumulate the pages<br/>as internal circuits
 ```
 
-Accumulation enforces the chunk circuits. A consuming Fuse folds the three
+Accumulation enforces the pages. A consuming Fuse folds the three
 claims below. At a root, the decider checks them at its own challenges.
 For each target $k(y)$, Horner-evaluate the listed fields in order at the
 consumer's challenge for that side, $y_{\rm parent}$ or its lift, followed
@@ -335,7 +345,7 @@ then $y$ coordinate.
 3. **Nested binding.** Match the recomputed native $[\mathrm{digits}]$
    commitment against its stage. Match the next three points against the
    two application output commitments and the host IPA batch commitment.
-   Under the flag the chunks equate the two application commitments with
+   Under the flag the nested circuit equates the two application commitments with
    the wallet proof's slots and the batch commitment with the host $G'$.
 
 ### Output {#decompression-output}
@@ -350,10 +360,10 @@ application example.
 
 In the code, decompression is implemented in `ragu_pcd`'s private
 `decompress` module. Its
-`program` module schedules the verifier's arithmetic into chunks, `chunk` has
-the chunk, statement and binding circuits, `stages` has their stages,
-`extension` registers them as the aggregator profile's extension, and `prover`
-fills their polynomials.
+`verifier` module has each side's verifier as straight-line code, `whole`
+runs it as the side's circuit and cuts that into pages, `circuits` has the
+statement circuit, `stages` has their stages, `aggregator` registers them as
+the aggregator profile's extension, and `prover` fills their polynomials.
 
 ## Privacy {#privacy}
 

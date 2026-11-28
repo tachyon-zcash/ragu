@@ -1,7 +1,7 @@
 //! The compressed proof's data as stages of the decompression proof: what
-//! every chunk of a side reads, allocated once per stage polynomial and
-//! loaded by each chunk unenforced, the stage's mask binding the layout as
-//! it binds the fuse's stages.
+//! a side's verifier reads, allocated once per stage polynomial and
+//! loaded unenforced by the side's circuit, the stage's mask binding the
+//! layout as it binds the fuse's stages.
 //!
 //! Each side's stages form a chain of [`ValuesStage`]s, each holding
 //! points of the side's curve and elements of its field. The chain opens
@@ -12,22 +12,22 @@
 //! messages' values the run covers, then the trailing stage with the
 //! nested IPA's $c$, the one value no run covers. After the front come the
 //! lifts stage, the lifts of the challenges the side's field checks use,
-//! the work stage, what passes between chunks, the transcript stage, what
-//! only the transcript chunks need, the sponge's saved states, and the
-//! digits stage, the signed digits of the full-width scalars the other
-//! side scales by. A chunk loads the stages up to the last it needs, the
-//! digits chunks skipping the transcript stage, so the transcript and
-//! digits stages' cost falls on the chunks that fill them. A [`Layout`]
+//! and the digits stage, the signed digits of the full-width scalars the
+//! other side scales by. The side's whole circuit
+//! ([`SideCircuit`](super::common::SideCircuit)) loads the chain after
+//! the aggregator's two online stages, and every page it is cut into
+//! loads every stage in the chain. A [`Layout`]
 //! names where in the instance and messages each part
 //! of the proof sits, the same positions whichever stages hold them, and
-//! how many lifts and digits the side holds; the
-//! [`Schedule`](super::program::Schedule) assigns the work stage's slots
-//! and the sponge states'.
+//! how many lifts and digits the side holds. What the verifier computes
+//! between reading the stages and writing them is in no stage: it is
+//! wires of the circuit's own, which its pages pass each other on its
+//! carry stage.
 //!
 //! The circuit-field side holds the nested curve's points as points and
 //! the circuit field's values as elements; the scalar-field side holds the
 //! host curve's points as points and the scalar field's values as
-//! elements, and its transcript stage is empty.
+//! elements.
 //!
 //! # What binds the sides
 //!
@@ -38,9 +38,10 @@
 //! aggregator rank ([`run_degrees`](crate::compress::runs::run_degrees); see
 //! [`CycleTranscript`](crate::ipa::CycleTranscript)). The circuit-field
 //! side takes each commitment as a witness point its transcript absorbs
-//! and its binding circuit exposes, which the proof's consumer holds to the
-//! run stage's actual commitment: the values the scalar-field side's
-//! chunks read are then the ones each challenge was squeezed over. Two
+//! and its binding circuit, the last page of its whole circuit, exposes,
+//! which the proof's consumer holds to the
+//! run stage's actual commitment: the values the scalar-field side
+//! reads are then the ones each challenge was squeezed over. Two
 //! further kinds of stage are committed with a zero alpha so that the other
 //! side can recompute their commitments from the values it holds, which its
 //! binding circuit exposes the same way (see
@@ -56,17 +57,14 @@
 //!   recomputes it as the signed sum of the digits' generators while it
 //!   scales by them ([`digits_degrees`]).
 //!
-//! The digits stage comes after the work stage, where the circuit-field
-//! side's transcript stage also starts, so its generators depend on the
-//! sizes the side's schedule sets, and the other side's schedule names
-//! those generators: the stages' lengths
-//! therefore take each side's schedule built for its sizes alone
-//! ([`Side::sizes`]), which no other side's schedule enters, and the
-//! full schedules build on them (see the [`program`](super::program)
-//! module). The generators are computed from the stages' shapes alone
-//! ([`shape_degrees`]), as [`StageExt::rx`] lays a stage out, so that the
-//! compression, which commits the runs for a profile's decompression
-//! whether or not one exists, needs no stage type of it.
+//! The digits stage comes right after the lifts stage, so its generators,
+//! which the other side's verifier is laid out by, follow from the side's
+//! [`Layout`] alone: neither side's layout waits on the other's (see
+//! [`Tables`](super::common::Tables)). The generators are computed from
+//! the stages' shapes alone ([`shape_degrees`]), as
+//! [`StageExt::rx`](ragu_circuits::staging::StageExt::rx) lays a stage out,
+//! so that the compression, which commits the runs for a profile's
+//! decompression whether or not one exists, needs no stage type of it.
 
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
@@ -75,7 +73,7 @@ use core::marker::PhantomData;
 use ragu_circuits::MaskObject;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    staging::{Stage, StageBuilder, StageExt, StageGuard},
+    staging::Stage,
 };
 use ragu_core::{
     Cycle, Error, Result,
@@ -90,10 +88,8 @@ use ragu_primitives::{
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::{
-    circuits::{Prepared, View},
+    common::{Prepared, Side, challenges_per_curve},
     gadgets::derive::digit_width,
-    program::challenges_per_curve,
-    side::{Native, Nested, Side},
 };
 pub(crate) use crate::compress::runs::{
     NESTED_SCALARS, Run, StageShape, native_points_of, num_runs, runs, shape_degrees,
@@ -101,8 +97,7 @@ pub(crate) use crate::compress::runs::{
 use crate::{
     compress::{Messages, instance::OPENED, revdot::fold::Derived},
     internal::nested,
-    ipa::IpaCycle,
-    profile::{MaskSlot, Profile, ProfiledCycle, Registered, Standard},
+    profile::{MaskSlot, Profile, Registered},
 };
 
 /// The nested commitments the instance lists, then the nested registry
@@ -118,7 +113,7 @@ pub(crate) const MESSAGE_SCALARS: usize =
 /// The scalar field's values beyond $v$, $c$ and $c b z$ whose digits the
 /// circuit-field side scales generators by: the `ab` bridge stage's
 /// coefficients, the coordinates of three host-curve commitments and the
-/// alpha (see [`ab_layout`](super::program::ab_layout)).
+/// alpha (see [`ab_layout`](super::common::ab_layout)).
 pub(crate) const AB_TERMS: usize = 7;
 
 /// Positions within the circuit-field side's step binding, the instance
@@ -129,123 +124,6 @@ pub(crate) mod step {
     pub const FLAG: usize = 0;
     pub const DIGEST: usize = 1;
     pub const LEN: usize = crate::profile::STEP_BINDING;
-}
-
-/// Which of the scalar-field side's logical stages a run's values sit in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Where {
-    Instance,
-    Messages,
-}
-
-/// Where a stage of the scalar-field side's front takes its values: the
-/// positions of its points and of its elements within the instance's or
-/// the messages' ([`Layout`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RunSource {
-    pub points: Option<(Where, Span)>,
-    pub elements: Option<(Where, Span)>,
-}
-
-impl RunSource {
-    /// The stage's shape.
-    pub(crate) fn shape(&self) -> StageShape {
-        StageShape {
-            points: self.points.map_or(0, |(_, span)| span.len),
-            elements: self.elements.map_or(0, |(_, span)| span.len),
-        }
-    }
-
-    /// The `i`-th point of the stage, from `instance` and `messages`.
-    fn point<F, P: Copy>(&self, instance: &Values<F, P>, messages: &Values<F, P>, i: usize) -> P {
-        let (at, span) = self.points.expect("the stage holds points");
-        match at {
-            Where::Instance => instance.points[span.at(i)],
-            Where::Messages => messages.points[span.at(i)],
-        }
-    }
-
-    /// The `i`-th element of the stage.
-    fn element<F: Copy, P>(&self, instance: &Values<F, P>, messages: &Values<F, P>, i: usize) -> F {
-        let (at, span) = self.elements.expect("the stage holds elements");
-        match at {
-            Where::Instance => instance.elements[span.at(i)],
-            Where::Messages => messages.elements[span.at(i)],
-        }
-    }
-}
-
-impl Run {
-    /// Where the run's values sit in `layout`, the scalar-field side's.
-    pub(crate) fn source(self, layout: &Layout) -> RunSource {
-        use message_points::*;
-        let instance = layout.instance;
-        let messages = layout.messages;
-        let points = |start: usize, len: usize| RunSource {
-            points: Some((
-                Where::Messages,
-                Span {
-                    start: messages.points_of_curve.start + start,
-                    len,
-                },
-            )),
-            elements: None,
-        };
-        let elements = |start: usize, len: usize| RunSource {
-            points: None,
-            elements: Some((
-                Where::Messages,
-                Span {
-                    start: messages.scalars.start + start,
-                    len,
-                },
-            )),
-        };
-        match self {
-            Run::Commitments => RunSource {
-                points: Some((Where::Instance, instance.commitments)),
-                elements: None,
-            },
-            Run::Scalars => RunSource {
-                points: None,
-                elements: Some((Where::Instance, instance.scalars)),
-            },
-            Run::Inner => points(INNER, 1),
-            Run::Outer => points(OUTER, 1),
-            Run::Split => points(P, 2),
-            Run::F => points(F, 1),
-            Run::SCommitment => points(S_COMMITMENT, 1),
-            Run::Round(j) => points(l(j), 2),
-            Run::Epsilons => elements(0, 2),
-            Run::Openings => elements(2, Derived::ALL.len() + 2),
-            Run::Evaluations => elements(4 + Derived::ALL.len(), Derived::ALL.len() + 2 + OPENED),
-        }
-    }
-}
-
-/// Where the scalar-field side's trailing stage takes its value: the
-/// nested IPA's $c$, the last of the messages' scalars.
-pub(crate) fn trailing_source(layout: &Layout) -> RunSource {
-    RunSource {
-        points: None,
-        elements: Some((
-            Where::Messages,
-            Span {
-                start: layout.messages.scalars.start + MESSAGE_SCALARS - 1,
-                len: 1,
-            },
-        )),
-    }
-}
-
-/// The scalar-field side's front, by source: the runs' stages in order,
-/// then the trailing stage.
-pub(crate) fn nested_front<K: Rank>(layout: &Layout) -> Vec<RunSource> {
-    runs::<K>()
-        .into_iter()
-        .map(|run| run.source(layout))
-        .chain([trailing_source(layout)])
-        .collect()
 }
 
 /// One curve's point messages: the fold's two, $p$, $q$, $f$, $\[S\]$ and
@@ -378,15 +256,15 @@ pub(crate) struct MessagesLayout {
 
 /// One side's stage layout: the instance's and the messages' positions,
 /// which on the scalar-field side the run stages and the trailing stage
-/// hold between them ([`Run::source`]). The transcript stage holds no
-/// points and the sponge states the schedule assigns.
+/// hold between them ([`Run::source`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Layout {
     pub instance: InstanceLayout,
     pub messages: MessagesLayout,
     /// The lifts stage's elements: the lifts of the challenges the side's
-    /// field checks use, in the schedule's
-    /// [`Regions::lifts`](super::program::Regions::lifts) order.
+    /// field checks use, in [`squeezed`](super::common::squeezed) order,
+    /// and on the scalar-field side those of the fuse's challenges and of
+    /// the other curve's after them.
     pub lifts: usize,
     /// The digits stage's elements: the signed digits of the full-width
     /// scalars of this field the other side scales by, [`digit_width`]
@@ -441,7 +319,7 @@ impl Layout {
         Layout {
             instance,
             messages: Self::messages::<K>(),
-            lifts: 2 * challenges_per_curve::<K>() + super::program::fuse::LIFTED.len(),
+            lifts: 2 * challenges_per_curve::<K>() + super::common::fuse::LIFTED.len(),
             digits: (3 + AB_TERMS) * digit_width::<F>(),
             flags: 0,
         }
@@ -538,22 +416,11 @@ impl<T> MessageScalars<'_, T> {
 }
 
 /// One side's stage data: points of the side's curve and elements of its
-/// field, at the positions a [`Layout`] or a schedule assigns.
+/// field, at the positions a [`Layout`] assigns.
 #[derive(Clone, Debug)]
 pub(crate) struct Values<F, P> {
     pub points: Vec<P>,
     pub elements: Vec<F>,
-}
-
-impl<F: Field, P: Affine> Values<F, P> {
-    /// Blank values over `points` and `elements` slots, every point
-    /// `placeholder` rather than the identity so that it allocates.
-    pub(crate) fn blank(points: usize, elements: usize, placeholder: P) -> Self {
-        Values {
-            points: vec![placeholder; points],
-            elements: vec![F::ZERO; elements],
-        }
-    }
 }
 
 /// A values stage's wires.
@@ -614,35 +481,8 @@ where
     }
 }
 
-/// The sizes the schedule fixes: the work stage's points and elements and
-/// the transcript stage's elements, the sponge states. The same for every
-/// application circuit, so computed for a placeholder, and from the
-/// schedule built for its sizes alone ([`Side::sizes`]), which the digits
-/// stage's layout needs before the other side's schedule exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Sizes {
-    pub work_points: usize,
-    pub work_elements: usize,
-    pub states: usize,
-}
-
-impl Sizes {
-    /// Side `S`'s, built once ([`program::sizes`](super::program::sizes)).
-    pub(crate) fn of<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Self {
-        super::program::sizes::<C, S, K, R, HEADER_SIZE>()
-    }
-
-    /// The work stage's shape.
-    pub(crate) fn work_shape(&self) -> StageShape {
-        StageShape {
-            points: self.work_points,
-            elements: self.work_elements,
-        }
-    }
-}
-
 macro_rules! len {
-    ($(#[$doc:meta])* $name:ident, |$layout:ident, $sizes:ident| $len:expr) => {
+    ($(#[$doc:meta])* $name:ident, |$layout:ident| $len:expr) => {
         $(#[$doc])*
         pub(crate) struct $name<C, S, K, R, const HEADER_SIZE: usize>(
             PhantomData<fn() -> (C, S, K, R)>,
@@ -652,10 +492,7 @@ macro_rules! len {
             for $name<C, S, K, R, HEADER_SIZE>
         {
             fn len() -> usize {
-                #[allow(unused_variables)]
                 let $layout = S::layout::<K, HEADER_SIZE>();
-                #[allow(unused_variables)]
-                let $sizes = || Sizes::of::<C, S, K, R, HEADER_SIZE>();
                 $len
             }
         }
@@ -664,44 +501,31 @@ macro_rules! len {
 
 len!(
     /// The instance stage's point count of side `S`.
-    InstancePoints, |layout, sizes| layout.instance.points
+    InstancePoints, |layout| layout.instance.points
 );
 len!(
     /// The instance stage's element count of side `S`.
-    InstanceElements, |layout, sizes| layout.instance.elements
+    InstanceElements, |layout| layout.instance.elements
 );
 len!(
     /// The messages stage's point count of side `S`.
-    MessagePoints, |layout, sizes| layout.messages.points
+    MessagePoints, |layout| layout.messages.points
 );
 len!(
     /// The messages stage's element count of side `S`.
-    MessageElements, |layout, sizes| layout.messages.elements
+    MessageElements, |layout| layout.messages.elements
 );
 len!(
     /// The lifts stage's element count of side `S`: the layout's lifts.
-    LiftsElements, |layout, sizes| layout.lifts
-);
-len!(
-    /// The work stage's point count of side `S`: the schedule's.
-    WorkPoints, |layout, sizes| sizes().work_points
-);
-len!(
-    /// The work stage's element count of side `S`: the schedule's.
-    WorkElements, |layout, sizes| sizes().work_elements
-);
-len!(
-    /// The transcript stage's element count of side `S`: the sponge states
-    /// the schedule saves.
-    TranscriptElements, |layout, sizes| sizes().states
+    LiftsElements, |layout| layout.lifts
 );
 len!(
     /// The digits stage's element count of side `S`: the layout's digits.
-    DigitsElements, |layout, sizes| layout.digits
+    DigitsElements, |layout| layout.digits
 );
 
 /// A stage of side `S` holding `LP` points and `LE` elements after
-/// `Parent`, as a stage of chunk circuits at rank `R`.
+/// `Parent`, as a stage of circuits at rank `R`.
 type SideStage<C, S, R, Parent, LP, LE> =
     ValuesStage<<S as Side<C>>::F, <S as Side<C>>::P, R, Parent, LP, LE>;
 
@@ -725,7 +549,7 @@ impl<C: Cycle, S: Side<C>> Len for OnlineQueryLen<C, S> {
 }
 
 /// The aggregator's online input stage of side `S`'s field, as the
-/// side's chunk circuits load it: the first stage of every circuit of the
+/// side's circuits load it: the first stage of every circuit of the
 /// side. The fuse commits the stage, before its challenge, and its batch
 /// helper loads it too
 /// ([`InputStage`](crate::profile::online::stages::InputStage)); this is
@@ -740,7 +564,7 @@ pub(crate) type OnlineInputStage<C, S, R> =
 /// input stage, likewise
 /// ([`QueryStage`](crate::profile::online::stages::QueryStage)): the
 /// step's challenges, then the claimed values, among them the wallet
-/// registry's evaluations the chunks read
+/// registry's evaluations the side reads
 /// ([`online::Values`](super::online::Values)), which the step's fuse
 /// proves are its restrictions' values.
 pub(crate) type OnlineQueryStage<C, S, R> =
@@ -781,35 +605,15 @@ pub(crate) type LiftsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     LiftsElements<C, S, K, R, HEADER_SIZE>,
 >;
 
-/// The work stage of side `S`, after the lifts stage.
-pub(crate) type WorkStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
-    C,
-    S,
-    R,
-    LiftsStage<C, S, K, R, HEADER_SIZE>,
-    WorkPoints<C, S, K, R, HEADER_SIZE>,
-    WorkElements<C, S, K, R, HEADER_SIZE>,
->;
-
-/// The transcript stage of side `S`, after the work stage: the sponge
-/// states, elements only, loaded by the transcript chunks alone.
-pub(crate) type TranscriptStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
-    C,
-    S,
-    R,
-    WorkStage<C, S, K, R, HEADER_SIZE>,
-    ConstLen<0>,
-    TranscriptElements<C, S, K, R, HEADER_SIZE>,
->;
-
-/// The digits stage of side `S`, after the work stage: elements only,
-/// committed with a zero alpha, loaded by the digits chunks alone and
-/// recomputed by the other side.
+/// The digits stage of side `S`, after the lifts stage and the last of
+/// the side's stages: elements only, committed with a zero alpha, loaded
+/// by the last pages of the side's whole circuit alone, where the side
+/// writes its digits, and recomputed by the other side.
 pub(crate) type DigitsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
     R,
-    WorkStage<C, S, K, R, HEADER_SIZE>,
+    LiftsStage<C, S, K, R, HEADER_SIZE>,
     ConstLen<0>,
     DigitsElements<C, S, K, R, HEADER_SIZE>,
 >;
@@ -825,8 +629,8 @@ fn lifts_skip<C: Cycle, S: Side<C>, K: Rank, const HEADER_SIZE: usize>() -> usiz
 }
 
 /// The generator of side `S`'s curve each lift of its lifts stage lands
-/// on at rank `R`, by lift: what the other side's circuits endoscale by
-/// the challenge's bits to recompute the stage's commitment.
+/// on at rank `R`, by lift: what the other side endoscales by the
+/// challenge's bits to recompute the stage's commitment.
 pub(crate) fn lifts_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>()
 -> Vec<usize> {
     let layout = S::layout::<K, HEADER_SIZE>();
@@ -838,9 +642,9 @@ pub(crate) fn lifts_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER
 }
 
 /// The generator of side `S`'s curve each digit of its digits stage lands
-/// on at rank `R`, by digit: what the other side's circuits add or
-/// subtract, by the digit's sign, to recompute the stage's commitment as
-/// they scale by the digits.
+/// on at rank `R`, by digit: what the other side adds or subtracts, by
+/// the digit's sign, to recompute the stage's commitment as it scales by
+/// the digits.
 pub(crate) fn digits_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>()
 -> Vec<usize> {
     let layout = S::layout::<K, HEADER_SIZE>();
@@ -848,8 +652,7 @@ pub(crate) fn digits_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADE
         points: 0,
         elements: layout.lifts,
     };
-    let work = Sizes::of::<C, S, K, R, HEADER_SIZE>().work_shape();
-    let skip = lifts_skip::<C, S, K, HEADER_SIZE>() + lifts.gates() + work.gates();
+    let skip = lifts_skip::<C, S, K, HEADER_SIZE>() + lifts.gates();
     let shape = StageShape {
         points: 0,
         elements: layout.digits,
@@ -857,168 +660,23 @@ pub(crate) fn digits_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADE
     shape_degrees::<R>(skip, shape).1
 }
 
-/// The scalar-field side's front stages' values as its chunks view them,
-/// the instance's and the messages', filled stage by stage at the
-/// positions each stage's values take ([`RunSource`]).
-pub(crate) struct FrontSlots<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
-    instance_points: Vec<Option<Point<'dr, D, P>>>,
-    instance_elements: Vec<Option<Element<'dr, D>>>,
-    messages_points: Vec<Option<Point<'dr, D, P>>>,
-    messages_elements: Vec<Option<Element<'dr, D>>>,
-}
-
-impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> FrontSlots<'dr, D, P> {
-    /// Every position of `layout`'s instance and messages, unfilled.
-    fn new(layout: &Layout) -> Self {
-        FrontSlots {
-            instance_points: vec![None; layout.instance.points],
-            instance_elements: vec![None; layout.instance.elements],
-            messages_points: vec![None; layout.messages.points],
-            messages_elements: vec![None; layout.messages.elements],
-        }
-    }
-
-    /// Fills the positions `source` names with a stage's `output`.
-    fn place<LP: Len, LE: Len>(
-        &mut self,
-        source: &RunSource,
-        output: Output<'dr, D, P, LP, LE>,
-    ) -> Result<()> {
-        let points = output.points.into_inner();
-        let elements = output.elements.into_inner();
-        match source.points {
-            Some((at, span)) => {
-                let slots = match at {
-                    Where::Instance => &mut self.instance_points,
-                    Where::Messages => &mut self.messages_points,
-                };
-                if points.len() != span.len {
-                    return Err(Error::InvalidWitness(
-                        "a stage's points fit its span".into(),
-                    ));
-                }
-                for (i, point) in points.into_iter().enumerate() {
-                    slots[span.at(i)] = Some(point);
-                }
-            }
-            None if points.is_empty() => {}
-            None => return Err(Error::InvalidWitness("a stage without points".into())),
-        }
-        match source.elements {
-            Some((at, span)) => {
-                let slots = match at {
-                    Where::Instance => &mut self.instance_elements,
-                    Where::Messages => &mut self.messages_elements,
-                };
-                if elements.len() != span.len {
-                    return Err(Error::InvalidWitness(
-                        "a stage's elements fit its span".into(),
-                    ));
-                }
-                for (i, element) in elements.into_iter().enumerate() {
-                    slots[span.at(i)] = Some(element);
-                }
-            }
-            None if elements.is_empty() => {}
-            None => return Err(Error::InvalidWitness("a stage without elements".into())),
-        }
-        Ok(())
-    }
-
-    /// The front, every position filled.
-    fn finish(self) -> Result<FrontLoaded<'dr, D, P>> {
-        fn all<T>(slots: Vec<Option<T>>) -> Result<Vec<T>> {
-            slots
-                .into_iter()
-                .map(|slot| {
-                    slot.ok_or_else(|| {
-                        Error::InvalidWitness("the front stages fill every position".into())
-                    })
-                })
-                .collect()
-        }
-        Ok(FrontLoaded {
-            instance_points: all(self.instance_points)?,
-            instance_elements: all(self.instance_elements)?,
-            messages_points: all(self.messages_points)?,
-            messages_elements: all(self.messages_elements)?,
-        })
-    }
-}
-
-/// A side's front stages loaded: the instance's and the messages' wires
-/// at the layout's positions, whichever stages hold them.
-pub(crate) struct FrontLoaded<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
-    pub instance_points: Vec<Point<'dr, D, P>>,
-    pub instance_elements: Vec<Element<'dr, D>>,
-    pub messages_points: Vec<Point<'dr, D, P>>,
-    pub messages_elements: Vec<Element<'dr, D>>,
-}
-
-impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> FrontLoaded<'dr, D, P> {
-    /// The instance as a chunk views it.
-    pub(crate) fn instance(&self) -> View<'_, 'dr, D, P> {
-        View {
-            points: &self.instance_points,
-            elements: &self.instance_elements,
-        }
-    }
-
-    /// The messages as a chunk views it.
-    pub(crate) fn messages(&self) -> View<'_, 'dr, D, P> {
-        View {
-            points: &self.messages_points,
-            elements: &self.messages_elements,
-        }
-    }
-}
-
-/// A side's stages before the lifts stage, as the chain the chunk
-/// circuits load first: the instance and messages stages on the
-/// circuit-field side; on the scalar-field side one stage per run of the
-/// compression's transcript ([`RunStage`]), committed with a zero alpha for the
-/// circuit-field side's transcript to absorb, then the trailing stage
-/// ([`TrailingStage`]). The hooks and the prover reach each stage by its
-/// index in the chain.
+/// A side's stages before the lifts stage, as the chain the side's whole
+/// circuit loads after the online stages: the instance and messages stages
+/// on the circuit-field side ([`native::stages`](super::native::stages)); on
+/// the scalar-field side ([`nested::stages`](super::nested::stages)) one
+/// stage per run of the compression's transcript
+/// ([`RunStage`](super::nested::stages::RunStage)), committed with a zero
+/// alpha for the circuit-field side's transcript to absorb, then the
+/// trailing stage ([`TrailingStage`](super::nested::stages::TrailingStage)).
+/// The hooks and the prover reach each stage by its index in the chain.
 pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     Side<C>
 {
     /// The chain's last stage, the lifts stage's parent.
     type Last: Stage<Self::F, R> + Default + 'static;
-    /// The guards of the chain's stages, as [`add`](Self::add) returns
-    /// them and [`load`](Self::load) takes them.
-    type Guards<'dr, D: Driver<'dr, F = Self::F>>;
 
     /// The stages in the chain.
     fn stages() -> usize;
-
-    /// Adds the chain's stages to `dr`, in order.
-    ///
-    /// # Errors
-    ///
-    /// Fails as [`StageBuilder::add_stage`] does.
-    fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Self, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, D>,
-        StageBuilder<'a, 'dr, D, R, Self::Last, T>,
-    )>
-    where
-        D: Driver<'dr, F = Self::F>,
-        T: Stage<Self::F, R>;
-
-    /// Loads the chain's stages unenforced, as the chunks view them.
-    ///
-    /// # Errors
-    ///
-    /// Fails as [`StageGuard::unenforced`] does.
-    fn load<'dr, 'source: 'dr, D>(
-        guards: Self::Guards<'dr, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Self>>,
-    ) -> Result<FrontLoaded<'dr, D, Self::P>>
-    where
-        D: Driver<'dr, F = Self::F>;
 
     /// Registers stage `index`'s mask into `slot`.
     ///
@@ -1043,7 +701,8 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     ///
     /// # Errors
     ///
-    /// Fails past the last stage, or as [`StageExt::rx`] does.
+    /// Fails past the last stage, or as
+    /// [`StageExt::rx`](ragu_circuits::staging::StageExt::rx) does.
     fn rx(
         index: usize,
         alpha: Self::F,
@@ -1056,719 +715,6 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
 }
 
 /// The chain's stages past its end.
-fn no_such_stage<T>() -> Result<T> {
+pub(super) fn no_such_stage<T>() -> Result<T> {
     Err(Error::Initialization("no such front stage".into()))
 }
-
-impl<C, K, R, const HEADER_SIZE: usize> Front<C, K, R, HEADER_SIZE> for Native
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-{
-    type Last = MessagesStage<C, Native, K, R, HEADER_SIZE>;
-    type Guards<'dr, D: Driver<'dr, F = Self::F>> = (
-        StageGuard<'dr, D, R, InstanceStage<C, Native, K, R, HEADER_SIZE>>,
-        StageGuard<'dr, D, R, MessagesStage<C, Native, K, R, HEADER_SIZE>>,
-    );
-
-    fn stages() -> usize {
-        2
-    }
-
-    fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Native, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, D>,
-        StageBuilder<'a, 'dr, D, R, Self::Last, T>,
-    )>
-    where
-        D: Driver<'dr, F = Self::F>,
-        T: Stage<Self::F, R>,
-    {
-        let (instance, dr) = dr.add_stage::<InstanceStage<C, Native, K, R, HEADER_SIZE>>()?;
-        let (messages, dr) = dr.add_stage::<MessagesStage<C, Native, K, R, HEADER_SIZE>>()?;
-        Ok(((instance, messages), dr))
-    }
-
-    fn load<'dr, 'source: 'dr, D>(
-        (instance, messages): Self::Guards<'dr, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Self>>,
-    ) -> Result<FrontLoaded<'dr, D, Self::P>>
-    where
-        D: Driver<'dr, F = Self::F>,
-    {
-        let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
-        let messages = messages.unenforced(dr, witness.as_ref().map(|w| &w.messages))?;
-        Ok(FrontLoaded {
-            instance_points: instance.points.into_inner(),
-            instance_elements: instance.elements.into_inner(),
-            messages_points: messages.points.into_inner(),
-            messages_elements: messages.elements.into_inner(),
-        })
-    }
-
-    fn register_stage_mask<'params>(
-        index: usize,
-        slot: MaskSlot<'params, Self::F, R>,
-    ) -> Result<Registered<'params, Self::F, R>> {
-        match index {
-            0 => slot.register_stage_mask::<InstanceStage<C, Native, K, R, HEADER_SIZE>>(),
-            1 => slot.register_stage_mask::<MessagesStage<C, Native, K, R, HEADER_SIZE>>(),
-            _ => no_such_stage(),
-        }
-    }
-
-    #[cfg(test)]
-    fn stage_mask(index: usize) -> Result<MaskObject<R>> {
-        match index {
-            0 => InstanceStage::<C, Native, K, R, HEADER_SIZE>::stage_mask(),
-            1 => MessagesStage::<C, Native, K, R, HEADER_SIZE>::stage_mask(),
-            _ => no_such_stage(),
-        }
-    }
-
-    fn rx(
-        index: usize,
-        alpha: Self::F,
-        prepared: &Prepared<C, Self>,
-    ) -> Result<sparse::Polynomial<Self::F, R>> {
-        match index {
-            0 => InstanceStage::<C, Native, K, R, HEADER_SIZE>::rx(alpha, &prepared.instance),
-            1 => MessagesStage::<C, Native, K, R, HEADER_SIZE>::rx(alpha, &prepared.messages),
-            _ => no_such_stage(),
-        }
-    }
-
-    fn zero_alpha(_: usize) -> bool {
-        false
-    }
-}
-
-impl<C, K, R, const HEADER_SIZE: usize> Front<C, K, R, HEADER_SIZE> for Nested
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Runs,
-    R: Rank,
-{
-    type Last = TrailingStage<C, K, R>;
-    type Guards<'dr, D: Driver<'dr, F = Self::F>> = (
-        <K::Last as RunIndex>::Guards<'dr, C, K, R, D>,
-        StageGuard<'dr, D, R, TrailingStage<C, K, R>>,
-    );
-
-    fn stages() -> usize {
-        num_runs::<K>() + 1
-    }
-
-    fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, D>,
-        StageBuilder<'a, 'dr, D, R, Self::Last, T>,
-    )>
-    where
-        D: Driver<'dr, F = Self::F>,
-        T: Stage<Self::F, R>,
-    {
-        let (runs, dr) = K::Last::add::<C, K, R, D, T>(dr)?;
-        let (trailing, dr) = dr.add_stage::<TrailingStage<C, K, R>>()?;
-        Ok(((runs, trailing), dr))
-    }
-
-    fn load<'dr, 'source: 'dr, D>(
-        (runs, trailing): Self::Guards<'dr, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Self>>,
-    ) -> Result<FrontLoaded<'dr, D, Self::P>>
-    where
-        D: Driver<'dr, F = Self::F>,
-    {
-        let layout = nested_layout::<C, K>();
-        let mut slots = FrontSlots::new(&layout);
-        K::Last::load::<C, K, R, D>(runs, dr, witness, &mut slots)?;
-        let output = trailing.unenforced(dr, witness.as_ref().map(|w| *w))?;
-        slots.place(&trailing_source(&layout), output)?;
-        slots.finish()
-    }
-
-    fn register_stage_mask<'params>(
-        index: usize,
-        slot: MaskSlot<'params, Self::F, R>,
-    ) -> Result<Registered<'params, Self::F, R>> {
-        if index < num_runs::<K>() {
-            K::Last::register_stage_mask::<C, K, R>(index, slot)
-        } else if index == num_runs::<K>() {
-            slot.register_stage_mask::<TrailingStage<C, K, R>>()
-        } else {
-            no_such_stage()
-        }
-    }
-
-    #[cfg(test)]
-    fn stage_mask(index: usize) -> Result<MaskObject<R>> {
-        if index < num_runs::<K>() {
-            K::Last::stage_mask::<C, K, R>(index)
-        } else if index == num_runs::<K>() {
-            TrailingStage::<C, K, R>::stage_mask()
-        } else {
-            no_such_stage()
-        }
-    }
-
-    fn rx(
-        index: usize,
-        alpha: Self::F,
-        prepared: &Prepared<C, Self>,
-    ) -> Result<sparse::Polynomial<Self::F, R>> {
-        if index < num_runs::<K>() {
-            K::Last::rx::<C, K, R>(index, prepared)
-        } else if index == num_runs::<K>() {
-            TrailingStage::<C, K, R>::rx(alpha, prepared)
-        } else {
-            no_such_stage()
-        }
-    }
-
-    fn zero_alpha(index: usize) -> bool {
-        index < num_runs::<K>()
-    }
-}
-
-/// The scalar-field side's layout for the decompression of a Standard
-/// proof at rank `K`.
-fn nested_layout<C: Cycle, K: Rank>() -> Layout {
-    Layout::nested::<C::ScalarField, Standard, K>()
-}
-
-/// Length type for the points of the scalar-field side's run stage `N`.
-pub(crate) struct RunPoints<C, K, N>(PhantomData<fn() -> (C, K, N)>);
-
-impl<C: Cycle, K: Rank, N: RunIndex> Len for RunPoints<C, K, N> {
-    fn len() -> usize {
-        N::source::<C, K>().shape().points
-    }
-}
-
-/// Length type for the elements of the scalar-field side's run stage `N`.
-pub(crate) struct RunElements<C, K, N>(PhantomData<fn() -> (C, K, N)>);
-
-impl<C: Cycle, K: Rank, N: RunIndex> Len for RunElements<C, K, N> {
-    fn len() -> usize {
-        N::source::<C, K>().shape().elements
-    }
-}
-
-/// The stage of the scalar-field side holding run `N`'s values of a
-/// proof at rank `K`, as a stage of chunk circuits at rank `R`, after the
-/// run before it: the points' coordinates first, then the elements, each
-/// at one wire, read off the instance's and the messages' positions the
-/// run covers. The honest prover commits the stage with a zero alpha to
-/// match the run commitment computed during native verification. The mask
-/// leaves the alpha and the other wires of its gates free. The transcript
-/// absorbs the actual stage commitment, so those coefficients can change the
-/// challenges for the same run values.
-pub(crate) struct RunStage<C, K, R, N>(PhantomData<fn() -> (C, K, R, N)>);
-
-impl<C, K, R, N> Default for RunStage<C, K, R, N> {
-    fn default() -> Self {
-        RunStage(PhantomData)
-    }
-}
-
-impl<C, K, R, N> Stage<C::ScalarField, R> for RunStage<C, K, R, N>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-    N: RunIndex,
-{
-    type Parent = N::Before<C, K, R>;
-    type Witness<'source> = &'source Prepared<C, Nested>;
-    type OutputKind = Kind![C::ScalarField; Output<'_, _, C::HostCurve, RunPoints<C, K, N>, RunElements<C, K, N>>];
-
-    fn values() -> usize {
-        N::source::<C, K>().shape().values()
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::ScalarField>>(
-        &self,
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        let source = N::source::<C, K>();
-        Ok(Output {
-            points: FixedVec::try_from_fn(|i| {
-                Point::alloc(
-                    dr,
-                    witness
-                        .as_ref()
-                        .map(|w| source.point(&w.instance, &w.messages, i)),
-                )
-            })?,
-            elements: FixedVec::try_from_fn(|i| {
-                Element::alloc(
-                    dr,
-                    &mut (),
-                    witness
-                        .as_ref()
-                        .map(|w| source.element(&w.instance, &w.messages, i)),
-                )
-            })?,
-        })
-    }
-}
-
-/// The scalar-field side's trailing stage, after the last run's: the
-/// nested IPA's $c$, which precedes no challenge, at one wire.
-pub(crate) struct TrailingStage<C, K, R>(PhantomData<fn() -> (C, K, R)>);
-
-impl<C, K, R> Default for TrailingStage<C, K, R> {
-    fn default() -> Self {
-        TrailingStage(PhantomData)
-    }
-}
-
-impl<C, K, R> Stage<C::ScalarField, R> for TrailingStage<C, K, R>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Runs,
-    R: Rank,
-{
-    type Parent = RunStage<C, K, R, K::Last>;
-    type Witness<'source> = &'source Prepared<C, Nested>;
-    type OutputKind = Kind![C::ScalarField; Output<'_, _, C::HostCurve, ConstLen<0>, ConstLen<1>>];
-
-    fn values() -> usize {
-        1
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::ScalarField>>(
-        &self,
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        let source = trailing_source(&nested_layout::<C, K>());
-        Ok(Output {
-            points: FixedVec::try_from_fn(|_| {
-                Err(Error::InvalidWitness(
-                    "the trailing stage holds no point".into(),
-                ))
-            })?,
-            elements: FixedVec::try_from_fn(|i| {
-                Element::alloc(
-                    dr,
-                    &mut (),
-                    witness
-                        .as_ref()
-                        .map(|w| source.element(&w.instance, &w.messages, i)),
-                )
-            })?,
-        })
-    }
-}
-
-/// The first run's index, as a type.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Z;
-
-/// The run after `N`'s index, as a type.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Succ<N>(PhantomData<N>);
-
-/// A run's index as a type, so that the run stages chain at the type
-/// level: `Z` the first run's, `Succ<N>` the one after `N`'s. The chain
-/// up to a run is walked by recursion over the index, which adds and loads
-/// every run stage in order and reaches one by its index.
-pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
-    /// The run's index.
-    const INDEX: usize;
-
-    /// The stage before this run's: none for the first run, the run before
-    /// it otherwise.
-    type Before<C, K, R>: Stage<C::ScalarField, R> + Default + 'static
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-
-    /// The guards of this run's stage and of every run's before it.
-    type Guards<'dr, C, K, R, D>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>;
-
-    /// Where the run's values sit, for a proof at rank `K`.
-    fn source<C: Cycle, K: Rank>() -> RunSource {
-        runs::<K>()[Self::INDEX].source(&nested_layout::<C, K>())
-    }
-
-    /// Adds every run stage up to and including this one.
-    fn add<'a, 'dr, C, K, R, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, C, K, R, D>,
-        StageBuilder<'a, 'dr, D, R, RunStage<C, K, R, Self>, T>,
-    )>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>,
-        T: Stage<C::ScalarField, R>;
-
-    /// Loads every run stage up to and including this one into `into`.
-    fn load<'dr, 'source: 'dr, C, K, R, D>(
-        guards: Self::Guards<'dr, C, K, R, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Nested>>,
-        into: &mut FrontSlots<'dr, D, C::HostCurve>,
-    ) -> Result<()>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>;
-
-    /// Registers run `index`'s stage's mask, for `index` at most this run's.
-    fn register_stage_mask<'params, C, K, R>(
-        index: usize,
-        slot: MaskSlot<'params, C::ScalarField, R>,
-    ) -> Result<Registered<'params, C::ScalarField, R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-
-    /// Run `index`'s stage's mask, for `index` at most this run's.
-    #[cfg(test)]
-    fn stage_mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-
-    /// Run `index`'s stage's polynomial over `prepared`, with a zero alpha, for
-    /// `index` at most this run's.
-    fn rx<C, K, R>(
-        index: usize,
-        prepared: &Prepared<C, Nested>,
-    ) -> Result<sparse::Polynomial<C::ScalarField, R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-
-    /// The generators run `index`'s stage lands its wires on, read off the
-    /// stage type, for `index` at most this run's.
-    #[cfg(test)]
-    fn wire_degrees<C, K, R>(index: usize) -> Result<Vec<usize>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-}
-
-/// The generators a run stage lands its wires on at rank `R`, read off the
-/// stage type as [`stage_wire_indices`] lays it out.
-#[cfg(test)]
-fn typed_degrees<C, K, R, N>() -> Result<Vec<usize>>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-    N: RunIndex,
-{
-    use ragu_circuits::staging::{stage_wire_indices, wire_degree, wires_of};
-    let wires = stage_wire_indices::<C::ScalarField, R, RunStage<C, K, R, N>>(|out| {
-        let mut wires = wires_of(&out.points)?;
-        wires.extend(wires_of(&out.elements)?);
-        Ok(wires)
-    })?;
-    Ok(wires.into_iter().map(wire_degree::<R>).collect())
-}
-
-/// Loads run `N`'s stage from its guard into `into`.
-fn load_run<'dr, 'source: 'dr, C, K, R, N, D>(
-    guard: StageGuard<'dr, D, R, RunStage<C, K, R, N>>,
-    dr: &mut D,
-    witness: &DriverValue<D, &'source Prepared<C, Nested>>,
-    into: &mut FrontSlots<'dr, D, C::HostCurve>,
-) -> Result<()>
-where
-    C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
-    R: Rank,
-    N: RunIndex,
-    D: Driver<'dr, F = C::ScalarField>,
-{
-    let output = guard.unenforced(dr, witness.as_ref().map(|w| *w))?;
-    into.place(&N::source::<C, K>(), output)
-}
-
-impl RunIndex for Z {
-    const INDEX: usize = 0;
-
-    type Before<C, K, R>
-        = OnlineQueryStage<C, Nested, R>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-
-    type Guards<'dr, C, K, R, D>
-        = StageGuard<'dr, D, R, RunStage<C, K, R, Z>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>;
-
-    fn add<'a, 'dr, C, K, R, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, C, K, R, D>,
-        StageBuilder<'a, 'dr, D, R, RunStage<C, K, R, Self>, T>,
-    )>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>,
-        T: Stage<C::ScalarField, R>,
-    {
-        dr.add_stage::<RunStage<C, K, R, Z>>()
-    }
-
-    fn load<'dr, 'source: 'dr, C, K, R, D>(
-        guard: Self::Guards<'dr, C, K, R, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Nested>>,
-        into: &mut FrontSlots<'dr, D, C::HostCurve>,
-    ) -> Result<()>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>,
-    {
-        load_run::<C, K, R, Z, D>(guard, dr, witness, into)
-    }
-
-    fn register_stage_mask<'params, C, K, R>(
-        index: usize,
-        slot: MaskSlot<'params, C::ScalarField, R>,
-    ) -> Result<Registered<'params, C::ScalarField, R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == 0 {
-            slot.register_stage_mask::<RunStage<C, K, R, Z>>()
-        } else {
-            no_such_stage()
-        }
-    }
-
-    #[cfg(test)]
-    fn stage_mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == 0 {
-            RunStage::<C, K, R, Z>::stage_mask()
-        } else {
-            no_such_stage()
-        }
-    }
-
-    fn rx<C, K, R>(
-        index: usize,
-        prepared: &Prepared<C, Nested>,
-    ) -> Result<sparse::Polynomial<C::ScalarField, R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == 0 {
-            RunStage::<C, K, R, Z>::rx(C::ScalarField::ZERO, prepared)
-        } else {
-            no_such_stage()
-        }
-    }
-
-    #[cfg(test)]
-    fn wire_degrees<C, K, R>(index: usize) -> Result<Vec<usize>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == 0 {
-            typed_degrees::<C, K, R, Z>()
-        } else {
-            no_such_stage()
-        }
-    }
-}
-
-impl<N: RunIndex> RunIndex for Succ<N> {
-    const INDEX: usize = N::INDEX + 1;
-
-    type Before<C, K, R>
-        = RunStage<C, K, R, N>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank;
-
-    type Guards<'dr, C, K, R, D>
-        = (
-        N::Guards<'dr, C, K, R, D>,
-        StageGuard<'dr, D, R, RunStage<C, K, R, Succ<N>>>,
-    )
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>;
-
-    fn add<'a, 'dr, C, K, R, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
-    ) -> Result<(
-        Self::Guards<'dr, C, K, R, D>,
-        StageBuilder<'a, 'dr, D, R, RunStage<C, K, R, Self>, T>,
-    )>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>,
-        T: Stage<C::ScalarField, R>,
-    {
-        let (before, dr) = N::add::<C, K, R, D, T>(dr)?;
-        let (own, dr) = dr.add_stage::<RunStage<C, K, R, Succ<N>>>()?;
-        Ok(((before, own), dr))
-    }
-
-    fn load<'dr, 'source: 'dr, C, K, R, D>(
-        (before, own): Self::Guards<'dr, C, K, R, D>,
-        dr: &mut D,
-        witness: &DriverValue<D, &'source Prepared<C, Nested>>,
-        into: &mut FrontSlots<'dr, D, C::HostCurve>,
-    ) -> Result<()>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-        D: Driver<'dr, F = C::ScalarField>,
-    {
-        N::load::<C, K, R, D>(before, dr, witness, into)?;
-        load_run::<C, K, R, Succ<N>, D>(own, dr, witness, into)
-    }
-
-    fn register_stage_mask<'params, C, K, R>(
-        index: usize,
-        slot: MaskSlot<'params, C::ScalarField, R>,
-    ) -> Result<Registered<'params, C::ScalarField, R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == Self::INDEX {
-            slot.register_stage_mask::<RunStage<C, K, R, Succ<N>>>()
-        } else {
-            N::register_stage_mask::<C, K, R>(index, slot)
-        }
-    }
-
-    #[cfg(test)]
-    fn stage_mask<C, K, R>(index: usize) -> Result<MaskObject<R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == Self::INDEX {
-            RunStage::<C, K, R, Succ<N>>::stage_mask()
-        } else {
-            N::stage_mask::<C, K, R>(index)
-        }
-    }
-
-    fn rx<C, K, R>(
-        index: usize,
-        prepared: &Prepared<C, Nested>,
-    ) -> Result<sparse::Polynomial<C::ScalarField, R>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == Self::INDEX {
-            RunStage::<C, K, R, Succ<N>>::rx(C::ScalarField::ZERO, prepared)
-        } else {
-            N::rx::<C, K, R>(index, prepared)
-        }
-    }
-
-    #[cfg(test)]
-    fn wire_degrees<C, K, R>(index: usize) -> Result<Vec<usize>>
-    where
-        C: IpaCycle + ProfiledCycle<Profile = Standard>,
-        K: Rank,
-        R: Rank,
-    {
-        if index == Self::INDEX {
-            typed_degrees::<C, K, R, Succ<N>>()
-        } else {
-            N::wire_degrees::<C, K, R>(index)
-        }
-    }
-}
-
-/// A rank whose proofs' runs the scalar-field side's stage chain covers:
-/// the chain's length is a type, [`Last`](Self::Last), the last run's
-/// index, so the ranks the chunk circuits decompress proofs of are the
-/// ones named here. The wallet rank's, the wallets'.
-pub(crate) trait Runs: Rank {
-    /// The last run's index.
-    type Last: RunIndex;
-}
-
-/// The run index `Succ` applied to `Z` as many times as there are `+`s.
-macro_rules! run_index {
-    () => { Z };
-    (+ $($rest:tt)*) => { Succ<run_index!($($rest)*)> };
-}
-
-impl Runs for ragu_circuits::polynomials::WalletRank {
-    // Twenty-four runs: ten besides the fourteen rounds'.
-    type Last = run_index!(+ + + + + + + + + + + + + + + + + + + + + + +);
-}
-
-const _: () = {
-    assert!(
-        <<ragu_circuits::polynomials::WalletRank as Runs>::Last as RunIndex>::INDEX + 1
-            == num_runs::<ragu_circuits::polynomials::WalletRank>(),
-        "the wallet rank's chain covers its runs"
-    );
-};
-
-#[cfg(test)]
-#[path = "../../tests/decompression/stages.rs"]
-mod tests;

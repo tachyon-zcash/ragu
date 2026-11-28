@@ -38,7 +38,7 @@ use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
     paging::{Layout, Planned, Stages},
     polynomials::{AggregatorRank, Rank, WalletRank, sparse},
-    registry::{CircuitIndex, Registry, RegistryBuilder},
+    registry::{CircuitIndex, RegistryBuilder},
 };
 use ragu_core::{
     Result,
@@ -49,48 +49,21 @@ use udon::field::Field;
 
 use super::{Circuit, Placement, placements};
 use crate::{
-    Application, ApplicationBuilder, Proof, SelectableBackend,
+    Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{NativeRx, NestedRx, RxComponent as NativeComponent},
     internal::{
         native, nested,
         revdot::{Builder, Source},
     },
-    ipa::IpaCycle,
     profile::{
-        Aggregator, PageCount, PageCounts, Profile, Profiled, ProfiledCycle, Standard,
-        testing::UnitStep,
+        Aggregator, PageCount, Profile, Profiled,
+        testing::{AllPaged, UnitStep},
     },
 };
 
 const HEADER_SIZE: usize = 4;
 type R = WalletRank;
 type C = Profiled<Pasta, AllPaged>;
-
-/// The standard profile with every internal circuit cut into pages: the
-/// circuits in two, and both walks' steps in three, so that every
-/// internal circuit's claim is a page's.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct AllPaged;
-
-impl Profile for AllPaged {
-    const NAME: &'static str = "all-paged";
-    const NATIVE_EXTENSION: usize = 0;
-    const NESTED_EXTENSION: usize = 0;
-    const PAGE_COUNTS: PageCounts = PageCounts {
-        endoscaling_step: PageCount::new(3).carrying(64),
-        nested_endoscaling_step: PageCount::new(3).carrying(64),
-        ..PageCounts::uniform(PageCount::new(2).carrying(64))
-    };
-    const NATIVE_ENDOSCALINGS_PER_STEP: usize = 12;
-    const NESTED_ENDOSCALINGS_PER_STEP: usize = 12;
-
-    type Context<'params, Base, R, B>
-        = ()
-    where
-        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
-        R: Rank,
-        B: SelectableBackend;
-}
 
 /// A wire of a gate that holds a value of a stage.
 #[derive(Clone, Copy, Debug)]
@@ -256,61 +229,6 @@ impl<'rx> Source for NestedOf<'rx> {
     }
 }
 
-/// One synthetic proof's rx polynomials. All are zero except `at`, whose
-/// value is planted on one wire. This lets the production profile's claims
-/// be tested without constructing a decompression proof.
-struct NativePlanted<'rx> {
-    zero: &'rx sparse::Polynomial<Fp, R>,
-    at: native::RxComponent,
-    value: &'rx sparse::Polynomial<Fp, R>,
-}
-
-impl<'rx> Source for NativePlanted<'rx> {
-    type RxComponent = native::RxComponent;
-    type Rx = &'rx sparse::Polynomial<Fp, R>;
-    type AppCircuitId = CircuitIndex;
-
-    fn rx(&self, component: native::RxComponent) -> impl Iterator<Item = Self::Rx> {
-        match component {
-            native::RxComponent::AbA | native::RxComponent::AbB => None,
-            native::RxComponent::Rx(_) => Some(if component == self.at {
-                self.value
-            } else {
-                self.zero
-            }),
-        }
-        .into_iter()
-    }
-
-    fn applications(&self) -> impl Iterator<Item = (CircuitIndex, [Self::Rx; 2])> {
-        core::iter::empty()
-    }
-}
-
-struct NestedPlanted<'rx> {
-    zero: &'rx sparse::Polynomial<Fq, R>,
-    at: nested::RxComponent,
-    value: &'rx sparse::Polynomial<Fq, R>,
-}
-
-impl<'rx> Source for NestedPlanted<'rx> {
-    type RxComponent = nested::RxComponent;
-    type Rx = &'rx sparse::Polynomial<Fq, R>;
-    type AppCircuitId = ();
-
-    fn rx(&self, component: nested::RxComponent) -> impl Iterator<Item = Self::Rx> {
-        core::iter::once(if component == self.at {
-            self.value
-        } else {
-            self.zero
-        })
-    }
-
-    fn applications(&self) -> impl Iterator<Item = ((), [Self::Rx; 2])> {
-        core::iter::empty()
-    }
-}
-
 /// The value of each native claim of `proof`, in the claim list's order.
 fn native_values(
     app: &Application<'_, C, R, HEADER_SIZE>,
@@ -320,38 +238,6 @@ fn native_values(
     let source = NativeOf(proof);
     let mut builder = Builder::<_, Fp, R, ReferenceBackend>::new(app.native_registry(), y, z);
     native::claims::build::<AllPaged, _, _>(&source, &mut builder)?;
-    let claims = builder.finish();
-    Ok(claims
-        .a
-        .iter()
-        .zip(&claims.b)
-        .map(|(a, b)| ReferenceBackend::sparse_revdot(a, b))
-        .collect())
-}
-
-fn native_aggregator_values<const H: usize>(
-    registry: &Registry<'_, Fp, R>,
-    source: &NativePlanted<'_>,
-    (y, z): (Fp, Fp),
-) -> Result<Vec<Fp>> {
-    let mut builder = Builder::<_, Fp, R, ReferenceBackend>::new(registry, y, z);
-    native::claims::build::<Aggregator<H>, _, _>(source, &mut builder)?;
-    let claims = builder.finish();
-    Ok(claims
-        .a
-        .iter()
-        .zip(&claims.b)
-        .map(|(a, b)| ReferenceBackend::sparse_revdot(a, b))
-        .collect())
-}
-
-fn nested_aggregator_values<const H: usize>(
-    registry: &Registry<'_, Fq, R>,
-    source: &NestedPlanted<'_>,
-    (y, z): (Fq, Fq),
-) -> Result<Vec<Fq>> {
-    let mut builder = Builder::<_, Fq, R, ReferenceBackend>::new(registry, y, z);
-    nested::claims::build::<Aggregator<H>, _, _>(source, &mut builder)?;
     let claims = builder.finish();
     Ok(claims
         .a
@@ -452,9 +338,9 @@ fn nested_circuit(placement: &Placement, page: usize) -> nested::InternalCircuit
 struct Side<'a, Id, Rx> {
     name: &'a str,
     /// The side's paged circuits, and the layout and stages each was
-    /// registered with.
+    /// registered with, and the carry slots its pages use.
     placements: &'a [Placement],
-    plans: &'a [(Layout, Stages)],
+    plans: &'a [(Layout, Stages, usize)],
     /// The side's claims in order, each with the polynomials it sums.
     claims: &'a [(Claim<Id>, Vec<Rx>)],
     /// The circuit whose claim a page has.
@@ -537,7 +423,7 @@ where
     let mut wrong: Vec<String> = Vec::new();
     let (mut pages, mut carries, mut stages) = (0, 0, 0);
     let mut seen = vec![false; side.claims.len()];
-    for (placement, (layout, loads)) in side.placements.iter().zip(side.plans) {
+    for (placement, (layout, loads, slots)) in side.placements.iter().zip(side.plans) {
         // A walk's steps are cut alike: the first stands for them where a
         // value is planted. What every step's claims sum is looked at.
         let planted = !matches!(
@@ -594,9 +480,11 @@ where
                  gates, at gate {}",
                 gates.start - 1
             );
-            // Its first slot: the mask says nothing of it, and the pages
-            // that name it are the one that holds it to its wires and
-            // those that read it.
+            // Its first slot: the mask says nothing of it. A circuit whose
+            // pages use a slot names it on the page that holds it to its
+            // wires and on those that read it; one whose pages pass
+            // nothing, as a walk's short last step may be, leaves it a
+            // padding zero that no page names.
             let slot_moved = moved(polynomial, gates.start, Wire::A)?;
             assert!(
                 !slot_moved[own],
@@ -606,11 +494,19 @@ where
             let named = (0..=placement.last())
                 .filter(|&page| slot_moved[claim(Claim::Circuit((side.circuit)(placement, page)))])
                 .count();
-            assert!(
-                named >= 2,
-                "{name} {which:?}: a value on a slot of the carry stage moved the claims of \
-                 {named} pages, where one holds the slot and another reads it"
-            );
+            if *slots > 0 {
+                assert!(
+                    named >= 2,
+                    "{name} {which:?}: a value on a slot of the carry stage moved the claims of \
+                     {named} pages, where one page holds the slot and another reads it"
+                );
+            } else {
+                assert_eq!(
+                    named, 0,
+                    "{name} {which:?}: a value on the padding slot of a carry stage no page \
+                     uses moved the claim of a page"
+                );
+            }
             carries += 1;
         }
 
@@ -696,15 +592,19 @@ where
 }
 
 /// The layout and the stages each of one side's paged circuits was
-/// registered with.
-fn plans<F: Field>(plans: &[Option<Planned<F>>]) -> Vec<(Layout, Stages)> {
+/// registered with, and the carry slots its pages use.
+fn plans<F: Field>(plans: &[Option<Planned<F>>]) -> Vec<(Layout, Stages, usize)> {
     plans
         .iter()
         .map(|planned| {
             let planned = planned
                 .as_ref()
                 .expect("every paged circuit was registered");
-            (planned.layout().clone(), planned.stages().clone())
+            (
+                planned.layout().clone(),
+                planned.stages().clone(),
+                planned.report().slots,
+            )
         })
         .collect()
 }
@@ -738,7 +638,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
             &Side {
                 name: "native",
                 placements: &placements,
-                plans: &plans(&app.native_plans.0),
+                plans: &plans(&app.native_plans.fuse),
                 claims: &labels.0,
                 circuit: native_circuit,
                 mask: native::InternalCircuitIndex::ExtensionMask,
@@ -777,7 +677,7 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
             &Side {
                 name: "nested",
                 placements: &placements,
-                plans: &plans(&app.nested_plans.0),
+                plans: &plans(&app.nested_plans.fuse),
                 claims: &labels.0,
                 circuit: nested_circuit,
                 mask: nested::InternalCircuitIndex::ExtensionMask,
@@ -800,161 +700,6 @@ fn pages_and_carry_stages_are_held_to_their_gates() -> Result<()> {
         )?;
     }
     Ok(())
-}
-
-/// The AllPaged test pages every internal circuit with an honest proof.
-/// This test uses the production aggregator profile and its registered
-/// circuits, then plants a value in one proof polynomial at a time. It
-/// checks the first and last walk steps as well as the non-step pages.
-fn aggregator_claims_bind_pages_and_carries<const H: usize>() -> Result<()> {
-    type P<const H: usize> = Aggregator<H>;
-    type C<const H: usize> = Profiled<Pasta, P<H>>;
-
-    assert_eq!(R::RANK, AggregatorRank::RANK, "the aggregator's rank");
-    let params = crate::pasta::baked();
-    let log2_circuits = native::total_circuit_counts::<P<H>>(0).1;
-    let (native_registry, native_plans) = native::register_all::<C<H>, R, H>(
-        RegistryBuilder::new(),
-        params,
-        log2_circuits,
-        0,
-        Some(Fp::ONE),
-        Some(4),
-    )?;
-    let (nested_registry, nested_plans) =
-        nested::register_all::<C<H>, R>(RegistryBuilder::new(), params, Some(Fq::ONE), Some(4))?;
-    let native_registry = native_registry.finalize()?;
-    let nested_registry = nested_registry.finalize()?;
-    let mut rng = StdRng::seed_from_u64(0x1030_a6ed);
-
-    {
-        let points = (
-            Fp::random(|bytes| rng.fill_bytes(bytes)),
-            Fp::random(|bytes| rng.fill_bytes(bytes)),
-        );
-        let placements = placements::<P<H>>(false);
-        let later_step = placements
-            .iter()
-            .filter_map(|placement| match placement.circuit {
-                Circuit::EndoscalingStep(step) => Some(step),
-                _ => None,
-            })
-            .max()
-            .expect("the aggregator pages its native walk");
-        assert!(later_step > 0);
-        let mut labels: Labels<native::InternalCircuitIndex, native::RxComponent> =
-            Labels(Vec::new());
-        native::claims::build::<P<H>, _, _>(&NativeNames, &mut labels)?;
-        let zero = sparse::Polynomial::<Fp, R>::default();
-        let clean = native_aggregator_values::<H>(
-            &native_registry,
-            &NativePlanted {
-                zero: &zero,
-                at: native::RxComponent::Rx(native::RxIndex::Preamble),
-                value: &zero,
-            },
-            points,
-        )?;
-        assert_eq!(labels.0.len(), clean.len(), "a value for each native claim");
-        holds(
-            &Side {
-                name: "aggregator native",
-                placements: &placements,
-                plans: &plans(&native_plans.0),
-                claims: &labels.0,
-                circuit: native_circuit,
-                mask: native::InternalCircuitIndex::ExtensionMask,
-                page: native_page,
-                stage: |stage| native::RxComponent::Rx(native::RxIndex::ExtensionStage(stage)),
-                every_circuit_paged: false,
-                later_step: Some(later_step),
-            },
-            |polynomial, gate, wire| {
-                let native::RxComponent::Rx(_) = polynomial else {
-                    unreachable!("a page's polynomial is an rx polynomial")
-                };
-                let value = planted::<Fp>(gate, wire);
-                let source = NativePlanted {
-                    zero: &zero,
-                    at: polynomial,
-                    value: &value,
-                };
-                let values = native_aggregator_values::<H>(&native_registry, &source, points)?;
-                Ok(values.iter().zip(&clean).map(|(a, b)| a != b).collect())
-            },
-        )?;
-    }
-
-    {
-        let points = (
-            Fq::random(|bytes| rng.fill_bytes(bytes)),
-            Fq::random(|bytes| rng.fill_bytes(bytes)),
-        );
-        let placements = placements::<P<H>>(true);
-        let later_step = placements
-            .iter()
-            .filter_map(|placement| match placement.circuit {
-                Circuit::NestedEndoscalingStep(step) => Some(step),
-                _ => None,
-            })
-            .max()
-            .expect("the aggregator pages its nested walk");
-        assert!(later_step > 0);
-        let mut labels: Labels<nested::InternalCircuitIndex, nested::RxComponent> =
-            Labels(Vec::new());
-        nested::claims::build::<P<H>, _, _>(&NestedNames, &mut labels)?;
-        let zero = sparse::Polynomial::<Fq, R>::default();
-        let clean = nested_aggregator_values::<H>(
-            &nested_registry,
-            &NestedPlanted {
-                zero: &zero,
-                at: nested::RxComponent::Rx(nested::RxIndex::PointsStage),
-                value: &zero,
-            },
-            points,
-        )?;
-        assert_eq!(labels.0.len(), clean.len(), "a value for each nested claim");
-        holds(
-            &Side {
-                name: "aggregator nested",
-                placements: &placements,
-                plans: &plans(&nested_plans.0),
-                claims: &labels.0,
-                circuit: nested_circuit,
-                mask: nested::InternalCircuitIndex::ExtensionMask,
-                page: nested_page,
-                stage: |stage| nested::RxComponent::Rx(nested::RxIndex::ExtensionStage(stage)),
-                every_circuit_paged: false,
-                later_step: Some(later_step),
-            },
-            |polynomial, gate, wire| {
-                let nested::RxComponent::Rx(_) = polynomial else {
-                    unreachable!("a page's polynomial is an rx polynomial")
-                };
-                let value = planted::<Fq>(gate, wire);
-                let source = NestedPlanted {
-                    zero: &zero,
-                    at: polynomial,
-                    value: &value,
-                };
-                let values = nested_aggregator_values::<H>(&nested_registry, &source, points)?;
-                Ok(values.iter().zip(&clean).map(|(a, b)| a != b).collect())
-            },
-        )?;
-    }
-    Ok(())
-}
-
-#[test]
-fn production_aggregator_claims_bind_pages_and_carries() -> Result<()> {
-    aggregator_claims_bind_pages_and_carries::<4>()
-}
-
-#[cfg(ragu_pcd_nightly_tests)]
-#[test]
-#[ignore = "checks production claim and mask bindings at the widest header"]
-fn widest_aggregator_claims_bind_pages_and_carries() -> Result<()> {
-    aggregator_claims_bind_pages_and_carries::<195>()
 }
 
 /// A registry has a slot for each page its profile pins, so pages are held
@@ -1016,5 +761,245 @@ fn a_registered_page_is_held_to_one() -> Result<()> {
             "a page's k(y) is one"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn extension_pages_share_their_stages_and_stay_inside_the_user_declaration() {
+    use super::{ExtensionPages, Registrar};
+    use crate::decompress::{common, nested::Nested};
+
+    type Profile = Aggregator<HEADER_SIZE>;
+    let checked = common::checked::<Pasta, Nested, WalletRank, AggregatorRank, HEADER_SIZE>(
+        crate::pasta::baked_aggregator(),
+    )
+    .unwrap();
+    let group = |first| ExtensionPages::new(first, &checked);
+    let registrar = || Registrar::new::<Profile>(true);
+    registrar().declare(vec![group(0).unwrap()]).unwrap();
+    assert!(group(u32::MAX).is_err());
+    // The next circuit belongs to the online helper.
+    assert!(registrar().declare(vec![group(1).unwrap()]).is_err());
+
+    let mut different = registrar();
+    // A different commitment may have exactly the same gate range.
+    *different.user_stages[1].last_mut().unwrap() += 1;
+    assert!(different.declare(vec![group(0).unwrap()]).is_err());
+}
+
+/// Circuits of so many empty constraints and no gates, for sizing a page's
+/// constraints against the rank's.
+mod constraints {
+    use ragu_circuits::{
+        WithAux,
+        paging::Pageable,
+        polynomials::TestRank,
+        staging::{MultiStageCircuit, StageBuilder},
+    };
+    use ragu_core::{
+        Result,
+        drivers::{Driver, DriverValue},
+        gadgets::{Bound, Kind},
+        pasta::Fp,
+    };
+    use ragu_primitives::{Element, WithSuffix, vec::ConstLen};
+    use udon::field::Field;
+
+    /// The constraints, and no public output.
+    pub(super) struct Plain(pub usize);
+
+    impl Pageable<Fp, TestRank> for Plain {
+        type Carry = ConstLen<0>;
+    }
+
+    impl MultiStageCircuit<Fp, TestRank> for Plain {
+        type Last = ();
+        type Instance<'source> = ();
+        type Witness<'source> = ();
+        type Output = ();
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _: &mut D,
+            _: DriverValue<D, ()>,
+        ) -> Result<Bound<'dr, D, ()>> {
+            Ok(())
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, TestRank, (), ()>,
+            _: DriverValue<D, ()>,
+        ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
+            let dr = builder.finish();
+            for _ in 0..self.0 {
+                dr.enforce_zero(|lc| lc)?;
+            }
+            Ok(WithAux::new((), D::unit()))
+        }
+    }
+
+    /// The same constraints, and the zero an extension circuit ends its
+    /// public output with.
+    pub(super) struct Ended(pub usize);
+
+    impl Pageable<Fp, TestRank> for Ended {
+        type Carry = ConstLen<0>;
+    }
+
+    impl MultiStageCircuit<Fp, TestRank> for Ended {
+        type Last = ();
+        type Instance<'source> = ();
+        type Witness<'source> = ();
+        type Output = Kind![Fp; @WithSuffix<'_, _, ()>];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, ()>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Ok(WithSuffix::new((), Element::zero(dr)))
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, TestRank, (), ()>,
+            _: DriverValue<D, ()>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+            let dr = builder.finish();
+            for _ in 0..self.0 {
+                dr.enforce_zero(|lc| lc)?;
+            }
+            Ok(WithAux::new(
+                WithSuffix::new((), Element::zero(dr)),
+                D::unit(),
+            ))
+        }
+    }
+
+    /// The same constraints, and an output of [`Ended`]'s type that ends
+    /// with a wire in place of the zero.
+    pub(super) struct Wired(pub usize);
+
+    impl Pageable<Fp, TestRank> for Wired {
+        type Carry = ConstLen<0>;
+    }
+
+    impl MultiStageCircuit<Fp, TestRank> for Wired {
+        type Last = ();
+        type Instance<'source> = ();
+        type Witness<'source> = ();
+        type Output = Kind![Fp; @WithSuffix<'_, _, ()>];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, ()>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let wire = Element::alloc(dr, &mut (), D::just(|| Fp::ZERO))?;
+            Ok(WithSuffix::new((), wire))
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, TestRank, (), ()>,
+            _: DriverValue<D, ()>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, ()>>> {
+            let dr = builder.finish();
+            for _ in 0..self.0 {
+                dr.enforce_zero(|lc| lc)?;
+            }
+            let wire = Element::alloc(dr, &mut (), D::just(|| Fp::ZERO))?;
+            Ok(WithAux::new(WithSuffix::new((), wire), D::unit()))
+        }
+    }
+}
+
+/// A census sizes the pages a registry takes. An extension circuit ends its
+/// public output with a zero, which is one more constraint of its last
+/// page: at the rank's limit the page no longer fits.
+#[test]
+fn extension_census_counts_the_last_output_at_the_constraint_limit() -> Result<()> {
+    use ragu_circuits::{polynomials::TestRank, staging::MultiStage};
+
+    use self::constraints::{Ended, Plain};
+
+    let count = PageCount::new(1);
+    // The registry reserves one coefficient. Orchestration adds the ONE
+    // constraint, and an extension circuit writes one public output.
+    let body = TestRank::num_coeffs() - 2;
+    let plain = super::sized("plain", count, (&[], false), MultiStage::new(Plain(body)))?;
+    assert!(plain.pages.is_ok());
+    let overflow = super::sized_extension("extension", count, true, MultiStage::new(Ended(body)))?;
+    assert!(
+        overflow
+            .pages
+            .unwrap_err()
+            .contains("ConstraintBoundExceeded")
+    );
+    assert!(overflow.digest.is_none());
+    assert_ne!(overflow.fewest, Some(1));
+    let fits = super::sized_extension("extension", count, true, MultiStage::new(Ended(body - 1)))?;
+    assert!(fits.pages.is_ok());
+    assert_eq!(fits.fewest, Some(1));
+    Ok(())
+}
+
+/// The last page of a paged extension circuit is registered as the check
+/// held it. The circuit ends its own public output with the zero a slot
+/// appends to an unpaged extension circuit's (`CircuitSlot::register`), so
+/// the page is the polynomial that wrapping the page gave: the registry
+/// that holds it has the same tag.
+#[test]
+fn a_paged_extension_circuits_last_page_ends_with_its_own_zero() -> Result<()> {
+    use ragu_circuits::{polynomials::TestRank, staging::MultiStage};
+
+    use self::constraints::{Ended, Plain};
+
+    let tag = |registry: RegistryBuilder<'_, Fp, TestRank>| -> Result<Fp> {
+        Ok(registry.finalize()?.tag())
+    };
+    let plain = super::split("plain", MultiStage::new(Plain(5)), 1)?.check()?;
+    let ended = super::split("ended", MultiStage::new(Ended(5)), 1)?.check()?;
+    assert!(!plain.ends_in_zero());
+    assert!(ended.ends_in_zero());
+    // The extra output occupies a row. The registry tag hashes only the
+    // nonzero monomials of the wiring polynomial.
+    assert_eq!(
+        ended.pages().report().pages[0].constraints,
+        plain.pages().report().pages[0].constraints + 1
+    );
+    let wrapped =
+        tag(RegistryBuilder::new()
+            .register_internal_circuit(crate::profile::Suffixed(plain.last()))?)?;
+    let own = tag(RegistryBuilder::new().register_internal_circuit(ended.last())?)?;
+    assert_eq!(own, wrapped);
+    Ok(())
+}
+
+/// The bound on a paged extension circuit's output holds its suffix's
+/// place and not its value. A circuit that writes a wire there cuts and
+/// checks, and its last page could satisfy an application instance, so its
+/// pages are not taken.
+#[test]
+fn extension_pages_refuse_a_circuit_that_ends_with_a_wire() -> Result<()> {
+    use ragu_circuits::{polynomials::TestRank, staging::MultiStage};
+
+    use self::constraints::{Ended, Wired};
+    use super::ExtensionPages;
+
+    let ended = super::split("ended", MultiStage::new(Ended(5)), 1)?.check()?;
+    assert!(ended.ends_in_zero());
+    assert!(ExtensionPages::<Fp, TestRank>::new(0, &ended).is_ok());
+
+    let wired = super::split("wired", MultiStage::new(Wired(5)), 1)?.check()?;
+    assert!(!wired.ends_in_zero());
+    let Err(error) = ExtensionPages::<Fp, TestRank>::new(0, &wired) else {
+        panic!("a circuit that ends its output with a wire is refused");
+    };
+    assert!(format!("{error:?}").contains("constant zero"), "{error:?}");
     Ok(())
 }

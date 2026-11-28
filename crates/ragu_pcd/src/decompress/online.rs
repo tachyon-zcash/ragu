@@ -138,7 +138,7 @@ const POLYNOMIALS: [Phase; slot::OUTGOING + 1] = {
 };
 
 // Each batch opens its IPA's challenge polynomial at the step's y, and the
-// chunks hold the opening to s(y). That makes the commitment the IPA's G'
+// side's verifier holds the opening to s(y). That makes the commitment the IPA's G'
 // only if the step fixes the polynomial before it draws y.
 const _: () = assert!(
     matches!(POLYNOMIALS[slot::IPA], Phase::BeforeW | Phase::BeforeY),
@@ -194,7 +194,7 @@ const INTRODUCED: [Restriction; 9] = [
 ];
 
 /// The mesh of either side: the children's outgoing restrictions, the
-/// nine a step introduces for the proof its chunks run over, the helper
+/// nine a step introduces for the proof its extension verifies, the helper
 /// of each distinct first coordinate, $U$ and the outgoing restriction.
 pub(crate) const MESH: Mesh = Mesh {
     inherited: [restriction(0, 0, 1, 0), restriction(1, 2, 3, 1)],
@@ -379,8 +379,8 @@ impl Values {
         3 + value
     }
 
-    /// The gates the two stages take at the front of the side's chunk
-    /// circuits, after the SYSTEM gate.
+    /// The gates the two stages take at the front of the side's circuits,
+    /// after the SYSTEM gate.
     pub(crate) const fn prefix_gates(self) -> usize {
         self.input_stage().div_ceil(2) + self.query_stage().div_ceil(2)
     }
@@ -546,7 +546,7 @@ const NATIVE_OPENINGS: [Opening; Values::NATIVE.openings()] = openings(Values::N
 const NESTED_OPENINGS: [Opening; Values::NESTED.openings()] = openings(Values::NESTED);
 
 /// The native side's batch: the mesh's polynomials and the openings of
-/// the registry evaluations the circuit-field side's chunks read.
+/// the registry evaluations the circuit-field side reads.
 pub(crate) const NATIVE: Layout = Layout {
     polynomials: &POLYNOMIALS,
     openings: &NATIVE_OPENINGS,
@@ -587,7 +587,7 @@ pub(crate) const fn consumers(circuits: usize) -> &'static [u32] {
 
 /// The online input and query stages a step's fuse committed, each
 /// stage's values in the order the fuse lays them out, as the side's
-/// chunk circuits load them.
+/// circuits load them.
 pub(crate) fn stages<F: Field, P: Profile, S: Side>(
     witness: &Witness<'_, F, P, S>,
 ) -> (Vec<F>, Vec<F>) {
@@ -624,7 +624,7 @@ mod tests {
     use super::*;
     use crate::{
         decompress::{
-            side,
+            native, nested,
             stages::{OnlineInputStage, OnlineQueryStage},
         },
         profile::{
@@ -633,11 +633,11 @@ mod tests {
         },
     };
 
-    /// The chunk circuits load the online stages as plain element stages.
+    /// The side's circuits load the online stages as plain element stages.
     /// They are the fuse's own stages only if they take the same gates at
     /// the same place, for any header size the aggregator is declared at.
     #[test]
-    fn the_chunks_load_the_online_stages_the_fuse_commits() {
+    fn the_sides_load_the_online_stages_the_fuse_commits() {
         type P = Aggregator<4>;
         type R = AggregatorRank;
         macro_rules! same {
@@ -656,38 +656,38 @@ mod tests {
         }
         same!(
             Fp,
-            OnlineInputStage<Pasta, side::Native, R>,
+            OnlineInputStage<Pasta, native::Native, R>,
             InputStage<P, Native>,
             Values::NATIVE.input_stage()
         );
         same!(
             Fp,
-            OnlineQueryStage<Pasta, side::Native, R>,
+            OnlineQueryStage<Pasta, native::Native, R>,
             QueryStage<P, Native>,
             Values::NATIVE.query_stage()
         );
         same!(
             Fq,
-            OnlineInputStage<Pasta, side::Nested, R>,
+            OnlineInputStage<Pasta, nested::Nested, R>,
             InputStage<P, Nested>,
             Values::NESTED.input_stage()
         );
         same!(
             Fq,
-            OnlineQueryStage<Pasta, side::Nested, R>,
+            OnlineQueryStage<Pasta, nested::Nested, R>,
             QueryStage<P, Nested>,
             Values::NESTED.query_stage()
         );
         for (values, query_end) in [
             (
                 Values::NATIVE,
-                <OnlineQueryStage<Pasta, side::Native, R> as Stage<Fp, R>>::skip_gates()
-                    + <OnlineQueryStage<Pasta, side::Native, R> as StageExt<Fp, R>>::num_gates(),
+                <OnlineQueryStage<Pasta, native::Native, R> as Stage<Fp, R>>::skip_gates()
+                    + <OnlineQueryStage<Pasta, native::Native, R> as StageExt<Fp, R>>::num_gates(),
             ),
             (
                 Values::NESTED,
-                <OnlineQueryStage<Pasta, side::Nested, R> as Stage<Fq, R>>::skip_gates()
-                    + <OnlineQueryStage<Pasta, side::Nested, R> as StageExt<Fq, R>>::num_gates(),
+                <OnlineQueryStage<Pasta, nested::Nested, R> as Stage<Fq, R>>::skip_gates()
+                    + <OnlineQueryStage<Pasta, nested::Nested, R> as StageExt<Fq, R>>::num_gates(),
             ),
         ] {
             // After the SYSTEM gate.

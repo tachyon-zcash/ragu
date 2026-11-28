@@ -248,8 +248,8 @@ pub fn nested_online_stage_points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P
 }
 
 /// Finishes `ky`, the Horner evaluation of an extension circuit's public
-/// output, as the circuit's $k(y)$: the constant zero its registry slot
-/// appends to the output (see [`CircuitSlot`](crate::profile::CircuitSlot)),
+/// output, as the circuit's $k(y)$: the constant zero the output ends with
+/// (see [`CircuitSlot`](crate::profile::CircuitSlot) and `ExtensionPages`),
 /// then the trailing one. A circuit without an output keeps $k(y) = 1$.
 pub fn finish_extension_ky<'dr, D: Driver<'dr>>(
     mut ky: Horner<'_, 'dr, D>,

@@ -45,7 +45,6 @@ mod verifier;
 
 pub use msm::MSM;
 pub use prover::create_proof;
-#[cfg(test)]
 pub(crate) use transcript::convert_challenge;
 pub use transcript::{CycleTranscript, HostSide, IpaTranscript, NestedSide};
 pub(crate) use verifier::challenge_polynomial;

@@ -9,9 +9,8 @@
 //! every polynomial is its own index, so that what they check is what the
 //! prover, the verifier and the in-circuit fold sum:
 //!
-//! - every page of a circuit the aggregator pages sums the stages the
-//!   circuit's claim summed before paging, pinned here, beside its carry
-//!   stage;
+//! - every page of a paged fuse circuit sums the stages the circuit's
+//!   claim summed before paging, pinned here, beside its carry stage;
 //! - every stage a claim sums is one its circuit reserves, at most once,
 //!   and every stage the circuit reserves that the claim leaves out is one
 //!   whose wires it reads none of;
@@ -37,7 +36,7 @@ use crate::{
     internal::{endoscalar, native, nested, revdot::Source},
     profile::{
         Aggregator, Profile, Profiled, ProfiledCycle, paging,
-        testing::{Twin, Wider},
+        testing::{AllPaged, Twin, Wider},
     },
 };
 
@@ -347,19 +346,16 @@ fn nested_claims<P: Profile>() -> ByCircuit<nested::RxIndex> {
     by_circuit
 }
 
-/// The stages each native circuit's claim summed before paging: the arms
-/// of `main`'s `build`, as they read for the aggregator, whose collapse and
-/// `compute_v` take the points binding stage. Pinned, not derived from the
-/// lists the claims are built from, so that a change to those lists fails
-/// here even when it moves a circuit's pages with it.
+/// The stages each native circuit's claim sums in the standard profile.
+/// These lists also hold for [`AllPaged`], whose fuse uses the same stages.
 fn native_before_paging(circuit: paging::Circuit) -> Vec<native::RxIndex> {
     use native::RxIndex::*;
     use paging::Circuit;
     match circuit {
         Circuit::Hashes1 => vec![Preamble, OuterError],
         Circuit::Hashes2 => vec![OuterError],
-        Circuit::Collapse => vec![PointsBinding, Preamble, InnerError, OuterError],
-        Circuit::ComputeV => vec![PointsBinding, Preamble, Query, Eval],
+        Circuit::Collapse => vec![Preamble, InnerError, OuterError],
+        Circuit::ComputeV => vec![Preamble, Query, Eval],
         Circuit::BindChallenges(_) => vec![Preamble, Query, Eval],
         Circuit::BindBeta => vec![PointsBinding, Preamble],
         Circuit::BindEndoscalar | Circuit::EndoscalingStep(_) => vec![
@@ -401,12 +397,16 @@ fn nested_before_paging(circuit: paging::Circuit) -> Vec<nested::RxIndex> {
     }
 }
 
-fn check_parity<P: Profile>() {
-    let native = native_claims::<P>();
-    let nested = nested_claims::<P>();
+/// Every page of a fuse circuit sums the stages of the circuit's whole
+/// claim together with its carry stage.
+#[test]
+fn pages_sum_the_stages_of_their_unpaged_circuit() {
+    let native = native_claims::<AllPaged>();
+    let nested = nested_claims::<AllPaged>();
     assert!(
-        !paging::placements::<P>(false).is_empty() && !paging::placements::<P>(true).is_empty(),
-        "the aggregator pages on both sides"
+        !paging::placements::<AllPaged>(false).is_empty()
+            && !paging::placements::<AllPaged>(true).is_empty(),
+        "the test profile pages on both sides"
     );
     for (circuit, claims) in native {
         let expected = native_before_paging(circuit);
@@ -420,16 +420,6 @@ fn check_parity<P: Profile>() {
             assert_eq!(stages, &expected, "{circuit:?}, claim {page}");
         }
     }
-}
-
-/// Every page of every circuit the aggregator pages sums the stages the
-/// circuit's claim summed before paging, and its carry stage: no page
-/// leaves out a stage the circuit's claim sums, or sums one it does not.
-#[test]
-fn aggregator_pages_sum_the_stages_of_their_unpaged_circuit() {
-    check_parity::<Aggregator<1>>();
-    check_parity::<Aggregator<4>>();
-    check_parity::<Aggregator<195>>();
 }
 
 /// Collects `S`'s stage and the `depth - 1` before it, by type, in the
@@ -669,6 +659,7 @@ fn claims_sum_the_stages_their_circuits_reserve() {
     check_reservations::<Profiled<Pasta, Wider>, 4>(params);
     check_reservations::<Profiled<Pasta, Twin>, 4>(params);
     check_reservations::<Profiled<Pasta, Aggregator<4>>, 4>(params);
+    check_reservations::<Profiled<Pasta, AllPaged>, 4>(params);
 }
 
 /// Checks that each page of each of `placements` has its own polynomial `own`
@@ -725,39 +716,34 @@ fn check_masks<Id: Copy + PartialEq + core::fmt::Debug, Rx: Copy + PartialEq + c
 /// and off its carry stage; every carry stage is under its stage's mask.
 #[test]
 fn every_page_is_under_the_mask_over_its_own_gates() {
-    fn check<P: Profile>() {
-        let placements = paging::placements::<P>(false);
-        check_masks(
-            "native",
-            &native_recorded::<P>(),
-            &placements,
-            (
-                native::InternalCircuitIndex::ExtensionMask,
-                native::RxIndex::ExtensionStage,
-            ),
-            |placement, page| match page < placement.last() {
-                true => native::RxIndex::ExtensionCircuit(placement.circuits.start + page as u32),
-                false => native_own(placement.circuit),
-            },
-        );
-        let placements = paging::placements::<P>(true);
-        check_masks(
-            "nested",
-            &nested_recorded::<P>(),
-            &placements,
-            (
-                nested::InternalCircuitIndex::ExtensionMask,
-                nested::RxIndex::ExtensionStage,
-            ),
-            |placement, page| match page < placement.last() {
-                true => nested::RxIndex::ExtensionCircuit(placement.circuits.start + page as u32),
-                false => nested_own(placement.circuit),
-            },
-        );
-    }
-    check::<Aggregator<1>>();
-    check::<Aggregator<4>>();
-    check::<Aggregator<195>>();
+    let placements = paging::placements::<AllPaged>(false);
+    check_masks(
+        "native",
+        &native_recorded::<AllPaged>(),
+        &placements,
+        (
+            native::InternalCircuitIndex::ExtensionMask,
+            native::RxIndex::ExtensionStage,
+        ),
+        |placement, page| match page < placement.last() {
+            true => native::RxIndex::ExtensionCircuit(placement.circuits.start + page as u32),
+            false => native_own(placement.circuit),
+        },
+    );
+    let placements = paging::placements::<AllPaged>(true);
+    check_masks(
+        "nested",
+        &nested_recorded::<AllPaged>(),
+        &placements,
+        (
+            nested::InternalCircuitIndex::ExtensionMask,
+            nested::RxIndex::ExtensionStage,
+        ),
+        |placement, page| match page < placement.last() {
+            true => nested::RxIndex::ExtensionCircuit(placement.circuits.start + page as u32),
+            false => nested_own(placement.circuit),
+        },
+    );
 }
 
 /// The target a claim is held to, by what it is.
@@ -935,6 +921,7 @@ fn every_circuit_claim_is_held_to_its_target() {
     check::<crate::profile::Standard>();
     check::<Wider>();
     check::<Twin>();
+    check::<AllPaged>();
     check::<Aggregator<1>>();
     check::<Aggregator<4>>();
     check::<Aggregator<195>>();

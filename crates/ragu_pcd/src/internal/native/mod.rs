@@ -976,6 +976,9 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     // pages and their masks in the extension's slots.
     use crate::profile::paging;
     let mut pages = paging::Registrar::new::<C::Profile>(false);
+    // The profile's extension circuits in pages are cut and held to their
+    // unpaged circuits here, once, and each page registered at its slot.
+    pages.declare(C::Profile::native_extension_pages::<C::Base, R, HEADER_SIZE>(params)?)?;
     // The walk's steps are each a circuit of its own to page: they are
     // cut together here, and found cut where they are registered.
     pages.warm(
@@ -1164,7 +1167,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         "internal circuit count mismatch"
     );
 
-    Ok((registry, pages.plans()))
+    Ok((registry, pages.finish()?))
 }
 
 #[cfg(test)]

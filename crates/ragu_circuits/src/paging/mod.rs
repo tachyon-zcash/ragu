@@ -1,4 +1,4 @@
-//! Experimental paging: one circuit proven as several.
+//! Paging: one circuit proven as several.
 //!
 //! An *unpaged circuit* is a multi-stage circuit that is written once,
 //! whole, and needs more gates than a polynomial holds ([`Pageable`]). It
@@ -23,6 +23,17 @@
 //! pages each time it runs on a circuit, and none of its choices is
 //! trusted: [`Pages::check`] holds its pages to the unpaged circuit (see
 //! [Invariants](#invariants)).
+//!
+//! It weighs a cut by what the cut would carry were it the only one: the
+//! distinct linear combinations, up to scale, that the constraints past it
+//! name of the gates before it, the public output's among them, which the
+//! last page holds. A carry slot holds one such combination, however many
+//! wires it is of, so the weight follows the slots a cut takes and not the
+//! wires named across it. It cuts the gates in the order the circuit
+//! allocates them first, and takes that cut if the slots its pages
+//! actually take fit the carry stage. Only where they do not does it look
+//! for a cut in the orders that put a gate beside the gates it feeds, and
+//! take the one whose pages take the fewest slots, if those fit.
 //!
 //! The pager runs twice on a circuit. A *census pass*, offline, cuts the
 //! circuit to find how many pages it takes and how many values its pages
@@ -89,6 +100,13 @@
 //!   its own, so a page is one segment and a routine on a page has no
 //!   segment or fingerprint of its own. Calling them as routines is left
 //!   for when a floor planner or an evaluator reads segments.
+//! - TODO(#1038): the check holds a routine's gates to one page, not the
+//!   constraints the routine emits. A constraint that names no gate of the
+//!   routine, as one over its inputs alone does, is homed with the wires it
+//!   names, which may be on another page. A page that calls the routine
+//!   needs all of them: the recording is to note the constraints of each
+//!   routine and the check to hold them to the routine's page, which reads
+//!   the inputs through carry slots.
 //! - TODO: the last page walks the circuit each time it is synthesized, on
 //!   a driver that only counts, to build the public output's gadget. A
 //!   page that carried the output as the elements the circuit writes would
@@ -115,7 +133,8 @@
 //!   output, so its $k(Y)$ is constant.
 //! - **Preserve routines.** The gates of a routine the unpaged circuit
 //!   calls are on one page, together and in the order the circuit
-//!   allocates them.
+//!   allocates them. Its constraints are not yet held to that page (see
+//!   [Not yet](#not-yet)).
 //! - **Deterministic pager.** [`Pages::cut`] refuses an unpaged circuit
 //!   that does not cut into the pages it is told, over the carry stage its
 //!   type states ([`Pageable::Carry`]).
@@ -560,7 +579,12 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
 /// The pager, and whatever kept its plan, is not trusted. A registry
 /// takes a page only through this type, so no page is registered that the
 /// check did not hold to the circuit.
-pub struct Checked<F: Field, R: Rank, S: Pageable<F, R>>(Pages<F, R, S>);
+pub struct Checked<F: Field, R: Rank, S: Pageable<F, R>> {
+    pages: Pages<F, R, S>,
+    /// Whether the circuit ends its public output with a constant zero,
+    /// as the check's walk of the circuit found.
+    ends_in_zero: bool,
+}
 
 /// The pages a circuit was cut into, apart from the circuit: what
 /// [`Pages::planned`] takes to page the same circuit again without cutting

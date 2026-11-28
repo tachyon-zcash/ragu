@@ -208,7 +208,7 @@ impl FixtureCycle for Profiled<Pasta, Aggregator<HEADER_SIZE>> {
 
     /// The aggregator over the wallet application, whose canonical
     /// compressed proof is compressed under a fixed seed, so that the
-    /// chunks every fuse runs over it are the same.
+    /// pages every fuse runs over it are the same.
     fn build<B: SelectableBackend>() -> App<Self, B> {
         let decompression = Decompression::new(Pasta::build::<B>(), &mut Tape::new(seed(0xa66)))
             .expect("the canonical decompression prepares");

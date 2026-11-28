@@ -526,7 +526,7 @@ Two of V5's notes apply to every consumer of a nested batch.
 ### V6: online batches and source-registry identities {#v6}
 
 V6 gives a profile's internal circuits a polynomial oracle on both fields: several committed polynomials, several openings of each polynomial, and authenticated access to the opening wires and commitment points. It also authenticates polynomials claimed to be restrictions of a registry captured at setup.
-The client is the aggregator's [decompression](recursion/decompression.md), whose chunk circuits read the wallet registry's evaluations from it. The application's six slots remain unchanged.
+The client is the aggregator's [decompression](recursion/decompression.md), whose circuits read the wallet registry's evaluations from it. The application's six slots remain unchanged.
 
 A few registry restrictions answer many public evaluation requests: the decompression reads every evaluation of the wallet registry its verifier takes as an opening of one of nine restrictions per field.
 
@@ -570,7 +570,7 @@ Profile preparation hooks receive only the enclosing challenges available at the
 
 The last nested copy is bound to the early native query copy, so its later appearance in `PointsF` cannot move its commitment past $\alpha$. All phase copies are bound to the actual walk points. The quotient is fixed before $u$; `EvalStage` fixes the evaluations before `pre_beta`.
 
-C3 applies to every random identity test. In particular, a decompression consumer must commit the restriction coordinates before outer $w$, then constrain transcript replay to those early wires, as the aggregator's chunks hold the input stage's coordinates to the values they derive from the compressed proof. A separately witnessed late copy does not establish that binding. Inner compression's challenges are the endoscalar lifts of its own transcript's squeezes, as the outer fuse's are of its own, and the two must remain distinct. Using an online commitment as the IPA's folded generator requires the same ordered generator basis as that IPA.
+C3 applies to every random identity test. In particular, a decompression consumer must commit the restriction coordinates before outer $w$, then constrain transcript replay to those early wires, as the aggregator's decompression circuits hold the input stage's coordinates to the values they derive from the compressed proof. A separately witnessed late copy does not establish that binding. Inner compression's challenges are the endoscalar lifts of its own transcript's squeezes, as the outer fuse's are of its own, and the two must remain distinct. Using an online commitment as the IPA's folded generator requires the same ordered generator basis as that IPA.
 
 Like the application's slots, V6's batches take only finite points. A supplied zero polynomial is rejected, since its commitment is the identity, and setup rejects a source registry whose restrictions vanish at the bootstrap proof's challenges. In the compression transcript, each native online commitment coordinate, nested mesh claim, and nested fold value in the scalar field is absorbed as fixed-width, little-endian 128-bit limbs of its canonical encoding, so these values can be zero. A profile with zero online capacity adds none of these stages or helpers; Standard retains its existing shape and encoding.
 
@@ -635,4 +635,4 @@ Source-mesh preparation adds prover work that the census does not time. Each fus
 
 #### Remaining work {#v6-remaining}
 
-The `Aggregator` profile declares its registry queries as a source mesh of nine introduced restrictions and seven helpers per field (`decompress::online`), and its chunk circuits are the batch's consumers. Each IPA's folded generator uses a slot in the batch of its field, committed before $y$ and opened at $y$. The profile is unaudited. Compression-format optimization is separate work.
+The `Aggregator` profile declares its registry queries as a source mesh of nine introduced restrictions and seven helpers per field (`decompress::online`), and its decompression circuits are the batch's consumers. Each IPA's folded generator uses a slot in the batch of its field, committed before $y$ and opened at $y$. The profile is unaudited. Compression-format optimization is separate work.

@@ -114,8 +114,9 @@ impl<F: Field> Program<F> {
         // TODO(#503): a routine the circuit calls is replayed here as part
         // of the page's flat run, so it has no segment a memo can key on.
         // The check holds its gates to this page, together and in order
-        // (`Recording::split_routine`); what is left is for the page to
-        // call it as a routine on `dr`.
+        // (`Recording::split_routine`), and not yet its constraints
+        // (TODO(#1038)); what is left is for the page to call it as a
+        // routine on `dr`, once they are held here too.
         let one = D::ONE;
         let wires = (reserved, &gates[..]);
         let mut sums: Vec<D::Wire> = Vec::with_capacity(self.sums.len());
@@ -257,6 +258,11 @@ impl<F: Field> Planned<F> {
     pub fn stages(&self) -> &Stages {
         &self.stages
     }
+
+    /// How that circuit spreads over the pages.
+    pub fn report(&self) -> &PagingReport {
+        &self.report
+    }
 }
 
 impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
@@ -295,8 +301,11 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     /// or repeated, a carry slot lacks its definition, or the constraints
     /// differ.
     pub fn check(self) -> Result<Checked<F, R, S>> {
-        super::check::check(&self)?;
-        Ok(Checked(self))
+        let ends_in_zero = super::check::check(&self)?;
+        Ok(Checked {
+            pages: self,
+            ends_in_zero,
+        })
     }
 
     /// The layout of the pages' polynomials.
@@ -488,7 +497,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
 impl<F: Field, R: Rank, S: Pageable<F, R>> Checked<F, R, S> {
     /// The pages, for what does not need them held to the circuit.
     pub fn pages(&self) -> &Pages<F, R, S> {
-        &self.0
+        &self.pages
     }
 
     /// Page `index`, which is not the last, to register.
@@ -497,13 +506,25 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Checked<F, R, S> {
     ///
     /// Panics if `index` is the last page or past it.
     pub fn page(&self, index: usize) -> MultiStage<F, R, PagedCircuit<F, R, S>> {
-        self.0.page(index)
+        self.pages.page(index)
     }
 
     /// The last page, which carries the circuit's public output, to
     /// register.
     pub fn last(&self) -> MultiStage<F, R, LastPagedCircuit<F, R, S>> {
-        self.0.last()
+        self.pages.last()
+    }
+
+    /// Whether the circuit ends its public output with a constant zero:
+    /// the last wire it writes is the empty combination, so that row of
+    /// the last page's $k(Y)$ names no wire and no trace gives it a linear
+    /// term. A circuit without an output does not.
+    ///
+    /// The type of an output says where its last wire is and not what the
+    /// circuit writes there. This is read off the walk of the circuit the
+    /// check holds the last page's output to.
+    pub fn ends_in_zero(&self) -> bool {
+        self.ends_in_zero
     }
 }
 

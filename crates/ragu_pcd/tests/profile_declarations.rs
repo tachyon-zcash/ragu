@@ -683,10 +683,10 @@ fn a_nested_online_polynomial_alone_fills_the_native_walk() {
     );
 }
 
-/// The aggregator's shape follows its pinned circuits, its online
-/// batches and the pages it cuts the fuse's circuits into, and grows with
-/// the header size through the transcript
-/// circuits.
+/// The aggregator's shape follows the pages it pins for the
+/// decompression's two circuits, its online batches and the pages it cuts
+/// the fuse's circuits into. The native side uses the same page count
+/// across supported header sizes.
 #[test]
 fn aggregator_declares_the_decompression() {
     use crate::profile::paging;
@@ -701,12 +701,16 @@ fn aggregator_declares_the_decompression() {
     // challenge polynomial among the points the other side's walk folds,
     // and the outgoing restriction the proof retains.
     let batch = online::stages::RXS;
-    // A paged circuit adds a polynomial for each page before its last and
-    // for each carry stage, and a paged step takes that many more.
-    let expected = |native_circuits: usize, pages: crate::profile::PageCounts| {
+    // The decompression's native pages, its statement circuit and its
+    // native stages; its nested pages and its nested stages. A paged
+    // circuit of the fuse adds a polynomial for each page before its last
+    // and for each carry stage, and a paged step takes that many more.
+    let native_pages = Aggregator::<4>::NATIVE_PAGES.num_pages();
+    let nested_pages = Aggregator::<4>::NESTED_PAGES.num_pages();
+    let expected = |pages: crate::profile::PageCounts| {
         let mut shape = Shape::solve_with_online(
-            native_circuits + 2 + 6 + batch + paging::rxs(&pages, false),
-            34 + 1 + nested_stages + batch + paging::rxs(&pages, true),
+            native_pages + 1 + aggregator::NATIVE_STAGES + batch + paging::rxs(&pages, false),
+            nested_pages + nested_stages + batch + paging::rxs(&pages, true),
             21,
             21,
             (per_step, 1 + paging::added(pages.endoscaling_step)),
@@ -715,10 +719,15 @@ fn aggregator_declares_the_decompression() {
         shape.source_polynomials = 2;
         shape
     };
-    assert_eq!(shape, expected(63, pages));
+    assert_eq!(shape, expected(pages));
+    // The pins hold for every header size, so the shape does too.
     assert_eq!(
         Shape::of::<Aggregator<195>>(),
-        expected(70, Aggregator::<195>::PAGE_COUNTS)
+        expected(Aggregator::<195>::PAGE_COUNTS)
+    );
+    assert_eq!(
+        Aggregator::<195>::NATIVE_PAGES,
+        Aggregator::<4>::NATIVE_PAGES
     );
     assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
     std::println!(
@@ -732,25 +741,31 @@ fn aggregator_declares_the_decompression() {
 #[test]
 fn aggregator_hooks_refuse_other_parameters() {
     let params = crate::pasta::baked();
+    // The statement circuit, past the native pages.
+    let statement = Aggregator::<4>::NATIVE_PAGES.num_pages();
     let at_another_rank = Aggregator::<4>::register_native_circuit::<Pasta, R<13>, 4>(
-        0,
+        statement,
         CircuitSlot::new(RegistryBuilder::new()),
         params,
     );
     assert!(matches!(at_another_rank, Err(Error::Initialization(_))));
     let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 195>(
-        0,
+        statement,
         CircuitSlot::new(RegistryBuilder::new()),
         params,
     );
     assert!(matches!(other_header, Err(Error::Initialization(_))));
-    let nested_at_another_rank = Aggregator::<4>::register_nested_circuit::<Pasta, R<13>>(
-        0,
-        CircuitSlot::new(RegistryBuilder::new()),
-        params,
-    );
+    // The pages, which a registry build asks for before it registers any.
     assert!(matches!(
-        nested_at_another_rank,
+        Aggregator::<4>::native_extension_pages::<Pasta, R<13>, 4>(params),
+        Err(Error::Initialization(_))
+    ));
+    assert!(matches!(
+        Aggregator::<4>::native_extension_pages::<Pasta, AggregatorRank, 195>(params),
+        Err(Error::Initialization(_))
+    ));
+    assert!(matches!(
+        Aggregator::<4>::nested_extension_pages::<Pasta, R<13>>(params),
         Err(Error::Initialization(_))
     ));
 }

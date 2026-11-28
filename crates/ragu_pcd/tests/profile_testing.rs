@@ -81,6 +81,31 @@ impl Profile for Twin {
         B: SelectableBackend;
 }
 
+/// The standard profile with every internal circuit cut into pages: the
+/// circuits in two, and both walks' steps in three.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AllPaged;
+
+impl Profile for AllPaged {
+    const NAME: &'static str = "all-paged";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const PAGE_COUNTS: PageCounts = PageCounts {
+        endoscaling_step: PageCount::new(3).carrying(64),
+        nested_endoscaling_step: PageCount::new(3).carrying(64),
+        ..PageCounts::uniform(PageCount::new(2).carrying(64))
+    };
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = 12;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = 12;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
 /// Two native circuits over two stages, each under its last stage's
 /// final mask, and one nested circuit over one stage under one final
 /// mask, declared but without hooks.

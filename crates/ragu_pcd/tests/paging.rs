@@ -1,8 +1,8 @@
-//! Experimental: profiles that page the fuse's internal circuits prove and
-//! verify. A paged circuit is cut into several circuits at the wallet rank,
-//! with nothing but the profile's declaration saying so: its pages before
-//! the last ride the profile's extension, and the last takes the circuit's
-//! own slot.
+//! Profiles that page the fuse's internal circuits prove and verify. A
+//! paged circuit is cut into several circuits at the wallet rank, with
+//! nothing but the profile's declaration saying so: its pages before the
+//! last ride the profile's extension, and the last takes the circuit's own
+//! slot.
 
 use ragu_circuits::polynomials::{AggregatorRank, Rank, WalletRank};
 use ragu_core::{
@@ -12,9 +12,7 @@ use ragu_core::{
 use ragu_pcd::{
     ApplicationBuilder, SelectableBackend,
     ipa::IpaCycle,
-    profile::{
-        Aggregator, PageCount, PageCounts, Profile, Profiled, ProfiledCycle, Shape, Standard,
-    },
+    profile::{PageCount, PageCounts, Profile, Profiled, ProfiledCycle, Shape, Standard},
 };
 use ragu_testing::pcd::nontrivial::{Hash2, Merge2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
@@ -122,6 +120,9 @@ macro_rules! census {
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, $rank, $header>(pasta, 3, cuts, false)?;
         census.extend(nested_census::<C, $rank>(cuts, false)?);
+        // The decompression's two whole circuits, which the profile pages
+        // as it does the fuse's.
+        census.extend(<$profile>::decompression_census::<Pasta, $rank>(pasta, false)?);
         for sizing in &census {
             let sizes: Vec<usize> = sizing.stages.iter().map(|range| range.len()).collect();
             println!(
@@ -200,8 +201,8 @@ macro_rules! census {
     }};
 }
 
-/// How each fuse circuit of the aggregator profile cuts into polynomials
-/// at the aggregator rank, with the decompression extension's size.
+/// How each fuse circuit of the aggregator profile, and each side of the
+/// decompression, cuts into polynomials at the aggregator rank.
 #[test]
 #[ignore = "prints the aggregator profile's census"]
 fn census_aggregator() -> Result<()> {
@@ -230,40 +231,44 @@ fn census_aggregator_wide() -> Result<()> {
 
 #[path = "support/paging_census.rs"]
 mod census_support;
-use census_support::header_pages_fit;
+use census_support::{Most, header_pages_fit};
 
 macro_rules! check_headers {
-    ($($header:literal),+ $(,)?) => {
-        $(header_pages_fit::<$header>()?;)+
+    ($most:ident; $($header:literal),+ $(,)?) => {
+        $(header_pages_fit::<$header>(&mut $most)?;)+
     };
 }
 
 /// Check both sides of the aggregator's header-dependent schedule changes
 /// in ordinary CI. The dedicated paging census checks every supported
-/// header size in smaller build batches.
+/// header size in smaller build batches. Prints the most values each paged
+/// circuit's pages carry over these sizes, beside what its carry stage
+/// holds (`--nocapture`).
 #[test]
 fn aggregator_pages_fit_at_header_boundaries() -> Result<()> {
+    let mut most = Most::default();
     check_headers!(
-        1, 2, 9, 10, 33, 34, 41, 42, 57, 58, 65, 66, 97, 98, 129, 130, 153, 154, 161, 162, 185,
-        186, 193, 194, 195,
+        most; 1, 2, 9, 10, 33, 34, 41, 42, 57, 58, 65, 66, 97, 98, 129, 130, 153, 154, 161, 162,
+        185, 186, 193, 194, 195,
     );
+    most.print();
     Ok(())
 }
 
-/// The pages each fuse circuit's cut states under a profile, whether the
-/// circuit cuts in them, and the fewest it cuts in.
+/// The pages the aggregator profile states for each fuse circuit and each
+/// side of the decompression, whether the circuit cuts in them, and the
+/// fewest it cuts in.
 macro_rules! fewest {
     ($profile:ty, $header:expr) => {{
         use ragu_pcd::profile::paging::{native_census, nested_census};
 
-        // The ordinary census represents each walk with step zero. The
-        // scheduled heavy run checks every step at each sampled width.
-        #[cfg(ragu_pcd_nightly_tests)]
-        let _ = walk_cuts::<$header>()?;
         type C = Profiled<Pasta, $profile>;
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, AggregatorRank, $header>(pasta, 3, &[], true)?;
         census.extend(nested_census::<C, AggregatorRank>(&[], true)?);
+        census.extend(<$profile>::decompression_census::<Pasta, AggregatorRank>(
+            pasta, true,
+        )?);
         let found: Found = census
             .into_iter()
             .map(|sizing| {
@@ -294,15 +299,21 @@ macro_rules! fewest {
 /// fewest the solver found with the current profile's shape.
 type Found = Vec<(&'static str, usize, usize)>;
 
-/// Asserts the declared cuts fit at sampled headers, then prints the
-/// fewest pages the solver finds. These are a sizing diagnostic:
-/// changing the profile's page counts also changes its proof shape and can
-/// change which smaller cuts fit.
+/// Asserts the declared cuts fit at sampled headers, and that each is the
+/// fewest pages its circuit cuts into at one of them, printing the fewest
+/// the solver finds at each. A count above that leaves pages with no gates
+/// of their own, each still a polynomial of every proof, which nothing
+/// else catches: the counts are set by hand and every other test only
+/// holds a circuit to fit them. Changing a count changes the profile's
+/// proof shape, which can change which smaller cuts fit, so the counts are
+/// lowered until this passes. The heavy-tests workflow runs it with the
+/// other ignored tests.
 #[test]
-#[ignore = "prints the fewest pages the aggregator profile's layouts cut in"]
+#[ignore = "cuts every paged circuit of the aggregator into fewer pages at sampled headers"]
 fn fewest_aggregator() -> Result<()> {
     use ragu_pcd::profile::Aggregator;
 
+    // The decompression's native circuit takes its most pages at 189.
     let sizes: Vec<(usize, Found)> = vec![
         fewest!(Aggregator<1>, 1),
         fewest!(Aggregator<4>, 4),
@@ -310,9 +321,11 @@ fn fewest_aggregator() -> Result<()> {
         fewest!(Aggregator<100>, 100),
         fewest!(Aggregator<154>, 154),
         fewest!(Aggregator<162>, 162),
+        fewest!(Aggregator<189>, 189),
         fewest!(Aggregator<195>, 195),
     ];
     let headers: Vec<usize> = sizes.iter().map(|(header, _)| *header).collect();
+    let mut above = Vec::new();
     for circuit in 0..sizes[0].1.len() {
         let (name, stated, _) = sizes[0].1[circuit];
         // The most pages any header size takes.
@@ -324,15 +337,18 @@ fn fewest_aggregator() -> Result<()> {
             each.push(format!("{header}: {fewest}"));
         }
         println!(
-            "FEWEST headers {headers:?} {name}: states {stated:?}, takes {most:?}{} ({})",
-            if most == stated {
-                ""
-            } else {
-                " (above local minima)"
-            },
+            "FEWEST headers {headers:?} {name}: states {stated:?}, takes {most:?} ({})",
             each.join("; "),
         );
+        if most != stated {
+            above.push(format!("{name}: states {stated}, takes {most}"));
+        }
     }
+    assert!(
+        above.is_empty(),
+        "a count the aggregator states is above the fewest pages its circuit cuts into at \
+         headers {headers:?}: lower it, or sample the header size that takes it: {above:#?}"
+    );
     Ok(())
 }
 
@@ -347,6 +363,9 @@ macro_rules! cuts {
         let pasta = ragu_pcd::pasta::baked();
         let mut census = native_census::<C, AggregatorRank, $header>(pasta, 3, &[], false)?;
         census.extend(nested_census::<C, AggregatorRank>(&[], false)?);
+        census.extend(<$profile>::decompression_census::<Pasta, AggregatorRank>(
+            pasta, false,
+        )?);
         let cuts: Vec<(&'static str, String)> = census
             .into_iter()
             .filter(|sizing| sizing.count.num_pages() > 1)
@@ -366,8 +385,8 @@ macro_rules! cuts {
 }
 
 /// The aggregator's cuts at small and maximum header sizes: for each
-/// circuit its profile pages, the first step of each walk standing for the
-/// walk, a digest of its pages.
+/// circuit its profile pages, each side of the decompression among them, a
+/// digest of its pages.
 ///
 /// The pager places a circuit's cuts where the circuit is registered, and
 /// a circuit of the aggregator changes with the header size, so each size
@@ -380,46 +399,22 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         4,
         &[
-            ("native.compute_v", "2f57329f0139eb3b"),
-            ("native.bind_challenges_0", "b915080a1f26a0ed"),
-            ("native.bind_challenges_1", "04d1ba39bae1f42a"),
-            ("native.bind_challenges_2", "754f6dd13663d2d5"),
-            ("native.bind_challenges_3", "44850573f56d8b03"),
-            ("native.bind_endoscalar", "694522fc7c1da8b6"),
-            ("native.endoscaling_step", "39b10a7513167ace"),
-            ("nested.collapse", "aa54fefedb49832a"),
-            ("nested.compute_v", "a44f3913c6174b77"),
-            ("nested.endoscaling_step", "9065a01c4731bf03"),
+            ("decompression.native", "1261e6c87e407aa0"),
+            ("decompression.nested", "73d53a0dd8a080cd"),
         ],
     ),
     (
         9,
         &[
-            ("native.compute_v", "0f661a93670e2378"),
-            ("native.bind_challenges_0", "fe9df88edc2c9427"),
-            ("native.bind_challenges_1", "ac403889c67cd80c"),
-            ("native.bind_challenges_2", "b726d640413d9ac7"),
-            ("native.bind_challenges_3", "d8a982e0da9ad62b"),
-            ("native.bind_endoscalar", "694522fc7c1da8b6"),
-            ("native.endoscaling_step", "39b10a7513167ace"),
-            ("nested.collapse", "aa54fefedb49832a"),
-            ("nested.compute_v", "a44f3913c6174b77"),
-            ("nested.endoscaling_step", "9065a01c4731bf03"),
+            ("decompression.native", "6d0db27a9f131e4c"),
+            ("decompression.nested", "73e46c6b92843f4b"),
         ],
     ),
     (
         195,
         &[
-            ("native.compute_v", "d6c88219a925e044"),
-            ("native.bind_challenges_0", "11336ec491b5ccc1"),
-            ("native.bind_challenges_1", "111f56a2140de5a2"),
-            ("native.bind_challenges_2", "0f2c45332cdb26de"),
-            ("native.bind_challenges_3", "b12d391c5e60927e"),
-            ("native.bind_endoscalar", "694522fc7c1da8b6"),
-            ("native.endoscaling_step", "39b10a7513167ace"),
-            ("nested.collapse", "87106c0aae25d3ad"),
-            ("nested.compute_v", "ddf7a1f5a075b169"),
-            ("nested.endoscaling_step", "729586c9e79b1cbd"),
+            ("decompression.native", "bf4e7e6f40708b03"),
+            ("decompression.nested", "229002a8f45bc0d0"),
         ],
     ),
 ];
@@ -457,83 +452,6 @@ fn the_aggregators_cuts_are_pinned() -> Result<()> {
         moved.is_empty(),
         "the pages of the aggregator's circuits changed: {moved:#?}\nIf the change is intended, \
          the table is now:\n{table}"
-    );
-    Ok(())
-}
-
-/// The census above represents each walk with step zero. Hash the pages of
-/// every step, in order, so a changed valid cut in a later step also fails
-/// the compatibility fixture.
-fn walk_cuts_digest(census: Vec<ragu_pcd::profile::paging::Sizing>) -> String {
-    assert!(census.len() > 1, "the walk has later steps to check");
-    let mut state = blake2b_simd::Params::new()
-        .hash_length(32)
-        .personal(b"ragu_walk_pages_")
-        .to_state();
-    state.update(&(census.len() as u64).to_le_bytes());
-    for (step, sizing) in census.into_iter().enumerate() {
-        assert!(sizing.count.num_pages() > 1, "step {step} is not paged");
-        let digest = sizing.digest.unwrap_or_else(|| {
-            panic!(
-                "{} step {step} does not cut and check: {:?}",
-                sizing.name, sizing.pages
-            )
-        });
-        state.update(&(step as u64).to_le_bytes());
-        state.update(&digest);
-    }
-    state.finalize().as_bytes()[..8]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-fn walk_cuts<const H: usize>() -> Result<(usize, String, String)> {
-    use ragu_pcd::profile::paging::{native_walk_census, nested_walk_census};
-    type C<const H: usize> = Profiled<Pasta, Aggregator<H>>;
-    Ok((
-        H,
-        walk_cuts_digest(native_walk_census::<C<H>, AggregatorRank>()?),
-        walk_cuts_digest(nested_walk_census::<C<H>, AggregatorRank>()?),
-    ))
-}
-
-const WALK_CUTS: [(usize, &str, &str); 2] = [
-    (4, "04241d632e7e07dd", "7e95de79b937b5be"),
-    (195, "04241d632e7e07dd", "9cbe9b48ebf3d61e"),
-];
-
-#[test]
-fn every_aggregator_walk_step_cut_is_pinned() -> Result<()> {
-    let found = [walk_cuts::<4>()?, walk_cuts::<195>()?];
-    let found: Vec<(usize, &str, &str)> = found
-        .iter()
-        .map(|(header, native, nested)| (*header, native.as_str(), nested.as_str()))
-        .collect();
-    assert_eq!(
-        found, WALK_CUTS,
-        "the cuts of the aggregator's walk steps changed: if the change is intended, pin what \
-         was found"
-    );
-    Ok(())
-}
-
-/// Prints the chunk circuit counts the aggregator profile pins: those of
-/// the schedules that verify a wallet's compressed proof in chunk circuits
-/// at the aggregator rank.
-#[test]
-#[ignore = "prints the decompression's circuit counts at the aggregator rank"]
-fn census_aggregator_counts() -> Result<()> {
-    use ragu_circuits::polynomials::AggregatorRank;
-    use ragu_pcd::profile::Aggregator;
-
-    println!(
-        "COUNTS header 4: {:?}",
-        Aggregator::<4>::scheduled::<Pasta, AggregatorRank>()?
-    );
-    println!(
-        "COUNTS header 195: {:?}",
-        Aggregator::<195>::scheduled::<Pasta, AggregatorRank>()?
     );
     Ok(())
 }

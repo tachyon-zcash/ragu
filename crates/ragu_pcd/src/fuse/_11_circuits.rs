@@ -241,6 +241,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &online_openings,
             &self.native_registry,
             online.as_ref(),
+            self.native_plans.extension(),
             rng,
         )?;
         let mut rxs = builder.native_online_mut().extension_rxs(rxs)?;
@@ -382,6 +383,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &self.nested_registry,
             online.as_ref(),
             builder.native_online().commitments(),
+            self.nested_plans.extension(),
             rng,
         )?;
         let mut rxs = builder.nested_online_mut().extension_rxs(rxs)?;
