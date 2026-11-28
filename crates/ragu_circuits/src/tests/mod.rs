@@ -4,6 +4,7 @@ mod error_swallowing;
 mod identity;
 mod known_routine_soundness;
 mod segment_order;
+mod vec_gadget;
 
 use ragu_core::{
     Error, Result,

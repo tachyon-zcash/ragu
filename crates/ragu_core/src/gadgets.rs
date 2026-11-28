@@ -35,17 +35,54 @@
 //! #### Fungibility
 //!
 //! [`Gadget`] is a trait for gadgets with a stricter property called
-//! **fungibility**: for any two instances `a` and `b` of the same concrete
-//! gadget type, substituting `a`'s corresponding wire assignments for `b`'s
-//! must yield an instance indistinguishable in all subsequent constraint
-//! emission from `a`, carrying the same wire contracts.
+//! **fungibility**: a gadget is its kind and its wires, and nothing else
+//! that affects emitted constraints. It has two parts.
 //!
-//! One of the direct consequences of fungibility is that a [`Gadget`] impl must
-//! always contain the same number of wires in every instance, and cannot carry
-//! any additional state that would influence emitted constraints. It also means
-//! that gadgets usually cannot be `enum`s. Fortunately, most gadgets only
-//! contain wires, witness data and other gadgets. These simple gadgets always
-//! qualify as fungible by definition.
+//! * **Substitution.** For any two instances `a` and `b` of the same concrete
+//!   gadget type that hold the same number of wires, substituting `a`'s
+//!   corresponding wire assignments for `b`'s must yield an instance
+//!   indistinguishable in all subsequent constraint emission from `a`,
+//!   carrying the same wire contracts.
+//! * **Allocation determinism.** Given a gadget's kind and its wires in
+//!   traversal order, the instance is rebuilt with the number of wires as the
+//!   only other input. Two instances of a kind that hold the same number of
+//!   wires have the same shape.
+//!
+//! This is what a driver needs in order to move a routine. A driver that
+//! memoizes a routine skips its body on a later invocation and hands back the
+//! output gadget with the cached wires in place, which is sound only if the
+//! wires are all there is to the gadget. See [output gadget reconstruction]
+//! in the book.
+//!
+//! Fungibility does not require every instance of a type to hold the same
+//! number of wires. That type-level form is sufficient, and almost every
+//! gadget has it: a gadget that contains only wires, witness data and other
+//! such gadgets always qualifies as fungible by definition. It is stronger
+//! than a driver needs. The number of wires may vary between instances, as it
+//! does for a [`Vec`](alloc::vec::Vec) of gadgets, so long as that number
+//! alone tells one instance's shape from another's.
+//!
+//! A gadget cannot carry any additional state that would influence emitted
+//! constraints. It also means that gadgets usually cannot be `enum`s: a
+//! discriminant is state that the wires do not give.
+//!
+//! [output gadget reconstruction]: https://tachyon.z.cash/ragu/implementation/routines.html#output-reconstruction
+//!
+//! #### Run-time-sized gadgets
+//!
+//! [`Vec<G>`](alloc::vec::Vec) is a gadget for a collection whose length is
+//! known only at run time. Its elements must have a fixed, nonzero number of
+//! wires: the number of wires then gives the length, and a `Vec` of `n`
+//! gadgets is to every driver what `[G; n]` is. The length must be fixed by
+//! the code that builds the gadget and must never depend on witness data, as
+//! nothing that affects emitted constraints may. Prefer `[G; N]` wherever the
+//! length is known when the code is written.
+//!
+//! Allocation determinism is where this ends. A kind with two run-time
+//! lengths, such as a `Vec` of `Vec`s or two `Vec` fields, has instances of
+//! different shapes over the same number of wires, and a `Vec` of gadgets
+//! without wires has every length over none. Such a gadget is not fungible,
+//! though the types do not refuse it: fungibility is an API contract.
 //!
 //! #### Transformations between Drivers
 //!
@@ -56,8 +93,9 @@
 //!
 //! That mapping defines the wire correspondence used by fungibility. It must
 //! visit wire fields in the same order for every instance of the same concrete
-//! gadget type, so drivers and internal Ragu code can count, substitute,
-//! extract, and pair wires for equality by following the same traversal.
+//! gadget type that holds the same number of wires, so drivers and internal
+//! Ragu code can count, substitute, extract, and pair wires for equality by
+//! following the same traversal.
 //!
 //! #### Multithreading
 //!
@@ -134,18 +172,30 @@ impl<'a, 'dr, D: Driver<'dr>> WireEqualizer<'a, 'dr, D> {
 ///
 /// ## Fungibility
 ///
-/// For any two instances `a` and `b` of the same concrete gadget type,
-/// substituting `a`'s corresponding wire assignments for `b`'s must yield an
-/// instance indistinguishable in all subsequent constraint emission from `a`,
-/// carrying the same wire contracts. This precludes dynamic-length
-/// collections, enum discriminants, and any other instance state that affects
-/// emitted constraints. Wires are fungible by definition, and witness data
-/// cannot affect emitted constraints, so gadgets containing only these
-/// automatically satisfy this requirement.
+/// A gadget is its kind and its wires, and nothing else that affects emitted
+/// constraints:
+///
+/// * For any two instances `a` and `b` of the same concrete gadget type that
+///   hold the same number of wires, substituting `a`'s corresponding wire
+///   assignments for `b`'s must yield an instance indistinguishable in all
+///   subsequent constraint emission from `a`, carrying the same wire
+///   contracts.
+/// * Given the gadget's kind and its wires in traversal order, the instance
+///   is rebuilt with the number of wires as the only other input.
+///
+/// This precludes enum discriminants and any other instance state that
+/// affects emitted constraints. Wires are fungible by definition, and witness
+/// data cannot affect emitted constraints, so gadgets containing only these
+/// automatically satisfy this requirement. Every instance of such a gadget
+/// holds the same number of wires, which is more than fungibility asks: the
+/// number may vary, as the length of a [`Vec<G>`](alloc::vec::Vec) does, so
+/// long as it alone gives the gadget's shape (see
+/// [run-time-sized gadgets](self#run-time-sized-gadgets)).
 ///
 /// The wire correspondence used here is defined by
 /// [`GadgetKind::map_gadget`]. Its traversal must be the same for every
-/// instance of the same concrete gadget type.
+/// instance of the same concrete gadget type that holds the same number of
+/// wires.
 ///
 /// ## Implementations
 ///
@@ -186,9 +236,11 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
 
     /// Returns how many wires are in this gadget.
     ///
-    /// Gadgets do not vary in the number of wires they contain, so this
-    /// returns the same quantity regardless of the specific instance of this
-    /// [`Gadget`] implementation.
+    /// For a gadget whose type fixes its wires, which is almost every gadget,
+    /// this returns the same quantity regardless of the specific instance of
+    /// this [`Gadget`] implementation. For one that holds a
+    /// [`Vec`](alloc::vec::Vec) of gadgets it follows the length, and it is
+    /// what tells one instance's shape from another's.
     fn num_wires(&self) -> Result<usize> {
         struct WireCounter<Src: DriverTypes> {
             count: usize,
@@ -257,8 +309,9 @@ pub unsafe trait GadgetKind<F: Field>: 'static {
     ///
     /// The mapping behavior defines the gadget's canonical wire traversal. It
     /// must visit wire fields in the same order for every instance of the same
-    /// concrete gadget type, defining which wires correspond between
-    /// instances. [Fungibility](Gadget#fungibility) is stated in terms of this
+    /// concrete gadget type that holds the same number of wires, defining
+    /// which wires correspond between instances.
+    /// [Fungibility](Gadget#fungibility) is stated in terms of this
     /// correspondence, and drivers and internal Ragu code use it to count,
     /// substitute, extract, and pair wires for equality.
     fn map_gadget<'src, 'dst, WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>>(

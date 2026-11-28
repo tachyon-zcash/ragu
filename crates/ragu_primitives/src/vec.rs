@@ -1,11 +1,14 @@
 //! Provides [`FixedVec`], a wrapper around [`Vec<T>`] with a compile-time
-//! length guarantee that allows it to implement [`Gadget`].
+//! length guarantee.
 //!
-//! `Vec<T>` cannot implement `Gadget` because its dynamic length violates
-//! fungibility — different instances could have different wire counts. Ragu
-//! provides `Gadget` implementations for `[T; N]` and `Box<[T; N]>`, but const
-//! generics are still [somewhat limited](https://github.com/rust-lang/rust/issues/60551)
-//! in Rust.
+//! A `Vec<T>` of gadgets is a [`Gadget`] whose number of wires follows its
+//! length, for a collection whose length is known only at run time. Where the
+//! length is known when the code is written, the type should state it: every
+//! instance then holds the same wires, and a wrong length is an error where
+//! the vector is built. Ragu provides `Gadget` implementations for `[T; N]`
+//! and `Box<[T; N]>`, but const generics are still
+//! [somewhat limited](https://github.com/rust-lang/rust/issues/60551) in
+//! Rust.
 //!
 //! [`FixedVec`] solves this by parameterizing on a [`Len`] type `L` that
 //! statically determines the vector's length. All instances of `FixedVec<T, L>`

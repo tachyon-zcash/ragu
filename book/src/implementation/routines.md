@@ -603,11 +603,16 @@ this property **allocation determinism**:
 > using the stream's length as the only dynamic input, with no out-of-band
 > metadata.
 
-Allocation determinism is strictly weaker than the wire-layout determinism
-that classical [fungibility](../guide/gadgets/index.md#fungibility) implies:
-a gadget kind may own a runtime-sized collection (the stream length resolves
-the count, and any divergence is already caught by the fingerprint), so
-`Vec`-shaped gadgets are admissible. What it rules out are shapes that need
+Allocation determinism is the part of
+[fungibility](../guide/gadgets/index.md#fungibility) that injection rests on.
+It is strictly weaker than wire-layout determinism, in which the type alone
+fixes the wires of every instance: a gadget kind may own a runtime-sized
+collection (the stream length resolves the count, and any divergence is
+already caught by the fingerprint), so `Vec`-shaped gadgets are admissible,
+and `Vec<G>` is a gadget. The stream length resolves the count for one
+collection of elements with a fixed, nonzero number of wires. A kind with two
+runtime lengths, such as a `Vec` of `Vec`s, has several shapes over one stream
+length and is not admissible. What it also rules out are shapes that need
 a side-channel discriminant — most notably enum-shaped gadgets, where
 variant choice cannot in general be recovered from the wire stream (two
 variants may share wire counts, or the variant set may evolve such that
