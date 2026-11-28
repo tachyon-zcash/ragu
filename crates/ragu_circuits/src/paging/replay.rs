@@ -14,12 +14,11 @@
 //! could the routine of the circuit.
 
 use alloc::{sync::Arc, vec::Vec};
-use core::marker::PhantomData;
 
 use ragu_core::{
     Coeff, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Bound, Gadget, Kind},
+    gadgets::{Bound, Gadget, Kind, WireStream},
     maybe::Maybe,
     routines::{Prediction, Routine},
 };
@@ -284,25 +283,6 @@ impl<W: Clone> Scope<'_, W> {
     }
 }
 
-/// One wire, as a gadget: an element of the input and of the output of a
-/// [`Replayed`] routine.
-#[derive(Gadget)]
-struct OneWire<'dr, D: Driver<'dr>> {
-    #[ragu(wire)]
-    wire: D::Wire,
-    #[ragu(phantom)]
-    _marker: PhantomData<&'dr ()>,
-}
-
-impl<'dr, D: Driver<'dr>> OneWire<'dr, D> {
-    fn of(wire: D::Wire) -> Self {
-        OneWire {
-            wire,
-            _marker: PhantomData,
-        }
-    }
-}
-
 /// The input gadget of a [`Replayed`] routine: the wires of the input of
 /// the routine it replays, in the order that routine's input gadget gives
 /// them, and with a witness the values of the gates the routine allocates.
@@ -312,11 +292,13 @@ impl<'dr, D: Driver<'dr>> OneWire<'dr, D> {
 /// code. A routine's fingerprint is of the wires it takes and gives and of
 /// what it emits, and not of their types, so the wires in the same order
 /// are the same input to every driver. Their number is the routine's, and
-/// is known only once the circuit is cut.
+/// is known only once the circuit is cut, so they are a [`WireStream`]. It
+/// is the one stream this gadget holds, and its length is the recording's:
+/// no witness changes it.
 #[derive(Gadget)]
 struct InputWires<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
-    wires: Vec<OneWire<'dr, D>>,
+    wires: WireStream<'dr, D>,
     #[ragu(value)]
     values: DriverValue<D, Arc<[[D::F; 4]]>>,
 }
@@ -338,7 +320,7 @@ impl<F: Field> Clone for Replayed<F> {
 
 impl<F: Field> Routine<F> for Replayed<F> {
     type Input = Kind![F; InputWires<'_, _>];
-    type Output = PhantomData<Vec<Kind![F; OneWire<'_, _>]>>;
+    type Output = Kind![F; WireStream<'_, _>];
     type Aux<'dr> = Arc<[[F; 4]]>;
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
@@ -355,7 +337,7 @@ impl<F: Field> Routine<F> for Replayed<F> {
             one: D::ONE,
             reserved: &[],
             gates: Vec::new(),
-            virtuals: input.wires.into_iter().map(|each| each.wire).collect(),
+            virtuals: input.wires.into_iter().collect(),
         };
         let values = aux.as_ref().map(|values| &values[..]);
         run(&body.steps, dr, &mut scope, &values, &mut 0)?;
@@ -363,8 +345,7 @@ impl<F: Field> Routine<F> for Replayed<F> {
             .iter()
             .map(|&name| {
                 let wire = scope.wire(name).cloned();
-                wire.map(OneWire::of)
-                    .ok_or_else(|| diverged("a routine gives a wire it does not hold"))
+                wire.ok_or_else(|| diverged("a routine gives a wire it does not hold"))
             })
             .collect()
     }
@@ -423,8 +404,8 @@ fn run<'dr, D: Driver<'dr>>(
             Step::Routine(body, inputs) => {
                 let wires = inputs
                     .iter()
-                    .map(|&name| scope.wire(name).cloned().map(OneWire::of))
-                    .collect::<Option<Vec<_>>>()
+                    .map(|&name| scope.wire(name).cloned())
+                    .collect::<Option<WireStream<'dr, D>>>()
                     .ok_or_else(|| diverged("a page names a wire it does not hold"))?;
                 // The routine's gates are the next ones: it is given their
                 // values, and allocates them as a segment of its own.
@@ -437,9 +418,7 @@ fn run<'dr, D: Driver<'dr>>(
                         })
                     })?;
                 let output = dr.routine(Replayed(body.clone()), InputWires { wires, values })?;
-                scope
-                    .virtuals
-                    .extend(output.into_iter().map(|each| each.wire));
+                scope.virtuals.extend(output);
             }
         }
     }

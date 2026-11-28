@@ -1,11 +1,11 @@
-//! Tests that a [`Vec`] of gadgets is to every driver what an array of the
-//! same length is: a routine over `Vec<Element>` of length `N` and the same
+//! Tests that a [`WireStream`] is to every driver what an array of as many
+//! single wires is: a routine over a stream of `N` wires and the same
 //! routine over `[Element; N]` give the same segments and fingerprints, the
 //! same wiring polynomial and the same trace.
 //!
-//! This is what lets a gadget have a run-time length: nothing a driver does
-//! with a gadget tells the two apart, and the fingerprint tells two lengths
-//! apart.
+//! This is what lets a gadget have a run-time number of wires: nothing a
+//! driver does with a gadget tells the two apart, and the fingerprint tells
+//! two lengths apart.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -14,7 +14,7 @@ use proptest::prelude::*;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Kind},
+    gadgets::{Bound, Gadget, Kind, WireStream},
     maybe::Maybe,
     pasta::Fp,
     routines::{Prediction, Routine},
@@ -75,13 +75,53 @@ impl<const N: usize> Routine<Fp> for OverArray<N> {
     }
 }
 
-/// The routine over a `Vec` of elements, of whatever length it is given.
-#[derive(Clone)]
-struct OverVec;
+/// Elements whose number is known only at run time: their wires as the
+/// one stream of the gadget, and their values beside it, since a stream's
+/// wires carry none.
+#[derive(Gadget)]
+struct Elements<'dr, D: Driver<'dr>> {
+    #[ragu(gadget)]
+    wires: WireStream<'dr, D>,
+    #[ragu(value)]
+    values: DriverValue<D, Vec<D::F>>,
+}
 
-impl Routine<Fp> for OverVec {
-    type Input = PhantomData<Vec<Kind![Fp; Element<'_, _>]>>;
-    type Output = PhantomData<Vec<Kind![Fp; Element<'_, _>]>>;
+impl<'dr, D: Driver<'dr>> Elements<'dr, D> {
+    fn of(elements: &[Element<'dr, D>]) -> Self {
+        Elements {
+            wires: elements
+                .iter()
+                .map(|element| element.wire().clone())
+                .collect(),
+            values: D::just(|| {
+                elements
+                    .iter()
+                    .map(|element| *element.value().take())
+                    .collect()
+            }),
+        }
+    }
+
+    fn elements(&self) -> Vec<Element<'dr, D>> {
+        self.wires
+            .as_slice()
+            .iter()
+            .enumerate()
+            .map(|(index, wire)| {
+                let value = self.values.as_ref().map(|values| values[index]);
+                Element::promote(wire.clone(), value)
+            })
+            .collect()
+    }
+}
+
+/// The routine over a stream of wires, of whatever length it is given.
+#[derive(Clone)]
+struct OverStream;
+
+impl Routine<Fp> for OverStream {
+    type Input = Kind![Fp; Elements<'_, _>];
+    type Output = Kind![Fp; Elements<'_, _>];
     type Aux<'dr> = ();
 
     fn execute<'dr, D: Driver<'dr, F = Fp>>(
@@ -90,7 +130,7 @@ impl Routine<Fp> for OverVec {
         input: Bound<'dr, D, Self::Input>,
         _: DriverValue<D, ()>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        body(dr, &input)
+        Ok(Elements::of(&body(dr, &input.elements())?))
     }
 
     fn predict<'dr, D: Driver<'dr, F = Fp>>(
@@ -106,7 +146,7 @@ impl Routine<Fp> for OverVec {
 /// them twice, the second time on what the first gave, and ties the last
 /// output to the first input.
 struct Calls<const N: usize> {
-    vec: bool,
+    stream: bool,
 }
 
 impl<const N: usize> Circuit<Fp> for Calls<N> {
@@ -138,9 +178,9 @@ impl<const N: usize> Circuit<Fp> for Calls<N> {
         let input = (0..N)
             .map(|index| Element::alloc(dr, allocator, witness.as_ref().map(|w| w[index])))
             .collect::<Result<Vec<_>>>()?;
-        let output = if self.vec {
-            let first = dr.routine(OverVec, input.clone())?;
-            dr.routine(OverVec, first)?
+        let output = if self.stream {
+            let first = dr.routine(OverStream, Elements::of(&input))?;
+            dr.routine(OverStream, first)?.elements()
         } else {
             let array = |elements: Vec<Element<'dr, D>>| -> [Element<'dr, D>; N] {
                 elements
@@ -199,42 +239,43 @@ fn trace<const N: usize>(circuit: &Calls<N>, witness: [Fp; N]) -> Result<Vec<[Ve
         .collect())
 }
 
-/// Holds a `Vec` of `N` elements to an array of `N`, on every driver.
-fn a_vec_is_an_array<const N: usize>(witness: [Fp; N]) -> Result<()> {
-    let (array, vec) = (Calls::<N> { vec: false }, Calls::<N> { vec: true });
-    let found = segments(&vec)?;
+/// Holds a stream of `N` wires to an array of `N` elements, on every
+/// driver.
+fn a_stream_is_an_array<const N: usize>(witness: [Fp; N]) -> Result<()> {
+    let (array, stream) = (Calls::<N> { stream: false }, Calls::<N> { stream: true });
+    let found = segments(&stream)?;
     assert_eq!(found, segments(&array)?);
     // The root and the two calls, which are one routine: at one length, the
     // second call has the fingerprint of the first.
     assert_eq!(found.len(), 3);
     assert_eq!(found[1], found[2]);
-    assert_eq!(wiring(Calls::<N> { vec: true })?, wiring(array)?);
+    assert_eq!(wiring(Calls::<N> { stream: true })?, wiring(array)?);
     assert_eq!(
-        trace(&vec, witness)?,
-        trace(&Calls::<N> { vec: false }, witness)?
+        trace(&stream, witness)?,
+        trace(&Calls::<N> { stream: false }, witness)?
     );
     Ok(())
 }
 
-/// The fingerprint of the routine over a `Vec` of `N` elements.
+/// The fingerprint of the routine over a stream of `N` wires.
 fn fingerprint<const N: usize>() -> Result<DeepFingerprint> {
-    Ok(segments(&Calls::<N> { vec: true })?[1]
+    Ok(segments(&Calls::<N> { stream: true })?[1]
         .2
         .expect("a routine's segment"))
 }
 
 #[test]
-fn a_vec_without_gadgets_is_an_empty_array() -> Result<()> {
-    a_vec_is_an_array::<0>([])
+fn a_stream_without_wires_is_an_empty_array() -> Result<()> {
+    a_stream_is_an_array::<0>([])
 }
 
 /// One Rust type, one fingerprint for each length the routine reads: a
 /// memo that keys on the fingerprint never takes what the routine emits
-/// over a `Vec` of one length for what it emits over another.
+/// over a stream of one length for what it emits over another.
 ///
 /// The fingerprint is of what a routine emits and of the wires it gives,
-/// not of the wires it takes. The routine here reads every element. One
-/// that reads only some of them emits the same over inputs of two lengths
+/// not of the wires it takes. The routine here reads every wire. One that
+/// reads only some of them emits the same over inputs of two lengths
 /// and has one fingerprint for both, which a memo may share.
 #[test]
 fn the_fingerprint_tells_lengths_apart() -> Result<()> {
@@ -260,22 +301,22 @@ fn fp() -> impl Strategy<Value = Fp> {
 
 proptest! {
     #[test]
-    fn proptest_a_vec_of_one_is_an_array(witness in proptest::array::uniform1(fp())) {
-        a_vec_is_an_array(witness).unwrap();
+    fn proptest_a_stream_of_one_is_an_array(witness in proptest::array::uniform1(fp())) {
+        a_stream_is_an_array(witness).unwrap();
     }
 
     #[test]
-    fn proptest_a_vec_of_two_is_an_array(witness in proptest::array::uniform2(fp())) {
-        a_vec_is_an_array(witness).unwrap();
+    fn proptest_a_stream_of_two_is_an_array(witness in proptest::array::uniform2(fp())) {
+        a_stream_is_an_array(witness).unwrap();
     }
 
     #[test]
-    fn proptest_a_vec_of_five_is_an_array(witness in proptest::array::uniform5(fp())) {
-        a_vec_is_an_array(witness).unwrap();
+    fn proptest_a_stream_of_five_is_an_array(witness in proptest::array::uniform5(fp())) {
+        a_stream_is_an_array(witness).unwrap();
     }
 
     #[test]
-    fn proptest_a_vec_of_twelve_is_an_array(witness in proptest::array::uniform12(fp())) {
-        a_vec_is_an_array(witness).unwrap();
+    fn proptest_a_stream_of_twelve_is_an_array(witness in proptest::array::uniform12(fp())) {
+        a_stream_is_an_array(witness).unwrap();
     }
 }
