@@ -348,23 +348,24 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
         ));
     }
     check_routines(paged)?;
-    let (all_gates, original) = Recording::<F>::all_of(&*paged.circuit)?;
-    let Some(output_gates) = all_gates.checked_sub(body_gates) else {
+    let original = Recording::<F>::whole_of(&*paged.circuit)?;
+    let Some(output_gates) = original.num_gates.checked_sub(body_gates) else {
         return refuse("the circuit's output gates precede its body".into());
     };
-    if original.len() <= body_constraints {
+    if original.constraints.len() <= body_constraints {
         return refuse("the circuit lacks its public output's final constraint".into());
     }
-    let (original_body, original_output) = original.split_at(body_constraints);
+    let (original_body, original_output) = original.constraints.split_at(body_constraints);
 
     let mut found_body = Vec::new();
     let mut found_output = Vec::new();
     for page in 0..plan.pages() {
-        let (gates, constraints) = if page + 1 == plan.pages() {
-            Recording::<F>::all_of(&paged.last())?
+        let recording = if page + 1 == plan.pages() {
+            Recording::<F>::whole_of(&paged.last())?
         } else {
-            Recording::<F>::all_of(&paged.page(page))?
+            Recording::<F>::whole_of(&paged.page(page))?
         };
+        let (gates, constraints) = (recording.num_gates, &recording.constraints);
         let page_body = layout.carry.end + plan.programs[page].gates();
         let expected_gates = page_body
             + if page + 1 == plan.pages() {
@@ -384,14 +385,14 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
             return refuse(format!("page {page} has an inconsistent constraint layout"));
         }
         let (body, output) = constraints.split_at(body_len);
-        for terms in body {
+        for (_, terms) in body {
             found_body.push(Form::from_page(terms, |wire| {
                 page_symbol(plan, layout, page, wire, body_gates, page_body)
             })?);
         }
         let output: Vec<_> = output
             .iter()
-            .map(|terms| {
+            .map(|(_, terms)| {
                 Form::from_page(terms, |wire| {
                     page_symbol(plan, layout, page, wire, body_gates, page_body)
                 })
@@ -441,7 +442,7 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
     // bindings and ONE must retain their original order.
     let expected: Vec<_> = original_body
         .iter()
-        .map(|terms| Form::from_original(terms))
+        .map(|(_, terms)| Form::from_original(terms))
         .collect();
     let actual: Vec<_> = remaining
         .iter()
@@ -456,7 +457,7 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
     }
     let expected_output: Vec<_> = original_output
         .iter()
-        .map(|terms| Form::from_original(terms).key())
+        .map(|(_, terms)| Form::from_original(terms).key())
         .collect();
     let actual_output: Vec<_> = found_output
         .iter()
@@ -471,5 +472,5 @@ pub(super) fn check<F: Field, R: Rank, S: Pageable<F, R>>(paged: &Pages<F, R, S>
     Ok(original_output
         .len()
         .checked_sub(2)
-        .is_some_and(|last| Form::from_original(&original_output[last]).0.is_empty()))
+        .is_some_and(|last| Form::from_original(&original_output[last].1).0.is_empty()))
 }

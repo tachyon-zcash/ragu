@@ -167,7 +167,7 @@ impl Costs {
             }
         }
         let mut split = vec![0i64; own + 2];
-        for routine in &recording.routines {
+        for routine in recording.routines() {
             let gates = routine.clone().filter_map(place);
             if let (Some(first), Some(last)) = (gates.clone().min(), gates.max()) {
                 split[first + 1] += 1;
@@ -982,7 +982,8 @@ impl Placement {
             "every gate feeds one that feeds nothing"
         );
         let mut placement = Placement { own_start, rank };
-        placement.gather(&recording.routines);
+        let routines: Vec<_> = recording.routines().cloned().collect();
+        placement.gather(&routines);
         placement
     }
 
@@ -1220,7 +1221,7 @@ fn arrange<F: Field>(
     // and then calls its routines, each of which allocates its own.
     let own = num_gates - layout.own_start;
     let mut routine = vec![false; own];
-    for gates in &recording.routines {
+    for gates in recording.routines() {
         for gate in gates
             .clone()
             .filter_map(|gate| gate.checked_sub(layout.own_start))

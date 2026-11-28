@@ -1246,7 +1246,8 @@ fn a_routine_is_not_cut() -> Result<()> {
     // A cut carries as much within a call as between two, and a page has
     // room left past the last call it holds whole: every call's gates are
     // on one page all the same.
-    let routines = Recording::of(&flat(Called::<30>))?.routines;
+    let recording = Recording::of(&flat(Called::<30>))?;
+    let routines: Vec<_> = recording.routines().cloned().collect();
     assert_eq!(routines.len(), 30);
     let paged = Pages::cut_within(flat(Called::<30>), 3, 354)?;
     check::check(&paged)?;
@@ -1268,7 +1269,8 @@ fn a_routine_is_not_cut() -> Result<()> {
 fn a_plan_that_splits_a_routine_is_caught() -> Result<()> {
     let paged = Pages::cut_within(flat(Called::<30>), 3, 354)?;
     check::check(&paged)?;
-    let routine = Recording::of(&flat(Called::<30>))?.routines[0].clone();
+    let recording = Recording::of(&flat(Called::<30>))?;
+    let routine = recording.routines().next().cloned().expect("a routine");
     // The routine's last gate and the gate the page allocates before the
     // routine's first, which is not the routine's, at each other's place.
     let draft = drafted(&paged).0;
@@ -1358,7 +1360,7 @@ impl<const CALLS: usize> Circuit<Fp> for Wrapped<CALLS> {
 fn a_recording_keeps_the_calls() -> Result<()> {
     let recording = Recording::of(&flat(Wrapped::<5>))?;
     assert_eq!(recording.calls.len(), 5);
-    assert_eq!(recording.routines.len(), 5);
+    assert_eq!(recording.routines().count(), 5);
     // Every name the walk gives is a combination of one wire.
     let renamed = |names: &Range<usize>| {
         names
@@ -1366,7 +1368,7 @@ fn a_recording_keeps_the_calls() -> Result<()> {
             .all(|name| matches!(recording.derived[name][..], [(_, coeff)] if coeff == Fp::ONE))
     };
     let mut names = 0;
-    for (call, routine) in recording.calls.iter().zip(&recording.routines) {
+    for (call, routine) in recording.calls.iter().zip(recording.routines()) {
         assert_eq!(&call.gates, routine);
         // Its own square and product, and the six squarings within.
         assert_eq!(call.gates.len(), 8);
@@ -1814,7 +1816,7 @@ fn routine_segments<C: Circuit<Fp>>(
         .collect())
 }
 
-/// Holds `paged` to its circuit, its pages' routine segments to the
+/// Holds `paged` to its circuit, which holds its pages' routines to the
 /// circuit's, and each page's claim, with what one walk of the circuit
 /// `captured` for its pages and `stages`, the polynomials of the
 /// circuit's stages. `last` tells whether the last page's claim holds on
@@ -1827,14 +1829,6 @@ fn pages_hold<S: Pageable<Fp, R>>(
 ) -> Result<()> {
     check::check(paged)?;
     let pages = paged.num_pages();
-    let mut called = routine_segments(&*paged.circuit)?;
-    let mut found = routine_segments(&paged.last())?;
-    for page in 0..pages - 1 {
-        found.extend(routine_segments(&paged.page(page))?);
-    }
-    called.sort_unstable();
-    found.sort_unstable();
-    assert_eq!(called, found);
 
     let mut loaded = paged.carry_rx(Blind::<Fp>::random(&mut rand::rng()), &captured.carry)?;
     if let Some(stages) = stages {
@@ -2071,12 +2065,12 @@ fn a_page_that_calls_another_routine_is_caught() -> Result<()> {
                 _ => None,
             })
             .expect("the first page calls a routine");
-        let mut other = (**call).clone();
-        let enforced: Vec<usize> = (0..other.steps.len())
-            .filter(|&step| matches!(other.steps[step], Step::Enforce(_)))
-            .collect();
-        other.steps.swap(enforced[0], enforced[1]);
-        *call = Arc::new(other);
+        *call = Arc::new(call.changed(|steps| {
+            let enforced: Vec<usize> = (0..steps.len())
+                .filter(|&step| matches!(steps[step], Step::Enforce(_)))
+                .collect();
+            steps.swap(enforced[0], enforced[1]);
+        }));
     });
     assert!(refused(&wrong, "which are not the"));
     Ok(())

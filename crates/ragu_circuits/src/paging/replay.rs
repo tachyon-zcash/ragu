@@ -65,7 +65,7 @@ pub(super) struct Body<F: Field> {
     /// The wires of its input.
     inputs: usize,
     /// What it does, in order.
-    pub(super) steps: Vec<Step<F>>,
+    steps: Vec<Step<F>>,
     /// The wires of its output, each named as a step names a wire.
     outputs: Vec<u32>,
     /// The gates it allocates, those of the routines it calls included.
@@ -86,6 +86,17 @@ impl<F: Field> Body<F> {
             gates,
             constraints,
         }
+    }
+}
+
+#[cfg(test)]
+impl<F: Field> Body<F> {
+    /// The routine with its steps as `change` leaves them, for a test: it
+    /// is counted anew, as the pager's are.
+    pub(super) fn changed(&self, change: impl FnOnce(&mut Vec<Step<F>>)) -> Self {
+        let mut steps = self.steps.clone();
+        change(&mut steps);
+        Body::new(self.inputs, steps, self.outputs.clone())
     }
 }
 

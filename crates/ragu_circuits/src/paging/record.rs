@@ -118,10 +118,6 @@ pub(super) struct Recording<F> {
     pub(super) raw: Vec<(usize, Vec<(u32, F)>)>,
     /// Each wire of the public output as emitted, in traversal order.
     pub(super) raw_outputs: Vec<u32>,
-    /// The gates each routine the circuit calls allocates, in the order
-    /// of the calls: those of a routine called within another are among
-    /// the outer one's.
-    pub(super) routines: Vec<Range<usize>>,
     /// The routines the circuit calls, in the order of the calls, each
     /// with the calls made within it.
     pub(super) calls: Vec<Call>,
@@ -134,28 +130,26 @@ pub(super) struct Recording<F> {
 }
 
 impl<F: Field> Recording<F> {
-    /// Every constraint emitted by `circuit`, including those made while
-    /// writing its public output and the final `ONE` constraint, expanded to
-    /// gate wires. Unlike the pager's recording, this walk follows the
-    /// complete relation that a registered circuit enforces.
-    pub(super) fn all_of<C: Circuit<F>>(circuit: &C) -> Result<(usize, Vec<Vec<(u32, F)>>)> {
-        let recording = Self::whole_of(circuit)?;
-        Ok((
-            recording.num_gates,
-            recording
-                .constraints
-                .into_iter()
-                .map(|(_, terms)| terms)
-                .collect(),
-        ))
-    }
-
-    /// The walk [`all_of`](Self::all_of) reads, whole: with the routines
-    /// the circuit calls.
+    /// Walks `circuit` whole: every constraint it emits, those made while
+    /// writing its public output and the final `ONE` constraint included,
+    /// followed back to the gates' wires. Unlike the pager's recording,
+    /// this walk follows the complete relation that a registered circuit
+    /// enforces.
     pub(super) fn whole_of<C: Circuit<F>>(circuit: &C) -> Result<Self> {
         let mut dr = Prober::new();
         raw::orchestrate(&mut dr, &CircuitAdapterRef(circuit), Empty)?;
         Ok(dr.recording.expanded())
+    }
+
+    /// The gates each routine the circuit calls allocates, in the order
+    /// of the calls. Those of a routine called within another are among
+    /// the outer one's, and a routine that allocates none is not given:
+    /// it has no gate to place.
+    pub(super) fn routines(&self) -> impl Iterator<Item = &Range<usize>> {
+        self.calls
+            .iter()
+            .map(|call| &call.gates)
+            .filter(|gates| !gates.is_empty())
     }
 
     /// The first routine the circuit calls that `place` does not keep
@@ -169,8 +163,7 @@ impl<F: Field> Recording<F> {
         &self,
         place: impl Fn(usize) -> Option<(usize, usize)>,
     ) -> Option<Range<usize>> {
-        self.routines
-            .iter()
+        self.routines()
             .find(|routine| {
                 let mut places = (routine.start..routine.end).map(&place);
                 let Some(Some((page, first))) = places.next() else {
@@ -278,7 +271,6 @@ impl<F: Field> Prober<F> {
                 adds: 0,
                 raw: Vec::new(),
                 raw_outputs: Vec::new(),
-                routines: Vec::new(),
                 calls: Vec::new(),
                 constraints: Vec::new(),
                 outputs: Vec::new(),
@@ -383,12 +375,7 @@ impl<'dr, F: Field> Driver<'dr> for Prober<F> {
         };
         match self.open.last_mut() {
             Some(within) => within.push(call),
-            None => {
-                if !call.gates.is_empty() {
-                    recording.routines.push(call.gates.clone());
-                }
-                recording.calls.push(call);
-            }
+            None => recording.calls.push(call),
         }
         Ok(output)
     }
