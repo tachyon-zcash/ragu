@@ -29,8 +29,9 @@ use crate::{
 /// # Fungibility
 ///
 /// A `WireStream` is [fungible]: its number of wires is its length, so that
-/// number alone gives its shape. Two rules are not held by the types, and
-/// the code that uses a `WireStream` must hold them:
+/// number alone gives its shape (see [run-time-sized gadgets]). Two rules
+/// are not held by the types, and the code that uses a `WireStream` must
+/// hold them:
 ///
 /// * The length is fixed by the code that builds the stream and never
 ///   depends on witness data, as nothing that affects emitted constraints
@@ -41,6 +42,7 @@ use crate::{
 ///   two shapes over three wires. Such a gadget is not fungible.
 ///
 /// [fungible]: crate::gadgets#fungibility
+/// [run-time-sized gadgets]: crate::gadgets#run-time-sized-gadgets
 pub struct WireStream<'dr, D: Driver<'dr>> {
     wires: Vec<D::Wire>,
     _marker: PhantomData<&'dr ()>,

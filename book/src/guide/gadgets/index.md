@@ -80,14 +80,18 @@ state that would influence synthesis behavior, so `Gadget`s usually cannot be
 wires is not such state so long as it alone tells one instance's shape from
 another's.
 
-For a collection, use `[G; N]` or [`FixedVec`][fixedvec-gadget] wherever the
-length is known when the code is written. `Vec<G>` is a gadget for a collection
-whose length is known only at run time. Its elements must have a fixed, nonzero
-number of wires, so that the number of wires gives the length, and a `Vec` of
-`n` gadgets is to every driver what `[G; n]` is. The length must be fixed by the
-code that builds the gadget and never depend on witness data. A type with two
-run-time lengths, such as a `Vec` of `Vec`s, is not fungible: the number of
-wires does not give its shape.
+For a collection, use `[G; N]` or [`FixedVec`][fixedvec-gadget]: the length is
+then known when the code is written. A `Vec<G>` is not a gadget, because for an
+arbitrary `G` the number of wires does not give its shape (a `Vec` of `Vec`s
+has several over one number of wires).
+
+The one gadget with a number of wires known only at run time is
+[`WireStream`][wirestream-gadget], a run of bare wires. A stream of `n` wires
+is to every driver what an array of `n` single wires is. Its length must be
+fixed by the code that builds it and never depend on witness data. A gadget
+must hold at most one `WireStream`: with two, the number of wires does not give
+the two lengths, and the gadget is not fungible, though the types do not refuse
+it.
 
 Fungibility permits drivers to [manipulate gadgets](conversion.md) for
 optimization and analysis without disturbing the gadget's API contract.
@@ -115,8 +119,9 @@ The [`Gadget`][gadget-trait] trait provides a [`num_wires`][num-wires-method]
 method that returns the number of wires contained in a gadget instance. For a
 gadget whose type fixes its wires, which is almost every gadget, this count is
 determined entirely by the type—it is the same for every instance. For one that
-holds a `Vec` of gadgets it follows the length, and because gadgets are
-[fungible](#fungibility) it is what tells one instance's shape from another's.
+holds a [`WireStream`][wirestream-gadget] it follows the stream's length, and
+because gadgets are [fungible](#fungibility) it is what tells one instance's
+shape from another's.
 
 ### Automatic Derivation {#automatic-derivation}
 
@@ -151,6 +156,7 @@ is only needed for clarity.
 [boolean-gadget]: ragu_primitives::Boolean
 [spongestate-gadget]: ragu_primitives::poseidon::SpongeState
 [fixedvec-gadget]: ragu_primitives::vec::FixedVec
+[wirestream-gadget]: ragu_core::gadgets::WireStream
 [output-reconstruction]: ../../implementation/routines.md#output-reconstruction
 [len-trait]: ragu_primitives::vec::Len
 [element-gadget]: ragu_primitives::Element

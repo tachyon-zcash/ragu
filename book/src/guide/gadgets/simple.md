@@ -54,11 +54,12 @@ of optimizations.
 
 ## [`FixedVec`][fixedvec-gadget]
 
-`Vec<G>` (where `G` is a [`Gadget`][gadget-trait]) is a gadget for a
-collection whose length is known only at run time (see
-[fungibility](index.md#fungibility)). For a length that is known when the code
-is written, the [`FixedVec`][fixedvec-gadget] gadget wraps `Vec<G>` with a
-statically guaranteed length.
+`Vec<G>` (where `G` is a [`Gadget`][gadget-trait]) is not a gadget: its type
+does not fix its length, and the number of wires does not always give the
+length back (see [fungibility](index.md#fungibility)). The
+[`FixedVec`][fixedvec-gadget] gadget wraps `Vec<G>` using a statically
+guaranteed length for the underlying vector so that [`Gadget`][gadget-trait]
+can be implemented.
 
 [gadget-trait]: ragu_core::gadgets::Gadget
 [boolean-gadget]: ragu_primitives::Boolean

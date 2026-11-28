@@ -17,9 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `PreparedMsm` for reusable Pasta bases, optionally with a table of
   precomputed fixed-base multiples, and `MsmWorkspace` for explicitly scoped
   MSM scratch.
-- `Vec<G>` is a gadget: a collection whose length is known only at run time,
-  of elements with a fixed, nonzero number of wires. Its traversal is that of
-  an array of the same length.
 - Added `WireStream` and its kind `WireStreamKind`: a gadget that is a run of
   wires whose number is known only at run time. Its traversal is that of an
   array of as many single wires.

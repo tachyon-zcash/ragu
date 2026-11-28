@@ -65,10 +65,10 @@ pub trait Routine<F: Field>: Clone + Send {
     /// [`execute`](Routine::execute) gives for the same input: a driver that
     /// takes the prediction continues from it in place of that output. An
     /// output kind with a fixed number of wires, such as an array, holds
-    /// this by its type. A [run-time-sized] kind, such as `Vec<G>`, does
-    /// not, and the routine must.
+    /// this by its type. One that holds a [`WireStream`] does not, and the
+    /// routine must: the two streams have one length.
     ///
-    /// [run-time-sized]: crate::gadgets#run-time-sized-gadgets
+    /// [`WireStream`]: crate::gadgets::WireStream
     ///
     /// # Errors
     ///

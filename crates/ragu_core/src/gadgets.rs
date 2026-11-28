@@ -59,8 +59,8 @@
 //! gadget has it: a gadget that contains only wires, witness data and other
 //! such gadgets always qualifies as fungible by definition. It is stronger
 //! than a driver needs. The number of wires may vary between instances, as it
-//! does for a [`Vec`](alloc::vec::Vec) of gadgets, so long as that number
-//! alone tells one instance's shape from another's.
+//! does for a [`WireStream`], so long as that number alone tells one
+//! instance's shape from another's.
 //!
 //! A gadget cannot carry any additional state that would influence emitted
 //! constraints. It also means that gadgets usually cannot be `enum`s: a
@@ -70,19 +70,24 @@
 //!
 //! #### Run-time-sized gadgets
 //!
-//! [`Vec<G>`](alloc::vec::Vec) is a gadget for a collection whose length is
-//! known only at run time. Its elements must have a fixed, nonzero number of
-//! wires: the number of wires then gives the length, and a `Vec` of `n`
-//! gadgets is to every driver what `[G; n]` is. The length must be fixed by
-//! the code that builds the gadget and must never depend on witness data, as
-//! nothing that affects emitted constraints may. Prefer `[G; N]` wherever the
-//! length is known when the code is written.
+//! [`WireStream`] is the gadget for wires whose number is known only at run
+//! time: a run of bare wires, which is to every driver what an array of as
+//! many single wires is. The number of wires is the stream's length, so it
+//! gives the shape. The length must be fixed by the code that builds the
+//! stream and must never depend on witness data, as nothing that affects
+//! emitted constraints may. Prefer an array wherever the number is known
+//! when the code is written.
 //!
-//! Allocation determinism is where this ends. A kind with two run-time
-//! lengths, such as a `Vec` of `Vec`s or two `Vec` fields, has instances of
-//! different shapes over the same number of wires, and a `Vec` of gadgets
-//! without wires has every length over none. Such a gadget is not fungible,
-//! though the types do not refuse it: fungibility is an API contract.
+//! A [`Vec`](alloc::vec::Vec) of gadgets is not a gadget, and allocation
+//! determinism is why. A `Vec` of `Vec`s has instances of different shapes
+//! over the same number of wires, and a `Vec` of gadgets without wires has
+//! every length over none. A `WireStream` has no element type, so the types
+//! refuse both.
+//!
+//! One rule is left to the API contract: a gadget holds at most one
+//! `WireStream`. Two of them, as two fields or as the elements of an array,
+//! have two run-time lengths over one number of wires. Such a gadget is not
+//! fungible, though the types do not refuse it.
 //!
 //! #### Transformations between Drivers
 //!
@@ -190,8 +195,8 @@ impl<'a, 'dr, D: Driver<'dr>> WireEqualizer<'a, 'dr, D> {
 /// data cannot affect emitted constraints, so gadgets containing only these
 /// automatically satisfy this requirement. Every instance of such a gadget
 /// holds the same number of wires, which is more than fungibility asks: the
-/// number may vary, as the length of a [`Vec<G>`](alloc::vec::Vec) does, so
-/// long as it alone gives the gadget's shape (see
+/// number may vary, as the length of a [`WireStream`] does, so long as it
+/// alone gives the gadget's shape (see
 /// [run-time-sized gadgets](self#run-time-sized-gadgets)).
 ///
 /// The wire correspondence used here is defined by
@@ -240,9 +245,9 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
     ///
     /// For a gadget whose type fixes its wires, which is almost every gadget,
     /// this returns the same quantity regardless of the specific instance of
-    /// this [`Gadget`] implementation. For one that holds a
-    /// [`Vec`](alloc::vec::Vec) of gadgets it follows the length, and it is
-    /// what tells one instance's shape from another's.
+    /// this [`Gadget`] implementation. For one that holds a [`WireStream`]
+    /// it follows the stream's length, and it is what tells one instance's
+    /// shape from another's.
     fn num_wires(&self) -> Result<usize> {
         struct WireCounter<Src: DriverTypes> {
             count: usize,

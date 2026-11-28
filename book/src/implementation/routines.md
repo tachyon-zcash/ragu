@@ -608,11 +608,13 @@ Allocation determinism is the part of
 It is strictly weaker than wire-layout determinism, in which the type alone
 fixes the wires of every instance: a gadget kind may own a runtime-sized
 collection (the stream length resolves the count, and any divergence is
-already caught by the fingerprint), so `Vec`-shaped gadgets are admissible,
-and `Vec<G>` is a gadget. The stream length resolves the count for one
-collection of elements with a fixed, nonzero number of wires. A kind with two
-runtime lengths, such as a `Vec` of `Vec`s, has several shapes over one stream
-length and is not admissible. What it also rules out are shapes that need
+already caught by the fingerprint), so `Vec`-shaped gadgets are admissible.
+The stream length resolves the count for one collection of elements with a
+fixed, nonzero number of wires, and Ragu provides one such gadget:
+[`WireStream`], a run of bare wires. A kind with two runtime lengths, such as
+a `Vec` of `Vec`s or two `WireStream`s, has several shapes over one stream
+length and is not admissible, which is why `Vec<G>` is not a gadget. What it
+also rules out are shapes that need
 a side-channel discriminant — most notably enum-shaped gadgets, where
 variant choice cannot in general be recovered from the wire stream (two
 variants may share wire counts, or the variant set may evolve such that
@@ -707,6 +709,7 @@ a routine fingerprint that over-groups, or a memo fingerprint that omits a
 necessary field, and not only bugs in the memoization code.
 
 [`WireMap`]: ragu_core::convert::WireMap
+[`WireStream`]: ragu_core::gadgets::WireStream
 [`TypeId`]: core::any::TypeId
 [`Routine`]: ragu_core::routines::Routine
 [`Driver`]: ragu_core::drivers::Driver
