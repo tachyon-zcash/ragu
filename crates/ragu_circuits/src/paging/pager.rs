@@ -20,10 +20,10 @@ use ragu_core::{Coeff, Error, Result};
 use udon::field::Field;
 
 use super::{
-    Body, DERIVED, Layout, ONE, PageReport, Pageable, Pages, PagingReport, Plan, Program, Stages,
-    Step, Terms,
+    DERIVED, Layout, ONE, PageReport, Pageable, Pages, PagingReport, Plan, Stages,
     record::{Call, DERIVED_LIMIT, Recording},
     refuse,
+    replay::{Body, Program, Step, Terms},
 };
 use crate::{Circuit, polynomials::Rank, staging::MultiStage};
 

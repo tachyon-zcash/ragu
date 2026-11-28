@@ -2,6 +2,7 @@ use alloc::{string::ToString, vec, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use ragu_core::{
+    Coeff,
     drivers::{Driver, DriverValue, LinearExpression},
     gadgets::{Bound, Kind},
     maybe::Maybe,
@@ -15,7 +16,7 @@ use ragu_primitives::{
 };
 use rand::Rng;
 
-use super::{pager::*, record::*, *};
+use super::{pager::*, record::*, replay::Step, *};
 use crate::{
     Blind, Circuit, CircuitExt, WiringObject, WithAux, floor_planner, into_wiring_object,
     polynomials::sparse,

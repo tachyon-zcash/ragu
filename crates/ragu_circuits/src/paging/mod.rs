@@ -200,15 +200,16 @@
 //! unpaged circuit. What the check rests on is the rest. The `record`
 //! module walks a circuit for the gates and constraints it emits; the
 //! `check` module compares that recording of the unpaged circuit with
-//! those of its pages; and the `page` module is what is registered and
-//! proven: the pages. This module holds what they share: the carry stage,
-//! the stages, the layout, and the plan between them.
+//! those of its pages; the `replay` module is what a page runs: the steps
+//! of a plan, and their replay on a driver; and the `page` module is what
+//! is registered and proven: the pages. This module holds what they share:
+//! the carry stage, the stages, the layout, and the plan between them.
 
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::{marker::PhantomData, ops::Range};
 
 use ragu_core::{
-    Coeff, Error, Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
@@ -228,11 +229,13 @@ mod check;
 mod page;
 mod pager;
 mod record;
+mod replay;
 #[cfg(test)]
 mod tests;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use self::pager::reads;
+use self::replay::Program;
 pub use self::{
     page::{LastPagedCircuit, PagedCircuit},
     pager::size,
@@ -524,196 +527,6 @@ struct Plan<F: Field> {
     /// its gates, what a walk of it is counted against.
     sums: usize,
     constraints: usize,
-}
-
-/// The wires a step names, each with its coefficient.
-type Terms<F> = Vec<(u32, Coeff<F>)>;
-
-/// One thing a page does, or a routine it calls.
-///
-/// A step names wires of what runs it. For a page: [`ONE`]; the $a$ and
-/// $d$ wires of a gate of the stages or of the carry stage, and the wires
-/// of a gate of the page's own that a step before it allocated, each
-/// `4 * gate + kind` with the gate counted as the page's steps allocate
-/// them, after the SYSTEM gate and the stages'; and what a step before it
-/// made, by [`DERIVED`] and its place among what the steps make. For a
-/// routine ([`Body`]) likewise, without the stages: its own gates are
-/// counted from one, and its inputs are the first of what is made.
-///
-/// The gates a routine allocates are not the caller's to name: the caller
-/// names the routine's outputs, which a call makes.
-#[derive(Clone, Debug)]
-enum Step<F: Field> {
-    /// Allocates this many gates of the page's own, or of the routine's,
-    /// the next ones.
-    Gates(usize),
-    /// Makes a linear combination. For a page, it is what the circuit's
-    /// own combinations have of the page's wires, or of the page's own
-    /// gates' among them, or a wire a routine takes.
-    Sum(Terms<F>),
-    /// Enforces a constraint.
-    Enforce(Terms<F>),
-    /// Calls a routine on the wires named, as a routine of the driver's,
-    /// and makes each wire of its output.
-    Call(Arc<Body<F>>, Vec<u32>),
-}
-
-/// A routine the circuit calls, as the page that holds it calls it: what
-/// the routine allocates and enforces, taken off a walk of the circuit and
-/// apart from where the circuit calls it.
-///
-/// A page calls it through [`Driver::routine`], so that the routine is a
-/// segment of the page as it is of the circuit: the same gates, the same
-/// constraints and the same calls within, in the same order, over the same
-/// inputs.
-#[derive(Clone, Debug)]
-struct Body<F: Field> {
-    /// The wires of its input.
-    inputs: usize,
-    /// What it does, in order.
-    steps: Vec<Step<F>>,
-    /// The wires of its output, each named as a step names a wire.
-    outputs: Vec<u32>,
-    /// The gates it allocates, those of the routines it calls included.
-    gates: usize,
-    /// The constraints it enforces, likewise.
-    constraints: usize,
-}
-
-impl<F: Field> Body<F> {
-    /// A routine that takes `inputs` wires, runs `steps` and gives
-    /// `outputs`.
-    fn new(inputs: usize, steps: Vec<Step<F>>, outputs: Vec<u32>) -> Self {
-        let (gates, constraints) = counts(&steps);
-        Body {
-            inputs,
-            steps,
-            outputs,
-            gates,
-            constraints,
-        }
-    }
-}
-
-/// The gates `steps` allocate and the constraints they enforce, those of
-/// the routines they call included.
-fn counts<F: Field>(steps: &[Step<F>]) -> (usize, usize) {
-    steps
-        .iter()
-        .fold((0, 0), |(gates, constraints), step| match step {
-            Step::Gates(own) => (gates + own, constraints),
-            Step::Sum(_) => (gates, constraints),
-            Step::Enforce(_) => (gates, constraints + 1),
-            Step::Call(body, _) => (gates + body.gates, constraints + body.constraints),
-        })
-}
-
-/// What one page allocates and enforces, taken off the plan and a walk of
-/// the circuit: the page replays it on any driver, and walks no part of the
-/// circuit that another page holds.
-#[derive(Clone, Debug)]
-struct Program<F: Field> {
-    /// What the page does, in order. Its first step allocates the gates
-    /// of its own that no routine it calls allocates.
-    steps: Vec<Step<F>>,
-    /// What the steps make, counted: the next step that makes a wire names
-    /// it by this.
-    made: u32,
-    /// The wires of the public output, on the last page: each a
-    /// combination of the page's wires, made after its steps.
-    outputs: Vec<Terms<F>>,
-}
-
-impl<F: Field> Program<F> {
-    /// A page that allocates `own` gates outside any routine, and does
-    /// nothing yet.
-    fn new(own: usize) -> Self {
-        Program {
-            steps: alloc::vec![Step::Gates(own)],
-            made: 0,
-            outputs: Vec::new(),
-        }
-    }
-
-    /// Makes a linear combination, and gives the wire that names it.
-    fn sum(&mut self, terms: Terms<F>) -> u32 {
-        self.steps.push(Step::Sum(terms));
-        self.made += 1;
-        DERIVED | (self.made - 1)
-    }
-
-    /// Enforces a constraint.
-    fn enforce(&mut self, terms: Terms<F>) {
-        self.steps.push(Step::Enforce(terms));
-    }
-
-    /// Calls a routine on the wires `inputs` name, and gives the wire that
-    /// names the first wire of its output: the others follow it.
-    fn call(&mut self, body: Arc<Body<F>>, inputs: Vec<u32>) -> u32 {
-        let first = self.made;
-        self.made += u32::try_from(body.outputs.len()).expect("outputs fit a wire");
-        self.steps.push(Step::Call(body, inputs));
-        DERIVED | first
-    }
-
-    /// The gates of its own the page allocates, past the carry stage:
-    /// those of the routines it calls included.
-    fn gates(&self) -> usize {
-        counts(&self.steps).0
-    }
-
-    /// The constraints the page enforces, before those of its output:
-    /// those of the routines it calls included.
-    fn constraints(&self) -> usize {
-        counts(&self.steps).1
-    }
-}
-
-#[cfg(test)]
-impl<F: Field> Program<F> {
-    /// The gates the page's first step allocates, for a test to change.
-    fn own_mut(&mut self) -> &mut usize {
-        match &mut self.steps[0] {
-            Step::Gates(gates) => gates,
-            _ => panic!("a page allocates its gates first"),
-        }
-    }
-
-    /// The place among the steps of each constraint the page enforces.
-    fn enforced(&self) -> Vec<usize> {
-        (0..self.steps.len())
-            .filter(|&step| matches!(self.steps[step], Step::Enforce(_)))
-            .collect()
-    }
-
-    /// The page's `index`-th constraint.
-    fn constraint(&mut self, index: usize) -> &mut Terms<F> {
-        let step = self.enforced()[index];
-        match &mut self.steps[step] {
-            Step::Enforce(terms) => terms,
-            _ => unreachable!("a constraint"),
-        }
-    }
-
-    /// Takes the page's `index`-th constraint off it.
-    fn drop_constraint(&mut self, index: usize) -> Terms<F> {
-        let step = self.enforced()[index];
-        match self.steps.remove(step) {
-            Step::Enforce(terms) => terms,
-            _ => unreachable!("a constraint"),
-        }
-    }
-
-    /// The first combination the page makes.
-    fn first_sum(&mut self) -> &mut Terms<F> {
-        self.steps
-            .iter_mut()
-            .find_map(|step| match step {
-                Step::Sum(terms) => Some(terms),
-                _ => None,
-            })
-            .expect("the page makes a combination")
-    }
 }
 
 impl<F: Field> Plan<F> {
