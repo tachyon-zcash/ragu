@@ -1,7 +1,7 @@
 //! The [`Consistent`] trait — for gadgets that can re-emit their own wire
 //! contracts.
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 
 use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
 
@@ -69,14 +69,5 @@ impl<'dr, D: Driver<'dr>, G1: Consistent<'dr, D>, G2: Consistent<'dr, D>> Consis
 impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>> Consistent<'dr, D> for Box<G> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         (**self).enforce_consistent(dr)
-    }
-}
-
-impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>> Consistent<'dr, D> for Vec<G> {
-    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
-        for item in self.iter() {
-            item.enforce_consistent(dr)?;
-        }
-        Ok(())
     }
 }

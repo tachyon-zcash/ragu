@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Element::enforce_le` and `Element::enforce_lt` bound a field element by a
   constant through an `N`-bit decomposition.
 - Added `FixedBase` for radix-8 scalar multiplication from `Boolean` bits.
-- `Consistent` for `Vec<G>`, which re-emits each element's wire contracts.
 
 ## [0.0.0] - 2025-07-30
 

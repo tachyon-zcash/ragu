@@ -228,8 +228,14 @@ fn a_vec_without_gadgets_is_an_empty_array() -> Result<()> {
     a_vec_is_an_array::<0>([])
 }
 
-/// One Rust type, one fingerprint for each length: a memo that keys on the
-/// fingerprint never takes a `Vec` of one length for one of another.
+/// One Rust type, one fingerprint for each length the routine reads: a
+/// memo that keys on the fingerprint never takes what the routine emits
+/// over a `Vec` of one length for what it emits over another.
+///
+/// The fingerprint is of what a routine emits and of the wires it gives,
+/// not of the wires it takes. The routine here reads every element. One
+/// that reads only some of them emits the same over inputs of two lengths
+/// and has one fingerprint for both, which a memo may share.
 #[test]
 fn the_fingerprint_tells_lengths_apart() -> Result<()> {
     let fingerprints = [
