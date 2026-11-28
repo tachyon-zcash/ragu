@@ -60,6 +60,12 @@
 //! circuit whose last stage it is, so a page's own gates start where it
 //! ends.
 //!
+//! Of a page's own gates, those no routine allocates come first: with the
+//! stages' gates they are the page's root segment. The gates of each
+//! routine the page calls are a segment of their own, which a floor
+//! planner places after it, as it does for any circuit that calls
+//! routines.
+//!
 //! The carry stage's size is the unpaged circuit's to state
 //! ([`Pageable::Carry`]): a circuit that carries more values between its
 //! pages than the stage holds is not cut.
@@ -79,34 +85,44 @@
 //! # Replaying
 //!
 //! The plan is then compiled into what each page allocates and enforces:
-//! its gates, the linear combinations the circuit makes as far as they are
-//! of the page's wires, and its constraints over them. A page is a circuit
-//! that replays that, on any driver, without walking the circuit it is a
-//! page of; its witness is the values of its gates, which one walk of the
-//! circuit gives every page ([`Pages::capture`]). The last page alone
-//! walks the circuit, on a driver that only counts what it emits, for the
-//! public output's shape and its witness. A page is one flat run of gates
-//! and constraints: a routine the circuit calls is not a routine of the
-//! page yet. No cut falls within one, though: its gates are on one page,
-//! together and in the order the circuit allocates them, which
-//! [`Pages::check`] holds the pages to.
+//! its gates, the virtual wires the circuit makes as far as they are of
+//! the page's wires, its constraints over them, and the routines it
+//! calls. A page is a circuit that replays that, on any driver, without
+//! walking the circuit it is a page of; its witness is the values of its
+//! gates, which one walk of the circuit gives every page
+//! ([`Pages::capture`]). The last page alone walks the circuit, on a
+//! driver that only counts what it emits, for the public output's shape
+//! and its witness.
 //!
 //! The `ONE` wire is on every page and is never carried.
 //!
+//! # Routines
+//!
+//! A routine the circuit calls is called by one page, as a routine of that
+//! page's driver. No cut falls within one: its gates are on one page,
+//! together and in the order the circuit allocates them, and so are the
+//! gates of the routines it calls. That page enforces every constraint the
+//! routine does, those that name none of the routine's gates included.
+//!
+//! A page does not have the circuit's code, so it does not have the
+//! routine the circuit calls. It calls one that replays what a walk of the
+//! circuit recorded of the call: the gates, the constraints and the calls
+//! within, in the order the routine emits them, over the wires the routine
+//! takes. A routine's segment and its fingerprint are of what it emits
+//! and not of its type, so a page's routine has the segment and the
+//! fingerprint the circuit's has. No driver reads the fingerprints yet:
+//! they are what a driver that memoizes routines will tell them apart by
+//! ([#503]).
+//!
+//! What a routine emits names its inputs, its own gates and what the
+//! routines it calls give, and no other wire, so nothing in it reads a
+//! carry slot. The page that calls it makes each wire of its input in
+//! full first, as the last page does each wire of the public output: what
+//! the page holds of the wire, and a slot for what each other page does.
+//! A wire the routine gives is then the page's to name, as a gate's is.
+//!
 //! # Not yet
 //!
-//! - TODO(#503): a page does not call the routines the circuit calls. It
-//!   holds each one whole and replays its gates and constraints as part of
-//!   its own, so a page is one segment and a routine on a page has no
-//!   segment or fingerprint of its own. Calling them as routines is left
-//!   for when a floor planner or an evaluator reads segments.
-//! - TODO(#1038): the check holds a routine's gates to one page, not the
-//!   constraints the routine emits. A constraint that names no gate of the
-//!   routine, as one over its inputs alone does, is homed with the wires it
-//!   names, which may be on another page. A page that calls the routine
-//!   needs all of them: the recording is to note the constraints of each
-//!   routine and the check to hold them to the routine's page, which reads
-//!   the inputs through carry slots.
 //! - TODO: the last page walks the circuit each time it is synthesized, on
 //!   a driver that only counts, to build the public output's gadget. A
 //!   page that carried the output as the elements the circuit writes would
@@ -133,8 +149,13 @@
 //!   output, so its $k(Y)$ is constant.
 //! - **Preserve routines.** The gates of a routine the unpaged circuit
 //!   calls are on one page, together and in the order the circuit
-//!   allocates them. Its constraints are not yet held to that page (see
-//!   [Not yet](#not-yet)).
+//!   allocates them, and the routines the pages call are the circuit's:
+//!   routines with the same fingerprints, each as many times. A
+//!   fingerprint is of a routine's gates and constraints, of the wires it
+//!   gives and of the routines it calls, so a page that emits a routine's
+//!   constraints outside the routine has not called it. This one is not
+//!   what holds the pages to the circuit's relation. It holds their
+//!   segments to the circuit's.
 //! - **Deterministic pager.** [`Pages::cut`] refuses an unpaged circuit
 //!   that does not cut into the pages it is told, over the carry stage its
 //!   type states ([`Pageable::Carry`]).
@@ -181,15 +202,18 @@
 //! unpaged circuit. What the check rests on is the rest. The `record`
 //! module walks a circuit for the gates and constraints it emits; the
 //! `check` module compares that recording of the unpaged circuit with
-//! those of its pages; and the `page` module is what is registered and
-//! proven: the pages. This module holds what they share: the carry stage,
-//! the stages, the layout, and the plan between them.
+//! those of its pages; the `replay` module is what a page runs: the steps
+//! of a plan, and their replay on a driver; and the `page` module is what
+//! is registered and proven: the pages. This module holds what they share:
+//! the carry stage, the stages, the layout, and the plan between them.
+//!
+//! [#503]: https://github.com/tachyon-zcash/ragu/issues/503
 
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::{marker::PhantomData, ops::Range};
 
 use ragu_core::{
-    Coeff, Error, Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
@@ -209,19 +233,21 @@ mod check;
 mod page;
 mod pager;
 mod record;
+mod replay;
 #[cfg(test)]
 mod tests;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use self::pager::reads;
+use self::replay::Program;
 pub use self::{
     page::{LastPagedCircuit, PagedCircuit},
     pager::size,
 };
 
-/// The flag of a planning wire that names a linear combination rather than
-/// the wire of a gate.
-const DERIVED: u32 = 1 << 31;
+/// The flag of a planning wire that names a virtual wire, which is a
+/// linear combination of wires, rather than the wire of a gate.
+const VIRTUAL: u32 = 1 << 31;
 
 /// The planning `ONE` wire: the $d$ wire of the SYSTEM gate.
 const ONE: u32 = 3;
@@ -385,8 +411,9 @@ pub struct Layout {
     /// the gates in: the order the circuit allocates them in, or one that
     /// puts a gate allocated long before it is used beside the gates it
     /// feeds. A page ends where the next starts, and the last holds the
-    /// rest. A page's polynomial holds them from the gate the carry stage
-    /// ends at.
+    /// rest. A page's polynomial holds them past the carry stage: those no
+    /// routine allocates from the gate the carry stage ends at, and each
+    /// routine's where the page's floor plan places its segment.
     pub starts: Vec<usize>,
 }
 
@@ -492,37 +519,18 @@ struct Plan<F: Field> {
     /// this one.
     limit: usize,
     /// For each page, the gates of the circuit's own it holds, counted
-    /// over the unpaged circuit, in the order of the page's polynomial.
+    /// over the unpaged circuit, in the order the page allocates them:
+    /// those no routine allocates, then those of each routine it calls.
     held: Vec<Vec<u32>>,
     /// Each slot's combination, over wires named `4 * gate + kind` with
     /// the gate counted over the unpaged circuit.
     slots: Vec<Vec<(u32, F)>>,
     /// What each page allocates and enforces.
     programs: Vec<Program<F>>,
-    /// The linear combinations and the constraints the circuit makes: with
-    /// its gates, what a walk of it is counted against.
-    sums: usize,
+    /// The virtual wires and the constraints the circuit makes: with its
+    /// gates, what a walk of it is counted against.
+    adds: usize,
     constraints: usize,
-}
-
-/// What one page allocates and enforces, taken off the plan and a walk of
-/// the circuit: the page replays it on any driver, and walks no part of the
-/// circuit that another page holds.
-#[derive(Clone, Debug)]
-struct Program<F: Field> {
-    /// The gates of its own the page allocates, past the carry stage.
-    own: usize,
-    /// The linear combinations it makes, in order, each over its wires and
-    /// the combinations before it: what the circuit's own combinations
-    /// have of the page's wires, or of the page's own gates' among them. A
-    /// wire is named `4 * gate + kind` with the gate counted in the page's
-    /// polynomial, [`ONE`], or [`DERIVED`] with a combination's index.
-    sums: Vec<Vec<(u32, Coeff<F>)>>,
-    /// Its constraints, over the same wires.
-    constraints: Vec<Vec<(u32, Coeff<F>)>>,
-    /// The wires of the public output, on the last page: each a
-    /// combination of the same wires.
-    outputs: Vec<Vec<(u32, Coeff<F>)>>,
 }
 
 impl<F: Field> Plan<F> {
@@ -604,7 +612,7 @@ pub struct Planned<F: Field> {
 #[derive(Clone, Debug)]
 pub struct Captured<F> {
     /// For each page before the last, the values of the gates it holds, in
-    /// the order of its polynomial: the page's witness.
+    /// the order it allocates them: the page's witness.
     pub pages: Vec<Vec<[F; 4]>>,
     /// The carry stage's values: its witness.
     pub carry: Vec<F>,

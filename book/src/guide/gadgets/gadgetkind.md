@@ -42,8 +42,9 @@ converting wires and witness data to the destination driver. See
 [Conversion](conversion.md) for details.
 
 This traversal is part of the gadget's contract. It must visit wire fields in
-the same order for every instance of the same concrete gadget type, defining
-which wires correspond between instances. [Fungibility](index.md#fungibility)
+the same order for every instance of the same concrete gadget type that holds
+the same number of wires, defining which wires correspond between instances.
+[Fungibility](index.md#fungibility)
 is stated in terms of this correspondence, and drivers and internal Ragu code
 use it to count, substitute, or extract wires.
 
@@ -59,8 +60,8 @@ today's Rust type system, which is why the trait is `unsafe`.
 ```admonish warning
 The `Send` requirement is the **only** safety invariant that
 [`GadgetKind`][gadgetkind-trait] imposes.
-[Fungibility](index.md#fungibility) — the requirement that gadget behavior
-be fully determined by its type — is a separate correctness contract
+[Fungibility](index.md#fungibility) — the requirement that a gadget be
+nothing more than its kind and its wires — is a separate correctness contract
 documented on the [`Gadget`][gadget-trait] trait. Violating fungibility may
 produce incorrect circuits but does not cause undefined behavior.
 ```

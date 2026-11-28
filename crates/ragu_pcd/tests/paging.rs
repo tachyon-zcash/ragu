@@ -399,22 +399,22 @@ const CUTS: [(usize, &[(&str, &str)]); 3] = [
     (
         4,
         &[
-            ("decompression.native", "1261e6c87e407aa0"),
-            ("decompression.nested", "73d53a0dd8a080cd"),
+            ("decompression.native", "1e58f4ae28b64f66"),
+            ("decompression.nested", "0caf8869c325a94d"),
         ],
     ),
     (
         9,
         &[
-            ("decompression.native", "6d0db27a9f131e4c"),
-            ("decompression.nested", "73e46c6b92843f4b"),
+            ("decompression.native", "8bcb9420ad46b880"),
+            ("decompression.nested", "8baba5b01a085e23"),
         ],
     ),
     (
         195,
         &[
-            ("decompression.native", "bf4e7e6f40708b03"),
-            ("decompression.nested", "229002a8f45bc0d0"),
+            ("decompression.native", "ba3dc87bfab41a8f"),
+            ("decompression.nested", "bfe79b5cee314901"),
         ],
     ),
 ];

@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `PreparedMsm` for reusable Pasta bases, optionally with a table of
   precomputed fixed-base multiples, and `MsmWorkspace` for explicitly scoped
   MSM scratch.
+- Added `WireStream` and its kind `WireStreamKind`: a gadget that is a run of
+  wires whose number is known only at run time. Its traversal is that of an
+  array of as many single wires.
+
+### Changed
+
+- **Fungibility is weaker.** A `Gadget` no longer has to hold the same number
+  of wires in every instance. Fungibility is now substitution between
+  instances that hold the same number of wires, and allocation determinism:
+  the kind and the wires in traversal order give the gadget, with the number
+  of wires as the only other input. This is what a driver that moves or
+  memoizes a routine relies on. Every gadget that met the old definition
+  meets this one.
 
 ## [0.0.0] - 2025-07-29
 

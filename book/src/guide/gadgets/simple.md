@@ -54,11 +54,12 @@ of optimizations.
 
 ## [`FixedVec`][fixedvec-gadget]
 
-Gadgets cannot represent a dynamic number of wires (this would violate
-fungibility, since wire count must be type-determined). The
-[`FixedVec`][fixedvec-gadget] gadget wraps `Vec<G>` (where `G` is a
-[`Gadget`][gadget-trait]) using a statically guaranteed length for the
-underlying vector so that [`Gadget`][gadget-trait] can be implemented.
+`Vec<G>` (where `G` is a [`Gadget`][gadget-trait]) is not a gadget: its type
+does not fix its length, and the number of wires does not always give the
+length back (see [fungibility](index.md#fungibility)). The
+[`FixedVec`][fixedvec-gadget] gadget wraps `Vec<G>` using a statically
+guaranteed length for the underlying vector so that [`Gadget`][gadget-trait]
+can be implemented.
 
 [gadget-trait]: ragu_core::gadgets::Gadget
 [boolean-gadget]: ragu_primitives::Boolean

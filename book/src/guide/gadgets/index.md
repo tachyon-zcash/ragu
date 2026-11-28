@@ -46,22 +46,52 @@ This gadget is a _compositional_ gadget: it contains another gadget (a
 ## [`Gadget`][gadget-trait] trait {#fungibility}
 
 [`Gadget`][gadget-trait] is a trait for gadgets with a stricter property called
-**fungibility**: for any two instances `a` and `b` of the same concrete gadget
-type, substituting `a`'s corresponding wire assignments for `b`'s must yield an
-instance indistinguishable in all subsequent synthesis from `a`, carrying
-identical invariants over those wires.
+**fungibility**: a gadget is its kind and its wires, and nothing else that
+affects synthesis. It has two parts.
+
+- **Substitution.** For any two instances `a` and `b` of the same concrete
+  gadget type that hold the same number of wires, substituting `a`'s
+  corresponding wire assignments for `b`'s must yield an instance
+  indistinguishable in all subsequent synthesis from `a`, carrying identical
+  invariants over those wires.
+- **Allocation determinism.** Given a gadget's kind and its wires in traversal
+  order, the instance is rebuilt with the number of wires as the only other
+  input. Two instances of a kind that hold the same number of wires have the
+  same shape.
 
 The correspondence between wires is defined by the gadget's
 [canonical traversal][canonical-traversal]: the order in which the gadget visits
 its wire fields when it is converted between drivers. This order must be the
-same for every instance of the same concrete gadget type, and is what makes
-wire counting, wire substitution, and gadget equality well-defined.
+same for every instance of the same concrete gadget type that holds the same
+number of wires, and is what makes wire counting, wire substitution, and gadget
+equality well-defined.
 
-One of the direct consequences of fungibility is that a [`Gadget`][gadget-trait]
-impl must always contain the same number of wires in every instance, and cannot
-carry any additional state that would influence synthesis behavior. For example,
-`Gadget`s usually cannot be `enum`s, and you must use `[G; N]` or
-[`FixedVec`][fixedvec-gadget] for length-typed collections.
+This is what a driver needs in order to move a [routine](../routines.md): one
+that memoizes a routine skips its body on a later invocation and hands back the
+output gadget with the cached wires in place, which is sound only if the wires
+are all there is to the gadget (see
+[Output Gadget Reconstruction][output-reconstruction]).
+
+Fungibility does not require every instance of a type to hold the same number
+of wires. That type-level form is sufficient, and almost every gadget has it,
+but it is stronger than a driver needs. A gadget cannot carry any additional
+state that would influence synthesis behavior, so `Gadget`s usually cannot be
+`enum`s: a discriminant is state that the wires do not give. The number of
+wires is not such state so long as it alone tells one instance's shape from
+another's.
+
+For a collection, use `[G; N]` or [`FixedVec`][fixedvec-gadget]: the length is
+then known when the code is written. A `Vec<G>` is not a gadget, because for an
+arbitrary `G` the number of wires does not give its shape (a `Vec` of `Vec`s
+has several over one number of wires).
+
+The one gadget with a number of wires known only at run time is
+[`WireStream`][wirestream-gadget], a run of bare wires. A stream of `n` wires
+is to every driver what an array of `n` single wires is. Its length must be
+fixed by the code that builds it and never depend on witness data. A gadget
+must hold at most one `WireStream`: with two, the number of wires does not give
+the two lengths, and the gadget is not fungible, though the types do not refuse
+it.
 
 Fungibility permits drivers to [manipulate gadgets](conversion.md) for
 optimization and analysis without disturbing the gadget's API contract.
@@ -86,9 +116,12 @@ needs a `'static` gadget must require it as a bound.
 ### `num_wires`
 
 The [`Gadget`][gadget-trait] trait provides a [`num_wires`][num-wires-method]
-method that returns the number of wires contained in a gadget instance. Because
-gadgets are [fungible](#fungibility), this count is determined entirely by the
-type—it is the same for every instance.
+method that returns the number of wires contained in a gadget instance. For a
+gadget whose type fixes its wires, which is almost every gadget, this count is
+determined entirely by the type—it is the same for every instance. For one that
+holds a [`WireStream`][wirestream-gadget] it follows the stream's length, and
+because gadgets are [fungible](#fungibility) it is what tells one instance's
+shape from another's.
 
 ### Automatic Derivation {#automatic-derivation}
 
@@ -123,6 +156,8 @@ is only needed for clarity.
 [boolean-gadget]: ragu_primitives::Boolean
 [spongestate-gadget]: ragu_primitives::poseidon::SpongeState
 [fixedvec-gadget]: ragu_primitives::vec::FixedVec
+[wirestream-gadget]: ragu_core::gadgets::WireStream
+[output-reconstruction]: ../../implementation/routines.md#output-reconstruction
 [len-trait]: ragu_primitives::vec::Len
 [element-gadget]: ragu_primitives::Element
 [gadget-trait]: ragu_core::gadgets::Gadget

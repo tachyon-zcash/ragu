@@ -3,7 +3,8 @@
 //! a plan compiled for them.
 //!
 //! With the carry stage, the stages and the layout in the parent module,
-//! the recorder and the check, this is what a page's soundness rests on.
+//! the replay, the recorder and the check, this is what a page's soundness
+//! rests on.
 //! It reads a plan and takes nothing else of how the plan was chosen.
 
 use alloc::{format, sync::Arc, vec, vec::Vec};
@@ -12,7 +13,7 @@ use core::marker::PhantomData;
 use ragu_core::{
     Coeff, Result,
     convert::WireMap,
-    drivers::{Driver, DriverTypes, DriverValue, LinearExpression},
+    drivers::{Driver, DriverTypes, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::{Always, Maybe, MaybeKind},
 };
@@ -20,8 +21,8 @@ use ragu_primitives::{Element, WithSuffix, vec::Len};
 use udon::field::Field;
 
 use super::{
-    Captured, Carry, Checked, DERIVED, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned,
-    Program, Stages, diverged,
+    Captured, Carry, Checked, Layout, ONE, Pageable, Pages, PagingReport, Plan, Planned, Stages,
+    VIRTUAL, diverged,
 };
 use crate::{
     Blind, Circuit, CircuitExt, MaskObject, WithAux, floor_planner, into_wiring_object,
@@ -30,111 +31,6 @@ use crate::{
     trace::Trace,
 };
 
-impl<F: Field> Program<F> {
-    /// Allocates the page's own gates on `dr`, with `values`, makes its
-    /// combinations and enforces its constraints. `reserved` are the wires
-    /// of the stages' and the carry stage's gates, two a gate, which the
-    /// page's stage builder reserved. Gives the wires of the public
-    /// output, which only the last page has.
-    fn replay<'dr, D: Driver<'dr, F = F>>(
-        &self,
-        dr: &mut D,
-        reserved: &[D::Wire],
-        values: &DriverValue<D, &[[F; 4]]>,
-    ) -> Result<Vec<D::Wire>> {
-        // The page's own gates start past the reserved ones.
-        let first = reserved.len() / 2 + 1;
-        // A program names the page's wires alone: `ONE`, the $a$ and $d$
-        // wires of a reserved gate, which hold a stage's values, the wires
-        // of the page's own gates, and the combinations made before the one
-        // that names them. A program that names another wire is not one a
-        // plan of a circuit over stages compiles, and nothing of the plan
-        // is trusted: it is refused before the page allocates.
-        let end = first + self.own;
-        let known = |wire: u32, made: usize| {
-            if wire & DERIVED != 0 {
-                return ((wire ^ DERIVED) as usize) < made;
-            }
-            match (wire / 4) as usize {
-                0 => wire == ONE,
-                gate if gate < first => matches!(wire % 4, 0 | 3),
-                gate => gate < end,
-            }
-        };
-        let sums = self
-            .sums
-            .iter()
-            .enumerate()
-            .all(|(made, terms)| terms.iter().all(|&(wire, _)| known(wire, made)));
-        let rest = self
-            .constraints
-            .iter()
-            .chain(&self.outputs)
-            .flatten()
-            .all(|&(wire, _)| known(wire, self.sums.len()));
-        if !(sums && rest) {
-            return Err(diverged("a page names a wire it does not hold"));
-        }
-        let mut gates: Vec<[D::Wire; 4]> = Vec::with_capacity(self.own);
-        for gate in 0..self.own {
-            let value = |kind: usize| {
-                values
-                    .snag()
-                    .get(gate)
-                    .map(|values| Coeff::Arbitrary(values[kind]))
-                    .ok_or_else(|| diverged("a page was given too few of its gates' values"))
-            };
-            let (a, b, c, extra) = dr.gate(|| Ok((value(0)?, value(1)?, value(2)?)))?;
-            let d = dr.assign_extra(extra, || value(3))?;
-            gates.push([a, b, c, d]);
-        }
-        fn combine<W: Clone, F: Field, L: LinearExpression<W, F>>(
-            lc: L,
-            terms: &[(u32, Coeff<F>)],
-            one: &W,
-            (reserved, gates): (&[W], &[[W; 4]]),
-            sums: &[W],
-        ) -> L {
-            let first = reserved.len() / 2 + 1;
-            terms.iter().fold(lc, |lc, &(wire, coeff)| {
-                let wire = if wire & DERIVED != 0 {
-                    &sums[(wire ^ DERIVED) as usize]
-                } else {
-                    match (wire / 4) as usize {
-                        0 => one,
-                        gate if gate < first => {
-                            &reserved[2 * (gate - 1) + usize::from(wire % 4 == 3)]
-                        }
-                        gate => &gates[gate - first][(wire % 4) as usize],
-                    }
-                };
-                lc.add_term(wire, coeff)
-            })
-        }
-        // TODO(#503): a routine the circuit calls is replayed here as part
-        // of the page's flat run, so it has no segment a memo can key on.
-        // The check holds its gates to this page, together and in order
-        // (`Recording::split_routine`), and not yet its constraints
-        // (TODO(#1038)); what is left is for the page to call it as a
-        // routine on `dr`, once they are held here too.
-        let one = D::ONE;
-        let wires = (reserved, &gates[..]);
-        let mut sums: Vec<D::Wire> = Vec::with_capacity(self.sums.len());
-        for terms in &self.sums {
-            let sum = dr.add(|lc| combine(lc, terms, &one, wires, &sums));
-            sums.push(sum);
-        }
-        for terms in &self.constraints {
-            dr.enforce_zero(|lc| combine(lc, terms, &one, wires, &sums))?;
-        }
-        Ok(self
-            .outputs
-            .iter()
-            .map(|terms| dr.add(|lc| combine(lc, terms, &one, wires, &sums)))
-            .collect())
-    }
-}
-
 /// The driver that walks a circuit for what a replay of its pages cannot
 /// give: the public output, over wires named as the planning driver names
 /// them, and with a witness the value of every gate. It emits nothing, and
@@ -142,8 +38,8 @@ impl<F: Field> Program<F> {
 struct Shadow<F, K> {
     /// The gates allocated, the SYSTEM gate included.
     gates: usize,
-    /// The linear combinations made.
-    sums: usize,
+    /// The virtual wires made.
+    adds: usize,
     /// The constraints enforced.
     constraints: usize,
     /// The $a$, $b$, $c$ and $d$ values of each gate, the SYSTEM gate
@@ -157,7 +53,7 @@ impl<F: Field, K: MaybeKind> Shadow<F, K> {
         // The SYSTEM gate is the driver's.
         Shadow {
             gates: 1,
-            sums: 0,
+            adds: 0,
             constraints: 0,
             values: vec![[F::ZERO; 4]],
             _kind: PhantomData,
@@ -165,14 +61,14 @@ impl<F: Field, K: MaybeKind> Shadow<F, K> {
     }
 
     /// Whether the circuit emitted the `gates`, the constraints and the
-    /// combinations its plan was made from.
+    /// virtual wires its plan was made from.
     fn follows(&self, plan: &Plan<F>, gates: usize) -> Result<()> {
-        let (constraints, sums) = (plan.constraints, plan.sums);
-        if self.gates != gates || self.constraints != constraints || self.sums != sums {
+        let (constraints, adds) = (plan.constraints, plan.adds);
+        if self.gates != gates || self.constraints != constraints || self.adds != adds {
             return Err(diverged(&format!(
-                "the walk saw {} gates, {} constraints and {} combinations where the plan has \
+                "the walk saw {} gates, {} constraints and {} virtual wires where the plan has \
                  {}, {} and {}",
-                self.gates, self.constraints, self.sums, gates, constraints, sums,
+                self.gates, self.constraints, self.adds, gates, constraints, adds,
             )));
         }
         Ok(())
@@ -219,8 +115,8 @@ impl<'dr, F: Field, K: MaybeKind> Driver<'dr> for Shadow<F, K> {
     const ONE: u32 = ONE;
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> u32 {
-        self.sums += 1;
-        DERIVED | (self.sums - 1) as u32
+        self.adds += 1;
+        VIRTUAL | (self.adds - 1) as u32
     }
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
@@ -298,8 +194,10 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Pages<F, R, S> {
     ///
     /// Fails if the plan is laid over other stages than the circuit's, a
     /// walk fails, a page names a wire it does not hold, a gate is missing
-    /// or repeated, a carry slot lacks its definition, or the constraints
-    /// differ.
+    /// or repeated, the gates of a routine the circuit calls are not
+    /// together on one page, a carry slot lacks its definition, the
+    /// constraints differ, or the pages call other routines than the
+    /// circuit calls.
     pub fn check(self) -> Result<Checked<F, R, S>> {
         let ends_in_zero = super::check::check(&self)?;
         Ok(Checked {
@@ -532,7 +430,7 @@ impl<F: Field, R: Rank, S: Pageable<F, R>> Checked<F, R, S> {
 /// over the circuit's stages and its carry stage, which allocates and
 /// enforces what the plan compiled for it. Its public output is a zero and
 /// nothing else, so its $k(Y)$ is constant. Its witness
-/// is the values of the gates it holds, in the order of its polynomial
+/// is the values of the gates it holds, in the order it allocates them
 /// ([`Pages::capture`]).
 pub struct PagedCircuit<F: Field, R, S> {
     plan: Arc<Plan<F>>,

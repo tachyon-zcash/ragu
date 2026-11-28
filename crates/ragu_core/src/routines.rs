@@ -61,6 +61,15 @@ pub trait Routine<F: Field>: Clone + Send {
     /// The returned auxiliary data must be forwarded to
     /// [`execute`](Routine::execute) if the driver proceeds with execution.
     ///
+    /// A predicted output must hold as many wires as the output that
+    /// [`execute`](Routine::execute) gives for the same input: a driver that
+    /// takes the prediction continues from it in place of that output. An
+    /// output kind with a fixed number of wires, such as an array, holds
+    /// this by its type. One that holds a [`WireStream`] does not: the
+    /// routine must give a stream of the same length from both.
+    ///
+    /// [`WireStream`]: crate::gadgets::WireStream
+    ///
     /// # Errors
     ///
     /// Returns a witness-generation error if the prediction cannot be

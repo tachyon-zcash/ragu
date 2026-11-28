@@ -14,8 +14,8 @@ isn't required.
 
 This visibility depends on the [`Gadget`] trait. Routine inputs and outputs are
 [gadgets][gadget], and the [fungibility](gadgets/index.md#fungibility)
-guarantee—that a gadget's synthesis behavior is determined entirely by its
-type—is what gives the driver an identity system for routines in the first
+guarantee—that a gadget is nothing more than its kind and its wires—is what
+gives the driver an identity system for routines in the first
 place. The dependence is mutual: the properties `Gadget` imposes find their
 practical application at routine boundaries, and would serve little purpose
 without them.

@@ -68,10 +68,12 @@ pub enum Error {
     MalformedEncoding(#[source] Box<dyn error::Error + Send + Sync + 'static>),
 
     /// Input or encoding error: a fixed-length vector was given the wrong
-    /// length.
+    /// length, or two gadgets of run-time length that are paired wire by
+    /// wire do not have the same length.
     #[error("vector does not have the expected length: (expected {expected}, actual {actual})")]
     VectorLengthMismatch {
-        /// Expected length required by the type-level length.
+        /// Expected length: the one the type-level length requires, or the
+        /// length of the first of the two gadgets.
         expected: usize,
         /// Actual length observed at runtime.
         actual: usize,
